@@ -204,4 +204,62 @@ test('start-of-day check: required before a tech can start a job; short items al
   assert.equal((await owner.put(`/api/r/service_calls/${job2.id}`, { status: 'in progress' })).status, 200);
 });
 
+test('time clock: in/out with location; away from the office alerts the owner; job sites are fine; timesheets & export', async () => {
+  await owner.put('/api/settings', { office_lat: '39.9242', office_lng: '-83.8088', office_radius_m: '300' });
+  // At the office: no alert
+  let r = await tech.post('/api/timeclock/in', { lat: 39.9250, lng: -83.8090, accuracy: 20 });
+  assert.equal(r.status, 200);
+  assert.equal(r.data.flag, 'office');
+  assert.equal((await tech.post('/api/timeclock/in', { lat: 39.9250, lng: -83.8090 })).status, 409, 'already clocked in');
+  const me = (await tech.get('/api/timeclock/me')).data;
+  assert.ok(me.open);
+  assert.equal((await owner.get('/api/timeclock/now')).data.length, 1);
+  r = await tech.post('/api/timeclock/out', {});
+  assert.equal(r.data.flag, 'no location');
+  assert.equal((await owner.get('/api/alerts')).data.some(a => a.kind === 'clock_location'), false, 'clock-out alerts are off by default');
+
+  // 5 miles away: owner alerted with a map link
+  r = await tech.post('/api/timeclock/in', { lat: 39.99, lng: -83.75, accuracy: 15 });
+  assert.equal(r.data.flag, 'away');
+  let alert = (await owner.get('/api/alerts')).data.find(a => a.kind === 'clock_location');
+  assert.match(alert.title, /Tess clocked in [\d.]+ mi from the office/);
+  assert.match(alert.body, /google\.com\/maps\?q=39\.99,-83\.75/);
+  await owner.post(`/api/alerts/${alert.id}/resolve`);
+  await tech.post('/api/timeclock/out', { lat: 39.99, lng: -83.75 });
+
+  // No location shared: alert
+  await tech.post('/api/timeclock/in', {});
+  alert = (await owner.get('/api/alerts')).data.find(a => a.kind === 'clock_location');
+  assert.match(alert.title, /without sharing a location/);
+  await owner.post(`/api/alerts/${alert.id}/resolve`);
+  await tech.post('/api/timeclock/out', {});
+
+  // At a job site they're scheduled for today: fine
+  await owner.put(`/api/r/customers/${ids.cust}`, { lat: 40.01, lng: -83.70 });
+  r = await tech.post('/api/timeclock/in', { lat: 40.0105, lng: -83.7004, accuracy: 30 });
+  assert.equal(r.data.flag, 'job site');
+  assert.match(r.data.where, /Harbor Dental/);
+  assert.equal((await owner.get('/api/alerts')).data.some(a => a.kind === 'clock_location'), false);
+
+  // Office corrections need a reason; techs can't edit
+  const entries = (await owner.get(`/api/timeclock/entries?from=${today()}&to=${today()}`)).data;
+  assert.equal(entries.length, 4);
+  const open = entries.find(e => e.open);
+  assert.equal((await tech.put(`/api/timeclock/entries/${open.id}`, { clock_out: `${today()}T23:59`, reason: 'x' })).status, 403);
+  assert.equal((await owner.put(`/api/timeclock/entries/${open.id}`, { clock_in: `${today()}T00:01`, clock_out: `${today()}T08:01` })).status, 400);
+  assert.equal((await owner.put(`/api/timeclock/entries/${open.id}`, { clock_in: `${today()}T00:01`, clock_out: `${today()}T08:01`, reason: 'Forgot to clock out' })).status, 200);
+  const other = (await owner.get('/api/users')).data.find(u => u.role === 'owner').id;
+  assert.equal((await owner.post('/api/timeclock/entries', { user_id: other, clock_in: '2026-01-05T08:00', clock_out: '2026-01-05T07:00', reason: 'x' })).status, 400);
+  const ts = (await owner.get(`/api/timeclock/timesheet?from=${today()}&to=${today()}`)).data;
+  const tess = ts.people.find(p => p.name === 'Tess');
+  assert.ok(tess.hours >= 8 && tess.hours < 8.2, `hours ${tess.hours}`);
+  assert.equal(tess.flagged, 3, 'away and no-location punches are flagged');
+  const csv = await owner.call('GET', `/api/timeclock/export?from=${today()}&to=${today()}`, undefined, { raw: true });
+  assert.match(csv.headers.get('content-type'), /text\/csv/);
+  const text = await csv.text();
+  assert.match(text, /Employee,Role,Date,Clock in/);
+  assert.match(text, /Forgot to clock out/);
+  assert.equal((await tech.get('/api/timeclock/timesheet')).status, 403);
+});
+
 export { owner, tech, ids, db, client, today, notifyIdle };

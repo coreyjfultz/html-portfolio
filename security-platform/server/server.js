@@ -18,7 +18,7 @@ const SECURITY_HEADERS = {
   'X-Content-Type-Options': 'nosniff',
   'Referrer-Policy': 'same-origin',
   'X-Frame-Options': 'DENY',
-  'Permissions-Policy': 'camera=(), microphone=(), geolocation=()',
+  'Permissions-Policy': 'camera=(), microphone=(), geolocation=(self)',
   'Content-Security-Policy': "default-src 'self'; img-src 'self' data: blob:; style-src 'self' 'unsafe-inline'; script-src 'self'; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'",
 };
 

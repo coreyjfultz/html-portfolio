@@ -18,6 +18,7 @@ const NAV = [
   { section: null },
   { href: '#/', label: 'Dashboard', ico: 'layout-dashboard' },
   { href: '#/myday', label: 'My Day', ico: 'sun', roles: ['technician'] },
+  { href: '#/timeclock', label: 'Time clock', ico: 'clock' },
   { section: 'Customers' },
   { href: '#/customers', label: 'Customers', ico: 'users' },
   { href: '#/pipeline', label: 'Pipeline', ico: 'kanban', roles: G.staff },
@@ -49,6 +50,7 @@ const NAV = [
 const ROUTES = [
   [/^$/, 'dashboard'],
   [/^myday$/, 'myday'],
+  [/^timeclock$/, 'timeclock'],
   [/^customers$/, 'customers', 'list'],
   [/^pipeline$/, 'pipeline'],
   [/^monitoring$/, 'monitoring', 'list'],

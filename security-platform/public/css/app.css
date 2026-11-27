@@ -611,3 +611,10 @@ table.t tr.click:hover td { background: #f8faff; }
 .alert-row.bad { border-left-color: var(--bad); }
 .alert-row.info { border-left-color: var(--info); }
 @media (max-width: 640px) { .count-line input, .count-line select { width: 90px; } .alert-row { flex-direction: column; } }
+
+/* Time clock */
+.clock-card { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+.clock-card .clock-state { font-weight: 600; font-size: 15px; }
+.clock-card.on .clock-state::before { content: ''; display: inline-block; width: 9px; height: 9px; border-radius: 50%; background: var(--good); margin-right: 8px; box-shadow: 0 0 0 3px var(--good-soft); }
+.clock-card.big .clock-state { font-size: 18px; }
+.btn.lg { padding: 12px 22px; font-size: 16px; }

@@ -42,6 +42,7 @@ export const DEFAULT_SETTINGS = {
   require_photos: '1', require_parts: '1', photo_exempt_types: 'estimate',
   truck_count_day: '5', truck_count_reminders: '1', inventory_manager_id: '', readiness_required: '1', readiness_spares: '1',
   alert_email: '1', alert_sms: '0', alert_phone: '',
+  office_address: '', office_lat: '', office_lng: '', office_radius_m: '300', clock_alert: '1', clock_alert_out: '0', clock_allow_jobsite: '1',
   stripe_secret: '', stripe_webhook_secret: '', stripe_ach: '1',
   qbo_client_id: '', qbo_client_secret: '', qbo_environment: 'sandbox', qbo_realm_id: '', qbo_company_name: '',
   qbo_access: '', qbo_refresh: '', qbo_access_expires: '', qbo_item_id: '', qbo_tax_item_id: '', qbo_auto_sync: '1', qbo_last_sync: '',
@@ -218,6 +219,17 @@ function migrate(db) {
       created_at TEXT NOT NULL DEFAULT (datetime('now','localtime'))
     );
     CREATE INDEX IF NOT EXISTS idx_alerts_open ON alerts(resolved_at, created_at);
+    CREATE TABLE IF NOT EXISTS time_entries (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      technician_id INTEGER,
+      clock_in TEXT NOT NULL, clock_out TEXT,
+      in_lat REAL, in_lng REAL, in_acc REAL, in_dist REAL, in_flag TEXT, in_where TEXT,
+      out_lat REAL, out_lng REAL, out_acc REAL, out_dist REAL, out_flag TEXT, out_where TEXT,
+      note TEXT, edited_by TEXT, edit_reason TEXT,
+      created_at TEXT NOT NULL DEFAULT (datetime('now','localtime'))
+    );
+    CREATE INDEX IF NOT EXISTS idx_time_user ON time_entries(user_id, clock_in);
     CREATE TABLE IF NOT EXISTS monitoring_events (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       account_id INTEGER NOT NULL REFERENCES monitoring_accounts(id) ON DELETE CASCADE,

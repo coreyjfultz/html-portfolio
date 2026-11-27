@@ -204,8 +204,25 @@ export async function render(view, _, query) {
         ['alert_sms', 'Also text important alerts', 'check'],
         ['alert_phone', 'Owner mobile for alert texts', 'tel'],
       ], note: 'Alerts: truck count differences and missing tools, techs short on equipment, clock-ins away from the office.' },
+      { title: 'Time clock & office location', wide: true, fields: [
+        ['office_address', 'Office address', 'text'],
+        ['office_lat', 'Office latitude', 'number'], ['office_lng', 'Office longitude', 'number'],
+        ['office_radius_m', 'Counts as “at the office” within (metres)', 'number'],
+        ['clock_alert', 'Alert the owner when someone clocks in away from the office or without a location', 'check'],
+        ['clock_alert_out', 'Also alert on clock-outs away from the office', 'check'],
+        ['clock_allow_jobsite', 'Clocking in at a job you’re scheduled for today is OK (no alert)', 'check'],
+      ], extra: html`<div class="row" style="margin-top:10px"><button class="btn sm" data-here>Use this device’s location</button><button class="btn sm" data-geo>Look up the address</button></div>` },
     ]));
     wireSettingsCards(pane);
+    const setLL = (lat, lng) => { pane.querySelector('[name=office_lat]').value = lat.toFixed(6); pane.querySelector('[name=office_lng]').value = lng.toFixed(6); toast('Location filled in — press Save'); };
+    $('[data-here]', pane).addEventListener('click', async () => {
+      const p = await (await import('./timeclock.js')).getPosition();
+      if (p) setLL(p.lat, p.lng); else toast('This device did not share a location', 'error');
+    });
+    $('[data-geo]', pane).addEventListener('click', async () => {
+      try { const g = await POST('/api/geocode', { address: pane.querySelector('[name=office_address]').value }); setLL(g.lat, g.lng); }
+      catch (e) { toast(e.message, 'error'); }
+    });
   }
 
   if (tab === 'users') {

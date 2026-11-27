@@ -1,4 +1,4 @@
-import { html, mount, money, money0, fmtDate, fmtTime, badge, typeBadge, relDays, dataTable, loading } from '../ui.js';
+import { html, mount, $, money, money0, fmtDate, fmtTime, badge, typeBadge, relDays, dataTable, loading } from '../ui.js';
 import { GET } from '../api.js';
 import { state, can } from '../app.js';
 
@@ -25,6 +25,7 @@ export async function render(view) {
     ${onTest.length ? html`<div class="banner warn">🧪 ${onTest.length} monitoring account${onTest.length > 1 ? 's are' : ' is'} on test: ${onTest.map((a, i) => html`${i ? ', ' : ''}<a href="#/monitoring/${a.id}">${a.customer} (${a.account_number}) until ${fmtTime(a.test_until)}</a>`)}</div>` : ''}
     ${d.emergencies ? html`<div class="err-box">🚨 ${d.emergencies} open emergency call${d.emergencies > 1 ? 's' : ''}. <a href="#/calls?priority=emergency">View</a></div>` : ''}
 
+    <div class="card" style="margin-bottom:16px"><div class="card-body" data-clock></div></div>
     ${alerts.length ? html`<div class="card" style="margin-bottom:16px"><div class="card-head"><h2>Alerts (${alerts.length})</h2></div><div class="card-body stack" style="gap:8px">${alerts.slice(0, 6).map(a => alertRow(a))}${alerts.length > 6 ? html`<div class="small muted">…and ${alerts.length - 6} more</div>` : ''}</div></div>` : ''}
 
     <div class="kpis">
@@ -84,4 +85,5 @@ export async function render(view) {
           ] })}</div></div>
     </div>`);
   if (alerts.length) wireAlerts(view, () => render(view));
+  import('./timeclock.js').then(m => m.clockWidget($('[data-clock]', view)));
 }

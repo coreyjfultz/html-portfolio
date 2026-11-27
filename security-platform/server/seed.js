@@ -46,6 +46,8 @@ ins.run('Office Admin', 'admin@demo.local', hashPassword('demo1234'), 'admin', n
 ins.run('Sam Sales', 'sales@demo.local', hashPassword('demo1234'), 'sales', null);
 ins.run('Ann Accounting', 'accounting@demo.local', hashPassword('demo1234'), 'accounting', null);
 ins.run('Jen Park', 'jen@demo.local', hashPassword('demo1234'), 'technician', jen.id);
+ins.run('Mike Alvarez', 'mike@demo.local', hashPassword('demo1234'), 'technician', mike.id);
+ins.run('Sam Turner', 'sam@demo.local', hashPassword('demo1234'), 'technician', sam.id);
 
 // --- inventory
 const items = {};
@@ -272,6 +274,27 @@ for (const [name, tag, category, v, cost, status] of [
 
 });
 
+// Time clock: office location, two weeks of punches, and one clock-in away from the office today.
+{
+  const set = db.prepare('UPDATE settings SET value = ? WHERE key = ?');
+  set.run('123 Main St, Springfield, OH 45501', 'office_address'); set.run('39.924200', 'office_lat'); set.run('-83.808800', 'office_lng');
+  const punch = db.prepare(`INSERT INTO time_entries (user_id, technician_id, clock_in, clock_out, in_lat, in_lng, in_acc, in_dist, in_flag, out_flag) VALUES (?,?,?,?,?,?,?,?,?,?)`);
+  const staff = db.prepare("SELECT id, name, technician_id FROM users WHERE active = 1").all();
+  for (let back = 13; back >= 1; back--) {
+    const d = day(-back);
+    if ([0, 6].includes(new Date(d + 'T12:00:00Z').getUTCDay())) continue;
+    staff.forEach((u, i) => punch.run(u.id, u.technician_id, `${d}T0${7 + (i % 2)}:${String(10 + i * 7).padStart(2, '0')}`, `${d}T${16 + (i % 2)}:${String(5 + i * 9).padStart(2, '0')}`, 39.9243, -83.8087, 12, 15, 'office', 'office'));
+  }
+  const nowHM = new Date();
+  if (nowHM.getHours() >= 8) {
+    for (const u of staff.filter(u => u.technician_id)) {
+      const away = u.name === 'Sam Turner';
+      const id = Number(punch.run(u.id, u.technician_id, `${today}T07:${away ? '52' : '31'}`, null, away ? 39.9611 : 39.9241, away ? -83.7426 : -83.8089, 18, away ? 7200 : 12, away ? 'away' : 'office', null).lastInsertRowid);
+      if (away) db.prepare('INSERT INTO alerts (kind, severity, title, body, link) VALUES (?,?,?,?,?)').run('clock_location', 'warn', `${u.name} clocked in 4.5 mi from the office`, `${today} 07:52\nLocation: https://www.google.com/maps?q=39.9611,-83.7426 (±18 m)`, `#/timeclock?entry=${id}`);
+    }
+  }
+}
+
 // A demo customer-portal login (Tom & Linda Becker)
 db.prepare('INSERT INTO portal_users (customer_id, name, email, password_hash, email_verified) VALUES (?,?,?,?,1)')
   .run(1, 'Tom Becker', 'becker@example.com', hashPassword('demo1234'));
@@ -288,5 +311,5 @@ db.prepare("UPDATE purchase_invoices SET vendor = 'Anixter', invoice_number = '9
 await processInvoice(db, r2);
 
 console.log(`Demo data loaded into ${DB_PATH}`);
-console.log('Sign in with owner@demo.local / demo1234 (also admin@, sales@, accounting@, jen@demo.local)');
+console.log('Sign in with owner@demo.local / demo1234 (also admin@, sales@, accounting@, and technicians jen@, mike@, sam@demo.local)');
 console.log('Customer portal (/portal): becker@example.com / demo1234');

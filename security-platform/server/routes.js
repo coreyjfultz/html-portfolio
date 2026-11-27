@@ -14,6 +14,7 @@ import { decodeImage, saveImage, sendImage, removeImage } from './media.js';
 import { sendForSignature, duplicate, publicView, byToken, markViewed, sign, decline, signingUrl } from './proposals.js';
 import { registerPortalRoutes, invite as portalInvite } from './portal.js';
 import { registerTruckStockRoutes } from './truckstock.js';
+import { registerTimeClockRoutes } from './timeclock.js';
 import { openAlerts, resolveAlert } from './alerts.js';
 import { putOnTest, clearTest, markConfirmed, logEvent, ingestSignals, stationInfo, CONNECTORS } from './monitoring.js';
 import { stripeConfig, checkoutForInvoice, checkoutForSetup, listMethods, removeMethod, setDefaultMethod, chargeSaved, payLink, handleWebhook } from './payments.js';
@@ -378,6 +379,9 @@ export function buildRoutes() {
 
   // ------------------------------------------------------------ truck stock, job materials, start-of-day check
   registerTruckStockRoutes(r);
+
+  // ------------------------------------------------------------ time clock
+  registerTimeClockRoutes(r);
 
   // ------------------------------------------------------------ alerts for the owner / office
   r('GET', '/api/alerts', G.staff, ({ db, user }) => openAlerts(db, user.role));

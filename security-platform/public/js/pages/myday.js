@@ -30,6 +30,7 @@ export async function render(view) {
     <div class="page-head"><div><h1>My day</h1><div class="sub">${new Date().toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' })} · ${calls.length} job${calls.length === 1 ? '' : 's'} today</div></div>
       <div class="actions"><button class="btn" data-sync>Add to my phone calendar</button><a class="btn" href="#/calendar">My calendar</a><a class="btn" href="#/calls?new=1">+ Service call</a></div></div>
     <div class="stack">
+      <div class="card"><div class="card-body" data-clock></div></div>
       <div class="card hidden" data-ready></div>
       ${countDue ? html`<div class="banner warn row" style="justify-content:space-between">🧮 Weekly truck count is due for ${truck.unit_name}${lastCount ? '' : ' (never counted)'}. <button class="btn sm primary" data-count>Count my truck</button></div>` : ''}
       ${calls.length ? calls.map(c => html`<a class="card" href="#/calls/${c.id}" style="display:block;color:inherit;text-decoration:none;border-left:5px solid ${c.priority === 'emergency' ? 'var(--bad)' : c.technician_color || 'var(--primary)'}">
@@ -51,4 +52,5 @@ export async function render(view) {
   $('[data-load]', view)?.addEventListener('click', () => transferStock(items, null, () => render(view), { from: 0, to: truck.id }));
   $('[data-count]', view)?.addEventListener('click', () => countDialog(truck, () => render(view)));
   readinessCard($('[data-ready]', view), techId);
+  import('./timeclock.js').then(m => m.clockWidget($('[data-clock]', view)));
 }
