@@ -59,6 +59,7 @@ export async function detail(view, [id]) {
             ...(office ? [{ label: 'Value', render: s => money(s.qty * (s.unit_cost || 0)), cls: 'num' }] : []),
             { label: '', cls: 'actions-cell', render: s => html`${office ? html`<button class="btn sm ghost" data-cnt="${s.item_id}">Count</button>` : ''}` },
           ] })}</div></div>
+      ${office ? html`<div class="card" style="grid-column:1/-1" data-loc></div>` : ''}
       <div class="card" style="grid-column:1/-1" data-truck></div>
       ${office ? html`<div class="card span2" style="grid-column:1/-1"><div class="card-head"><h2>Vehicle expenses</h2>
           <button class="btn sm" data-exp>+ Expense</button></div><div class="card-body flush">${dataTable({
@@ -70,6 +71,7 @@ export async function detail(view, [id]) {
       <div class="card" style="grid-column:1/-1"><div class="card-head"><h2>Stock movements</h2></div><div class="card-body flush">${movesTable(moves, true)}</div></div>
     </div>`);
   $('[data-edit]', view)?.addEventListener('click', () => openForm('vehicles', { record: v, onSaved: refresh, onDeleted: () => { location.hash = '#/vehicles'; } }));
+  if ($('[data-loc]', view)) import('./map.js').then(m => m.vehicleLocationCard($('[data-loc]', view), v));
   truckCard($('[data-truck]', view), v, { mine: !!state.user.technician_id && v.assigned_technician_id === state.user.technician_id });
   $('[data-load]', view).addEventListener('click', () => transferStock(items, null, refresh, { from: 0, to: v.id }));
   $('[data-unload]', view).addEventListener('click', () => transferStock(items, onBoard[0]?.item_id, refresh, { from: v.id, to: 0 }));

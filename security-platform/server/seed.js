@@ -272,6 +272,27 @@ for (const [name, tag, category, v, cost, status] of [
   if (install) for (const [k, q] of [['cam4k', 4], ['nvr8', 1], ['hdd4', 1], ['cat6', 1]]) C('job_materials', { service_call_id: install.id, item_id: items[k].id, qty: q });
 }
 
+// Map points around Springfield, OH for customers/sites, and live truck positions.
+{
+  let i = 0;
+  for (const c of db.prepare('SELECT id FROM customers ORDER BY id').all()) {
+    const ang = i * 2.1, r = 0.02 + (i % 5) * 0.018; i++;
+    db.prepare('UPDATE customers SET lat = ?, lng = ? WHERE id = ?').run(+(39.9242 + Math.sin(ang) * r).toFixed(5), +(-83.8088 + Math.cos(ang) * r * 1.3).toFixed(5), c.id);
+  }
+  for (const l of db.prepare('SELECT id, customer_id FROM locations').all()) {
+    const c = db.prepare('SELECT lat, lng FROM customers WHERE id = ?').get(l.customer_id);
+    db.prepare('UPDATE locations SET lat = ?, lng = ? WHERE id = ?').run(c.lat + 0.004 * (l.id % 3), c.lng - 0.005 * (l.id % 2), l.id);
+  }
+  const pos = db.prepare('INSERT INTO vehicle_positions (vehicle_id, lat, lng, speed_mph, heading, recorded_at, address, source) VALUES (?,?,?,?,?,?,?,?)');
+  const nowHM = (() => { const d = new Date(); return `${today}T${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`; })();
+  pos.run(v1.id, 39.9361, -83.7952, 31, 80, nowHM, 'E Main St & Limestone St, Springfield, OH', 'demo');
+  pos.run(v2.id, 39.9102, -83.8301, 0, 0, nowHM, 'Northgate Self Storage, 2200 Northgate Rd', 'demo');
+  pos.run(v3.id, 39.9530, -83.7710, 44, 200, nowHM, 'I-70 W near exit 59', 'demo');
+  for (const [v, tid] of [[v1, '281474976710655'], [v2, '281474976710656'], [v3, '281474976710657']]) {
+    db.prepare('UPDATE vehicles SET tracker_id = ?, tracking_url = ?, camera_url = ? WHERE id = ?').run(tid, `https://cloud.samsara.com/o/demo/devices/${tid}/vehicle`, `https://cloud.samsara.com/o/demo/devices/${tid}/vehicle?cameras=1`, v.id);
+  }
+}
+
 // On-call rotation (started 3 days ago) and a few calls in the log.
 {
   const start = day(-3);

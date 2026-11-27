@@ -16,7 +16,7 @@ const SETTINGS = [
 export async function render(view, _, query) {
   const tab = query.tab || 'company';
   mount(view, html`<div class="page-head"><div><h1>Settings</h1><div class="sub">Company, users and data</div></div></div>
-    <div class="tabs">${[['company', 'Company & billing'], ['payments', 'Payments'], ['notifications', 'Texts & email'], ['calendars', 'Calendars'], ['receiving', 'Receiving'], ['field', 'Field rules'], ['phone', 'Phone & on-call'], ['users', 'Users & logins'], ['audit', 'Activity log'], ['data', 'Backup & data']].map(([k, l]) => html`<button class="${k === tab ? 'on' : ''}" data-tab="${k}">${l}</button>`)}</div>
+    <div class="tabs">${[['company', 'Company & billing'], ['payments', 'Payments'], ['notifications', 'Texts & email'], ['calendars', 'Calendars'], ['receiving', 'Receiving'], ['field', 'Field rules'], ['phone', 'Phone & on-call'], ['tracking', 'Tracking & maps'], ['users', 'Users & logins'], ['audit', 'Activity log'], ['data', 'Backup & data']].map(([k, l]) => html`<button class="${k === tab ? 'on' : ''}" data-tab="${k}">${l}</button>`)}</div>
     <div data-pane></div>`);
   $$('[data-tab]', view).forEach(b => b.addEventListener('click', () => { location.hash = `#/settings?tab=${b.dataset.tab}`; }));
   const pane = $('[data-pane]', view);
@@ -182,6 +182,7 @@ export async function render(view, _, query) {
     });
   }
 
+  if (tab === 'tracking') await (await import('./map.js')).settingsPane(pane, { settingsCards, wireSettingsCards });
   if (tab === 'phone') await (await import('./phone.js')).settingsPane(pane, { settingsCards, wireSettingsCards });
 
   if (tab === 'field') {

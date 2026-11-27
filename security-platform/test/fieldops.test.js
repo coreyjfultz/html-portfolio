@@ -383,4 +383,82 @@ test('company phone: after-hours calls ring the on-call tech (press 1), then the
   }
 });
 
+test('vehicle tracking (Samsara / push feed), address lookup, drive times, and travel-time checks when scheduling', async () => {
+  const http = await import('node:http');
+  const seen = [];
+  const fake = http.createServer((req, res) => {
+    seen.push(req.url + ' ' + (req.headers.authorization || ''));
+    const send = d => { res.writeHead(200, { 'Content-Type': 'application/json' }); res.end(JSON.stringify(d)); };
+    if (req.url.startsWith('/fleet/vehicles/locations')) return send({ data: [
+      { id: 'sam-1', name: 'Truck 1', location: { latitude: 39.95, longitude: -83.80, speed: 34, heading: 90, time: new Date().toISOString(), reverseGeo: { formattedLocation: 'Main St, Springfield' } } },
+      { id: 'sam-9', name: 'Unknown van', location: { latitude: 1, longitude: 1 } }] });
+    if (req.url.startsWith('/search')) return send([{ lat: '39.9300', lon: '-83.8000' }]);
+    if (req.url.startsWith('/route/v1/driving/')) return send({ routes: [{ duration: 25 * 60 }] });
+    res.writeHead(404); res.end();
+  });
+  await new Promise(r => fake.listen(0, '127.0.0.1', r));
+  const fb = `http://127.0.0.1:${fake.address().port}`;
+  Object.assign(process.env, { SAMSARA_API_BASE: fb, NOMINATIM_BASE: fb, OSRM_BASE: fb });
+  try {
+    await owner.put('/api/settings', { tracking_provider: 'samsara', samsara_token: 'samsara-secret', geocoder: 'nominatim', routing: 'osrm', travel_buffer_min: '10', avg_speed_mph: '30' });
+    assert.equal((await owner.get('/api/settings')).data.samsara_token, undefined, 'token never sent back');
+    const poll = (await owner.post('/api/tracking/refresh')).data;
+    assert.equal(poll.error, null);
+    assert.equal(poll.count, 1, 'matched Truck 1 by name; unknown vehicles ignored');
+    assert.ok(seen.some(u => u.includes('Bearer samsara-secret')));
+    const live = (await owner.get('/api/tracking/live')).data;
+    const t1 = live.vehicles.find(v => v.vehicle_id === ids.truck);
+    assert.equal(t1.lat, 39.95);
+    assert.equal(t1.address, 'Main St, Springfield');
+    assert.equal((await tech.get('/api/tracking/live')).status, 403, 'only owners/admins see live tracking');
+
+    // Push feed (for other providers)
+    await owner.put(`/api/r/vehicles/${ids.truck2}`, { tracker_id: 'GPS-22', camera_url: 'https://cams.example/van2' });
+    const tok = db.prepare("SELECT value FROM settings WHERE key = 'tracking_token'").get().value;
+    assert.equal((await fetch(`${base}/api/inbound/tracking/wrong`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '[]' })).status, 404);
+    const push = await fetch(`${base}/api/inbound/tracking/${tok}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify([{ id: 'GPS-22', lat: 39.80, lng: -83.90, speed: 0 }]) });
+    assert.equal((await push.json()).stored, 1);
+
+    // Address lookup
+    const g = (await owner.post('/api/geocode', { address: '1 Test Rd, Springfield OH' })).data;
+    assert.equal(g.lat, 39.93);
+    const far = (await owner.post('/api/r/customers', { name: 'Far Away Farm', type: 'commercial', service_address: '9 County Rd', city: 'Xenia' })).data;
+    const near = (await owner.post('/api/r/customers', { name: 'Next Door Deli', type: 'commercial', service_address: '2 Main St', city: 'Springfield' })).data;
+    db.prepare('UPDATE customers SET lat = ?, lng = ? WHERE id = ?').run(39.68, -83.93, far.id); // ~18 mi south
+    db.prepare('UPDATE customers SET lat = ?, lng = ? WHERE id = ?').run(39.9245, -83.8090, near.id);
+    await owner.put(`/api/r/customers/${near.id}`, { service_address: '4 Main St' });
+    assert.equal(db.prepare('SELECT lat FROM customers WHERE id = ?').get(near.id).lat, null, 'moving the address clears the map point');
+    db.prepare('UPDATE customers SET lat = ?, lng = ? WHERE id = ?').run(39.9245, -83.8090, near.id);
+
+    // Travel-time check: Bo has a job at the deli 9–10; booking him at the farm at 10:05 is not possible
+    const day = '2031-03-04';
+    await owner.post('/api/r/service_calls', { customer_id: near.id, title: 'Keypad', technician_id: ids.tech2, scheduled_start: `${day}T09:00`, duration_hours: 1 });
+    let r = await owner.post('/api/r/service_calls', { customer_id: far.id, title: 'Gate', technician_id: ids.tech2, scheduled_start: `${day}T10:05`, duration_hours: 1 });
+    assert.equal(r.status, 409);
+    assert.equal(r.data.code, 'conflict');
+    assert.match(r.data.error, /Not enough travel time: SC-\d+ \(Next Door Deli\) ends at 10:00 AM and it's about \d+ min \(estimated\)/);
+    assert.equal(r.data.canOverride, true);
+    // Real drive time from the routing service gets cached and used
+    const pre = (await owner.post('/api/travel-time', { customer_id: far.id, technician_id: ids.tech2, scheduled_start: `${day}T10:05`, duration_hours: 1 })).data;
+    assert.equal(pre.ok, false);
+    assert.match(pre.message, /about 25 min to get here plus a 10-min buffer\. Earliest arrival is 10:35 AM/);
+    assert.equal((await owner.post('/api/r/service_calls', { customer_id: far.id, title: 'Gate', technician_id: ids.tech2, scheduled_start: `${day}T10:40`, duration_hours: 1 })).status, 200, 'enough time');
+    // ...and the job after: 11:40 end + 25 + 10 → a 12:00 job back at the deli is too soon
+    r = await owner.post('/api/r/service_calls', { customer_id: near.id, title: 'Follow-up', technician_id: ids.tech2, scheduled_start: `${day}T12:00`, duration_hours: 0.5 });
+    assert.equal(r.status, 409);
+    assert.match(r.data.error, /Not enough travel time to the next job|ends at 11:40 AM/);
+    assert.equal((await owner.post('/api/r/service_calls', { customer_id: near.id, title: 'Follow-up', technician_id: ids.tech2, scheduled_start: `${day}T12:00`, duration_hours: 0.5, allow_conflict: true })).status, 200, 'owner can book anyway');
+    await owner.put('/api/settings', { travel_check: 'off' });
+    assert.equal((await owner.post('/api/r/service_calls', { customer_id: far.id, title: 'x', technician_id: ids.tech2, scheduled_start: `${day}T13:00`, duration_hours: 0.25 })).status, 200);
+
+    // Team status: Tess (Truck 1) — live ETA to her next job uses the routing service
+    const team = live.team.find(t => t.technician_id === ids.tech);
+    assert.equal(team.vehicle.unit_name, 'Truck 1');
+  } finally {
+    for (const k of ['SAMSARA_API_BASE', 'NOMINATIM_BASE', 'OSRM_BASE']) delete process.env[k];
+    await owner.put('/api/settings', { tracking_provider: 'none', geocoder: 'off', routing: 'estimate', travel_check: 'on' });
+    fake.close();
+  }
+});
+
 export { owner, tech, ids, db, client, today, notifyIdle };

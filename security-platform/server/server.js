@@ -2,7 +2,7 @@ import http from 'node:http';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { openDb } from './db.js';
+import { openDb, getSettings } from './db.js';
 import { sessionUser, purgeSessions } from './security.js';
 import { HttpError, list, get, create, update, remove, reveal, getDef, canRead } from './resources.js';
 import { buildRoutes } from './routes.js';
@@ -19,8 +19,18 @@ const SECURITY_HEADERS = {
   'Referrer-Policy': 'same-origin',
   'X-Frame-Options': 'DENY',
   'Permissions-Policy': 'camera=(), microphone=(), geolocation=(self)',
-  'Content-Security-Policy': "default-src 'self'; img-src 'self' data: blob:; style-src 'self' 'unsafe-inline'; script-src 'self'; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'",
 };
+// Map tiles come from the configured tile server (OpenStreetMap by default).
+let cspCache = { tiles: null, value: '' };
+function csp(db) {
+  const tiles = getSettings(db).map_tiles || '';
+  if (cspCache.tiles !== tiles) {
+    let host = '';
+    try { const u = new URL(tiles.replace(/\{[a-z]\}/g, 'a')); host = `${u.protocol}//${u.host.replace(/^a\./, '*.')}`; } catch { /* no map tiles */ }
+    cspCache = { tiles, value: `default-src 'self'; img-src 'self' data: blob: ${host} https://*.tile.openstreetmap.org https://api.twilio.com; media-src 'self' https://api.twilio.com https://*.twilio.com; style-src 'self' 'unsafe-inline'; script-src 'self'; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'` };
+  }
+  return cspCache.value;
+}
 
 function parseCookies(header = '') {
   return Object.fromEntries(header.split(';').map(c => c.trim().split('=')).filter(p => p[0]).map(([k, ...v]) => [k, decodeURIComponent(v.join('='))]));
@@ -73,6 +83,7 @@ export function createServer(db) {
 
   return http.createServer(async (req, res) => {
     for (const [k, v] of Object.entries(SECURITY_HEADERS)) res.setHeader(k, v);
+    res.setHeader('Content-Security-Policy', csp(db));
     const url = new URL(req.url, 'http://localhost');
     const pathname = url.pathname;
 
@@ -148,6 +159,12 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
   import('./truckstock.js').then(m => setInterval(() => { try { m.truckCountReminders(db); } catch (e) { console.error('truck counts', e); } }, 3600e3).unref());
   // On-call shift reminders.
   import('./phone.js').then(m => setInterval(() => { try { m.onCallReminders(db); } catch (e) { console.error('on-call', e); } }, 3600e3).unref());
+  // Vehicle GPS positions from the tracking provider, and map coordinates for new addresses.
+  import('./tracking.js').then(m => {
+    const every = Math.max(1, Number(getSettings(db).tracking_poll_minutes) || 2) * 60e3;
+    setInterval(() => m.pollPositions(db).catch(e => console.error('tracking', e)), every).unref();
+    setInterval(() => m.geocodeMissing(db).catch(e => console.error('geocode', e)), 10 * 60e3).unref();
+  });
   const port = Number(process.env.PORT) || 3000;
   const host = process.env.HOST || '0.0.0.0';
   createServer(db).listen(port, host, () => console.log(`SecureOps running at http://localhost:${port}`));

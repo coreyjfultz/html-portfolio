@@ -47,6 +47,9 @@ export const DEFAULT_SETTINGS = {
   voice_greeting: 'Thank you for calling {company}.', voice_after_hours: 'Our office is closed. Please hold while we connect you to the technician on call.',
   voice_voicemail: 'Sorry, we could not reach anyone right now. Please leave your name, number and address after the tone and we will call you right back.',
   voice_whisper: '1', voice_grant_hours: '24', oncall_notify: '1',
+  tracking_provider: 'none', samsara_token: '', tracking_feed_url: '', tracking_feed_token: '', tracking_token: '', tracking_poll_minutes: '2',
+  geocoder: 'off', google_maps_key: '', routing: 'estimate', osrm_url: 'https://router.project-osrm.org', avg_speed_mph: '30',
+  travel_check: 'on', travel_buffer_min: '10', map_tiles: 'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
   stripe_secret: '', stripe_webhook_secret: '', stripe_ach: '1',
   qbo_client_id: '', qbo_client_secret: '', qbo_environment: 'sandbox', qbo_realm_id: '', qbo_company_name: '',
   qbo_access: '', qbo_refresh: '', qbo_access_expires: '', qbo_item_id: '', qbo_tax_item_id: '', qbo_auto_sync: '1', qbo_last_sync: '',
@@ -69,11 +72,11 @@ export const DEFAULT_TEMPLATES = {
 };
 Object.assign(DEFAULT_SETTINGS, DEFAULT_TEMPLATES);
 // Settings stored encrypted; never sent back to the browser.
-export const SECRET_SETTINGS = new Set(['smtp_pass', 'twilio_token', 'stripe_secret', 'stripe_webhook_secret', 'qbo_client_secret']);
+export const SECRET_SETTINGS = new Set(['samsara_token', 'tracking_feed_token', 'google_maps_key', 'smtp_pass', 'twilio_token', 'stripe_secret', 'stripe_webhook_secret', 'qbo_client_secret']);
 // Managed by the system only: never sent to the browser, never set through the settings form.
 export const INTERNAL_SETTINGS = new Set(['qbo_access', 'qbo_refresh', 'qbo_access_expires', 'qbo_realm_id', 'qbo_company_name', 'qbo_last_sync', 'invoice_next_number_lock']);
 // Settings that are never sent to non-admin users or editable through PUT /api/settings.
-export const PRIVATE_SETTINGS = new Set(['voice_token', 'inbound_token', 'calendar_token', 'smtp_pass', 'twilio_token', 'stripe_secret', 'stripe_webhook_secret']);
+export const PRIVATE_SETTINGS = new Set(['tracking_token', 'samsara_token', 'tracking_feed_token', 'google_maps_key', 'voice_token', 'inbound_token', 'calendar_token', 'smtp_pass', 'twilio_token', 'stripe_secret', 'stripe_webhook_secret']);
 
 function columnSql(f) {
   let sql = `"${f.name}" ${SQL_TYPES[f.type] || 'TEXT'}`;
@@ -247,6 +250,16 @@ function migrate(db) {
     );
     CREATE INDEX IF NOT EXISTS idx_phone_calls_customer ON phone_calls(customer_id, created_at);
     CREATE INDEX IF NOT EXISTS idx_phone_calls_sid ON phone_calls(call_sid);
+    -- Latest GPS position per vehicle, from the tracking provider.
+    CREATE TABLE IF NOT EXISTS vehicle_positions (
+      vehicle_id INTEGER PRIMARY KEY REFERENCES vehicles(id) ON DELETE CASCADE,
+      lat REAL NOT NULL, lng REAL NOT NULL, speed_mph REAL, heading REAL, recorded_at TEXT, address TEXT, source TEXT
+    );
+    -- Drive times between places (rounded coordinates), so scheduling checks are instant.
+    CREATE TABLE IF NOT EXISTS route_cache (
+      from_key TEXT NOT NULL, to_key TEXT NOT NULL, minutes INTEGER NOT NULL, source TEXT, updated_at TEXT,
+      PRIMARY KEY (from_key, to_key)
+    );
     CREATE TABLE IF NOT EXISTS monitoring_events (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       account_id INTEGER NOT NULL REFERENCES monitoring_accounts(id) ON DELETE CASCADE,
@@ -312,6 +325,7 @@ function migrate(db) {
   db.prepare("UPDATE settings SET value = ? WHERE key = 'inbound_token' AND (value IS NULL OR value = '')").run(randomBytes(24).toString('base64url'));
   db.prepare("UPDATE settings SET value = ? WHERE key = 'calendar_token' AND (value IS NULL OR value = '')").run(randomBytes(18).toString('base64url'));
   db.prepare("UPDATE settings SET value = ? WHERE key = 'voice_token' AND (value IS NULL OR value = '')").run(randomBytes(18).toString('base64url'));
+  db.prepare("UPDATE settings SET value = ? WHERE key = 'tracking_token' AND (value IS NULL OR value = '')").run(randomBytes(18).toString('base64url'));
   for (const t of db.prepare('SELECT id FROM technicians WHERE calendar_token IS NULL').all()) {
     db.prepare('UPDATE technicians SET calendar_token = ? WHERE id = ?').run(randomBytes(18).toString('base64url'), t.id);
   }

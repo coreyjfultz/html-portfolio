@@ -621,3 +621,17 @@ table.t tr.click:hover td { background: #f8faff; }
 
 .check-row { display: flex; gap: 8px; align-items: flex-start; cursor: pointer; }
 .check-row input { flex: none; margin-top: 3px; }
+
+/* Live map */
+.map-layout { display: grid; grid-template-columns: minmax(0, 1fr) 340px; gap: 16px; align-items: start; }
+.map-card { overflow: hidden; position: sticky; top: 76px; }
+.livemap { height: calc(100vh - 210px); min-height: 420px; }
+.minimap { height: 220px; border-top: 1px solid var(--border); }
+.team-card { cursor: pointer; }
+.map-pin { background: none; border: 0; }
+.map-pin .pin { display: grid; place-items: center; width: 30px; height: 30px; border-radius: 50%; background: var(--c); color: #fff; font: 700 11px/1 Inter, sans-serif; border: 2px solid #fff; box-shadow: 0 2px 6px rgba(0,0,0,.35); }
+.map-pin .pin.job { width: 18px; height: 18px; font-size: 0; margin: 6px; border-radius: 4px; transform: rotate(45deg); opacity: .9; }
+.map-pin .pin.job.completed { opacity: .45; }
+.map-pin .pin.office { background: #0f172a; font-size: 14px; }
+.leaflet-container { font-family: Inter, system-ui, sans-serif; background: var(--surface-2); }
+@media (max-width: 900px) { .map-layout { grid-template-columns: 1fr; } .map-card { position: static; } .livemap { height: 60vh; } }

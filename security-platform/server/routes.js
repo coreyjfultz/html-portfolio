@@ -16,6 +16,7 @@ import { registerPortalRoutes, invite as portalInvite } from './portal.js';
 import { registerTruckStockRoutes } from './truckstock.js';
 import { registerTimeClockRoutes } from './timeclock.js';
 import { registerPhoneRoutes, onCallFeedEvents } from './phone.js';
+import { registerTrackingRoutes } from './tracking.js';
 import { openAlerts, resolveAlert } from './alerts.js';
 import { putOnTest, clearTest, markConfirmed, logEvent, ingestSignals, stationInfo, CONNECTORS } from './monitoring.js';
 import { stripeConfig, checkoutForInvoice, checkoutForSetup, listMethods, removeMethod, setDefaultMethod, chargeSaved, payLink, handleWebhook } from './payments.js';
@@ -386,6 +387,9 @@ export function buildRoutes() {
 
   // ------------------------------------------------------------ on-call rotation & company phone (Twilio)
   registerPhoneRoutes(r, { create });
+
+  // ------------------------------------------------------------ vehicle tracking, maps, travel time
+  registerTrackingRoutes(r);
 
   // ------------------------------------------------------------ alerts for the owner / office
   r('GET', '/api/alerts', G.staff, ({ db, user }) => openAlerts(db, user.role));
