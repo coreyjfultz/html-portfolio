@@ -242,6 +242,50 @@ input:focus, select:focus, textarea:focus { outline: 2px solid var(--primary); o
 .day-list .day { margin-bottom: 16px; }
 .day-list .day h3 { margin-bottom: 8px; }
 
+/* ---------- documents (proposals, agreements) */
+.doc-frame { background: var(--muted-soft); border-radius: var(--radius); padding: 24px; }
+.doc { background: #fff; color: #1f2937; max-width: 860px; margin: 0 auto; padding: 48px 52px; border-radius: 6px; box-shadow: 0 1px 3px rgba(0,0,0,.08), 0 8px 30px rgba(15,23,42,.08); font-size: 14px; line-height: 1.55; }
+.doc-head { display: flex; justify-content: space-between; gap: 24px; padding-bottom: 22px; border-bottom: 3px solid #0f1b2d; flex-wrap: wrap; }
+.doc-brand { display: flex; gap: 14px; align-items: center; }
+.doc-logo { max-height: 56px; max-width: 180px; object-fit: contain; }
+.doc-company { font-size: 20px; font-weight: 750; color: #0f1b2d; letter-spacing: -.01em; }
+.doc-muted { color: #6b7280; font-size: 12.5px; }
+.doc-meta { text-align: right; font-size: 13px; color: #374151; }
+.doc-kind { font-size: 13px; font-weight: 700; letter-spacing: .12em; text-transform: uppercase; color: #1d4ed8; margin-bottom: 4px; }
+.doc-parties { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 20px; padding: 22px 0; font-size: 13.5px; }
+.doc-label { font-size: 11px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; color: #6b7280; margin-bottom: 4px; }
+.doc-title { font-size: 24px; font-weight: 750; color: #0f1b2d; margin: 4px 0 10px; letter-spacing: -.015em; }
+.doc-intro { white-space: pre-wrap; color: #374151; margin-bottom: 18px; }
+.doc-table { width: 100%; border-collapse: collapse; margin-top: 8px; }
+.doc-table th { text-align: left; font-size: 11px; letter-spacing: .08em; text-transform: uppercase; color: #6b7280; padding: 10px 8px; border-bottom: 2px solid #e5e7eb; }
+.doc-table td { padding: 11px 8px; border-bottom: 1px solid #f0f1f3; }
+.doc-table .r { text-align: right; white-space: nowrap; }
+.doc-totals { margin: 14px 0 0 auto; width: 320px; max-width: 100%; }
+.doc-totals > div { display: flex; justify-content: space-between; padding: 4px 8px; }
+.doc-totals .grand { font-size: 18px; font-weight: 750; color: #0f1b2d; border-top: 2px solid #0f1b2d; margin-top: 6px; padding-top: 10px; }
+.doc-deposit { background: #eff6ff; color: #1e40af; border-radius: 6px; font-weight: 600; margin-top: 6px; }
+.doc-monthly { display: flex; justify-content: space-between; align-items: center; gap: 16px; margin-top: 22px; padding: 16px 18px; border: 1px solid #dbeafe; background: #f8fbff; border-radius: 8px; }
+.doc-monthly-amt { font-size: 24px; font-weight: 750; color: #0f1b2d; white-space: nowrap; }
+.doc-monthly-amt span { font-size: 13px; font-weight: 500; color: #6b7280; }
+.doc-terms { margin-top: 28px; }
+.doc-terms-body { white-space: pre-wrap; font-size: 12.5px; color: #4b5563; columns: 2 280px; column-gap: 28px; }
+.doc-signed { margin-top: 30px; padding-top: 18px; border-top: 1px solid #e5e7eb; font-size: 13px; }
+.doc-sigline { max-width: 320px; border-bottom: 1px solid #111; margin-bottom: 6px; min-height: 40px; }
+.doc-sigline img { max-width: 100%; max-height: 110px; display: block; }
+.doc-hash { word-break: break-all; margin-top: 4px; font-size: 11px; }
+
+/* ---------- public pages (signing, portal) */
+.public-page { background: var(--bg); position: relative; }
+.public-page::before { content: ""; position: absolute; top: 0; left: 0; right: 0; height: 240px; background: #0f1b2d; z-index: -1; }
+.public-wrap { max-width: 900px; margin: 0 auto; padding: 28px 16px 60px; }
+.public-card { background: var(--surface); border-radius: 12px; padding: 24px; box-shadow: var(--shadow); margin-top: 20px; }
+.public-actions { display: flex; justify-content: flex-end; margin-bottom: 12px; }
+.public-foot { text-align: center; color: var(--text-3); font-size: 13px; margin-top: 28px; }
+.sign-card { border: 2px solid var(--primary); }
+.banner { background: var(--surface); border-radius: 10px; padding: 14px 16px; margin-bottom: 16px; font-weight: 550; box-shadow: var(--shadow); }
+.banner.good { background: var(--good-soft); color: var(--good); }
+.banner.warn { background: var(--warn-soft); color: var(--warn); }
+
 /* ---------- photos & signatures */
 .photo-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(92px, 1fr)); gap: 8px; }
 .photo { position: relative; margin: 0; }
@@ -327,6 +371,10 @@ input:focus, select:focus, textarea:focus { outline: 2px solid var(--primary); o
   .app { display: block; }
   .view { padding: 0; max-width: none; }
   .invoice-paper { border: 0; padding: 0; }
+  .doc-frame { background: none; padding: 0; }
+  .doc { box-shadow: none; padding: 0; max-width: none; }
+  .public-page { background: #fff; }
+  .public-wrap { padding: 0; }
   .card { box-shadow: none; }
 }
 
@@ -360,6 +408,10 @@ input:focus, select:focus, textarea:focus { outline: 2px solid var(--primary); o
   table.t.responsive td.actions-cell { justify-content: flex-end; }
   .hbar { grid-template-columns: 100px 1fr 56px; }
   .invoice-paper { padding: 20px; }
+  .doc-frame { padding: 0; background: none; }
+  .doc { padding: 24px 18px; }
+  .doc-meta { text-align: left; }
+  .doc-terms-body { columns: 1; }
   .dl { grid-template-columns: 1fr; gap: 2px; }
   .dl dd { margin-bottom: 8px; }
 }

@@ -258,4 +258,89 @@ test('before/after photos and customer sign-off on completion', async () => {
   assert.equal((await owner.get(`/api/r/service_calls/${job.id}`)).data.signed_by, 'Pat Customer');
 });
 
+test('proposals: build, send, view, e-sign with audit trail, then billing + install job + deposit', async () => {
+  const cust = (await owner.post('/api/r/customers', { name: 'Riverside Café', type: 'commercial', email: 'owner@riverside.example', contact_name: 'Dana Lee' })).data;
+  ids.cafe = cust.id;
+  const item = (await owner.post('/api/r/inventory_items', { name: '4K camera', sku: 'CAM4K', unit_price: 200 })).data;
+  const p = (await owner.post('/api/r/proposals', { customer_id: cust.id, kind: 'installation agreement', title: '4 cameras + monitoring', monthly_amount: 30, monthly_description: 'Video monitoring', term_months: 12, deposit_percent: 50, tax_rate: 10 })).data;
+  assert.equal(p.status, 'draft');
+  assert.ok(p.valid_until > new Date().toISOString().slice(0, 10));
+  const empty = (await owner.post('/api/r/proposals', { customer_id: cust.id, title: 'Empty' })).data;
+  assert.equal((await owner.post(`/api/proposals/${empty.id}/send`)).status, 400, "can't send an empty proposal");
+  await owner.post('/api/r/proposal_items', { proposal_id: p.id, item_id: item.id, qty: 4 });
+  await owner.post('/api/r/proposal_items', { proposal_id: p.id, description: 'Installation labor', qty: 4, unit_price: 100, taxable: 0 });
+  const priced = (await owner.get(`/api/r/proposals/${p.id}`)).data;
+  assert.equal(priced.subtotal, 1200, 'inventory price filled in automatically');
+  assert.equal(priced.tax, 80);
+  assert.equal(priced.total, 1280);
+
+  const sent = (await owner.post(`/api/proposals/${p.id}/send`, { email: false })).data;
+  assert.match(sent.url, /\/sign\/[A-Za-z0-9_-]{30,}$/);
+  const token = sent.url.split('/').pop();
+  assert.equal(db.prepare('SELECT stage FROM customers WHERE id = ?').get(cust.id).stage, 'bid');
+
+  // The public page (no login)
+  const pub = client();
+  const page = await pub.call('GET', `/sign/${token}`, undefined, { raw: true });
+  assert.equal(page.status, 200);
+  assert.match(await page.text(), /sign\.js/);
+  const view = (await pub.get(`/api/public/proposals/${token}`)).data;
+  assert.equal(view.total, 1280);
+  assert.equal(view.deposit, 640);
+  assert.equal(view.customer.name, 'Riverside Café');
+  assert.equal(view.customer.id, undefined, 'no internal ids leak to the public page');
+  assert.equal((await owner.get(`/api/r/proposals/${p.id}`)).data.status, 'viewed');
+  assert.equal((await pub.get('/api/public/proposals/not-a-real-token-123456789')).status, 404);
+
+  // Signing rules
+  const PNG = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==';
+  assert.equal((await pub.post(`/api/public/proposals/${token}/sign`, { name: 'Dana Lee', image: PNG })).status, 400, 'must agree');
+  assert.equal((await pub.call('POST', `/api/public/proposals/${token}/sign`, { name: 'Dana Lee', image: PNG, agree: true }, { csrf: false })).status, 403, 'CSRF header still required');
+  const signed = await pub.post(`/api/public/proposals/${token}/sign`, { name: 'Dana Lee', title: 'Owner', email: 'dana@riverside.example', image: PNG, agree: true });
+  assert.equal(signed.status, 200, JSON.stringify(signed.data));
+  assert.equal(signed.data.status, 'signed');
+  assert.equal((await pub.post(`/api/public/proposals/${token}/sign`, { name: 'X', image: PNG, agree: true })).status, 409, 'cannot sign twice');
+
+  const after = (await owner.get(`/api/r/proposals/${p.id}`)).data;
+  assert.equal(after.signed_by, 'Dana Lee');
+  assert.match(after.doc_hash, /^[a-f0-9]{64}$/);
+  assert.ok(after.signed_ip);
+  assert.equal(db.prepare('SELECT stage FROM customers WHERE id = ?').get(cust.id).stage, 'accepted');
+  assert.equal((await owner.get(`/api/r/recurring_charges?customer_id=${cust.id}`)).data[0].amount, 30, 'monthly billing started');
+  const job = (await owner.get(`/api/r/service_calls/${after.service_call_id}`)).data;
+  assert.equal(job.call_type, 'installation');
+  const dep = (await owner.get(`/api/r/invoices/${after.invoice_id}`)).data;
+  assert.equal(dep.total, 640);
+  // Locked once signed
+  assert.equal((await owner.put(`/api/r/proposals/${p.id}`, { title: 'Changed' })).status, 409);
+  assert.equal((await owner.post('/api/r/proposal_items', { proposal_id: p.id, description: 'Extra', qty: 1, unit_price: 1 })).status, 409);
+  assert.equal((await owner.del(`/api/r/proposals/${p.id}`)).status, 409);
+  const doc = (await owner.get(`/api/proposals/${p.id}/document`)).data;
+  assert.equal(doc.signed.hash, after.doc_hash, 'document still matches what was signed');
+  // Duplicate makes an editable new version
+  const copy = (await owner.post(`/api/proposals/${p.id}/duplicate`)).data;
+  assert.equal(copy.status, 'draft');
+  assert.equal(copy.total, 1280);
+});
+
+test('proposals: decline and expiry; technicians have no access', async () => {
+  const p = (await owner.post('/api/r/proposals', { customer_id: ids.cafe, title: 'Fire alarm upgrade' })).data;
+  await owner.post('/api/r/proposal_items', { proposal_id: p.id, description: 'Panel', qty: 1, unit_price: 3000 });
+  const token = (await owner.post(`/api/proposals/${p.id}/send`, { email: false })).data.url.split('/').pop();
+  const pub = client();
+  assert.equal((await pub.post(`/api/public/proposals/${token}/decline`, { reason: 'Too expensive' })).status, 200);
+  assert.equal((await owner.get(`/api/r/proposals/${p.id}`)).data.declined_reason, 'Too expensive');
+
+  const old = (await owner.post('/api/r/proposals', { customer_id: ids.cafe, title: 'Old quote', valid_until: '2020-01-01' })).data;
+  await owner.post('/api/r/proposal_items', { proposal_id: old.id, description: 'X', qty: 1, unit_price: 1 });
+  db.prepare("UPDATE proposals SET public_token = 'expired-token-abcdefghijklmnop', status = 'sent' WHERE id = ?").run(old.id);
+  assert.equal((await pub.get('/api/public/proposals/expired-token-abcdefghijklmnop')).data.status, 'expired');
+  assert.equal((await pub.post('/api/public/proposals/expired-token-abcdefghijklmnop/sign', { name: 'A B', image: 'x', agree: true })).status, 410);
+
+  await owner.post('/api/users', { name: 'Tech2', email: 'tech2@example.com', password: 'password123', role: 'technician' });
+  const t = client();
+  await t.post('/api/auth/login', { email: 'tech2@example.com', password: 'password123' });
+  assert.equal((await t.get('/api/r/proposals')).status, 403);
+});
+
 export { owner, ids, db, base };

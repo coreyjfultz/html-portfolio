@@ -4,13 +4,14 @@ import { openDb, DB_PATH, tx } from './db.js';
 import { create, update, adjustStock, todayLocal, addDays, addMonths } from './resources.js';
 import { hashPassword } from './security.js';
 import { ingest, processInvoice } from './receiving.js';
+import { sendForSignature } from './proposals.js';
 
 const db = openDb();
 if (db.prepare('SELECT COUNT(*) AS n FROM customers').get().n > 0) {
   console.error(`Database ${DB_PATH} already has customers — not seeding.`);
   process.exit(1);
 }
-const sys = { id: null, name: 'seed', role: 'owner' };
+const sys = { id: null, name: 'Sam Sales', role: 'owner' };
 const today = todayLocal();
 const day = n => addDays(today, n);
 const monday = (() => { const d = new Date(today + 'T12:00:00Z'); const wd = (d.getUTCDay() + 6) % 7; return addDays(today, -wd); })();
@@ -209,6 +210,13 @@ C('invoice_items', { invoice_id: inst.id, description: '16-channel PoE NVR + 2×
 C('payments', { invoice_id: inst.id, date: day(-6), amount: 1500, method: 'card', reference: 'Deposit' });
 db.prepare('UPDATE service_calls SET invoice_id = ? WHERE id = ?').run(inst.id, a.id);
 
+// Proposals: one out for signature, one draft
+  const p1 = C('proposals', { customer_id: res4.id, kind: 'installation agreement', title: '6-camera system with video doorbell', intro: 'Supply and install six 4K turret cameras covering the driveway, front and back entries and backyard, a 4K video doorbell and an 8-channel NVR with 4TB storage. Includes app setup on your phones and a walkthrough.', monthly_amount: 24.99, monthly_description: 'Cloud backup + remote support', term_months: 12, deposit_percent: 30 });
+  [['4K turret IP camera', 6, 219, items.cam4k.id], ['8-channel PoE NVR', 1, 499, items.nvr8.id], ['4TB surveillance hard drive', 1, 159, items.hdd4.id], ['Installation labor (cabling, mounting, programming)', 8, 95, null]]
+    .forEach(([d, q, pr, it], i) => C('proposal_items', { proposal_id: p1.id, item_id: it, description: d, qty: q, unit_price: pr, taxable: it ? 1 : 0, sort: i }));
+  sendForSignature(db, p1.id, sys, { email: false });
+  const p2 = C('proposals', { customer_id: com2.id, kind: 'monitoring agreement', title: 'Access control expansion — Building C', intro: 'Add two card readers with door strikes at Building C entrances, tied into the existing access control cloud account.', monthly_amount: 20, monthly_description: 'Additional access control doors', term_months: 36 });
+  C('proposal_items', { proposal_id: p2.id, description: 'Card reader + strike + REX, installed', qty: 2, unit_price: 1150, taxable: 1 });
 });
 
 // Supplier invoices: one received automatically, one waiting for review.

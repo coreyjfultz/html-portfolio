@@ -598,3 +598,6 @@ const HOOKS = {
     },
   },
 };
+
+/** Lets feature modules (proposals, portal…) add business rules for their own resources. */
+export function registerHooks(name, hooks) { HOOKS[name] = { ...(HOOKS[name] || {}), ...hooks }; }

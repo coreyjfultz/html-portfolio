@@ -89,6 +89,7 @@ export async function detail(view, [id], query) {
     ['overview', 'Overview'],
     ['systems', 'Systems', cams.length + alarms.length + fires.length + exts.length],
     ['locations', 'Locations', locs.length || null],
+    ...(can.staff() ? [['proposals', 'Proposals']] : []),
     ['calls', 'Service calls', openCalls.length || null],
     ...(office ? [['billing', 'Billing', billing[1].filter(i => i.balance > 0 && i.status !== 'draft').length || null]] : []),
     ['contacts', 'Contacts', contacts.length || null],
@@ -113,6 +114,7 @@ export async function detail(view, [id], query) {
       <div class="actions">
         ${editor ? html`<button class="btn" data-edit>Edit</button>` : ''}
         <button class="btn" data-newcall>+ Service call</button>
+        ${can.sales() ? html`<button class="btn" data-newprop>+ Proposal</button>` : ''}
         ${office ? html`<button class="btn primary" data-newinv>+ Invoice</button>` : ''}
       </div></div>
     <div class="tabs">${tabs.map(([k, l, n]) => html`<button class="${k === tab ? 'on' : ''}" data-tab="${k}">${l}${n ? html`<span class="count">${n}</span>` : ''}</button>`)}</div>
@@ -121,6 +123,7 @@ export async function detail(view, [id], query) {
   $$('[data-tab]', view).forEach(b => b.addEventListener('click', () => { location.hash = `#/customers/${id}?tab=${b.dataset.tab}`; }));
   $('[data-edit]', view)?.addEventListener('click', () => openForm('customers', { record: c, onSaved: reload, onDeleted: () => { location.hash = '#/customers'; } }));
   $('[data-newcall]', view).addEventListener('click', () => newCall({}));
+  $('[data-newprop]', view)?.addEventListener('click', async () => (await import('./proposals.js')).newProposal({ customer_id: c.id }));
   $('[data-stage-sel]', view)?.addEventListener('change', async e => {
     try { await R.update('customers', c.id, { stage: e.target.value }); toast(`Moved to ${STAGE_INFO[e.target.value].label}`); reload(); }
     catch (err) { toast(err.message, 'error'); }
@@ -170,6 +173,14 @@ export async function detail(view, [id], query) {
     $('[data-add-child]', pane)?.addEventListener('click', () => openForm('customers', { title: `New business under ${c.name}`,
       defaults: { parent_id: c.id, type: 'commercial', phone: c.phone, email: c.email, contact_name: c.contact_name || c.name, stage: c.stage },
       onSaved: k => { location.hash = `#/customers/${k.id}`; } }));
+  }
+
+  if (tab === 'proposals') {
+    const { proposalsTable, newProposal } = await import('./proposals.js');
+    const rows = await R.list('proposals', { customer_id: id }).catch(() => []);
+    mount(pane, html`<div class="card"><div class="card-head"><h2>Proposals & agreements</h2>${can.sales() ? html`<button class="btn sm primary" data-np>+ Proposal</button>` : ''}</div>
+      <div class="card-body flush">${proposalsTable(rows, 'No proposals for this customer yet.')}</div></div>`);
+    $('[data-np]', pane)?.addEventListener('click', () => newProposal({ customer_id: c.id }));
   }
 
   if (tab === 'locations') {

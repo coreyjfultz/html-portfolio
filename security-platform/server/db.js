@@ -38,6 +38,15 @@ export const DEFAULT_SETTINGS = {
   smtp_host: '', smtp_port: '587', smtp_user: '', smtp_pass: '', mail_from: '',
   twilio_sid: '', twilio_token: '', twilio_from: '',
   notify_on_schedule: '1', notify_on_way: '1', notify_tech_invites: '1',
+  proposal_next_number: '1001',
+  proposal_valid_days: '30',
+  proposal_terms: `1. Scope. We will furnish and install the equipment and services listed above. Work outside this scope will be quoted separately.
+2. Payment. The deposit shown is due at signing; the balance is due on completion. Monthly service fees are billed in advance each month.
+3. Warranty. Equipment carries the manufacturer's warranty. Our workmanship is warranted for 12 months from installation.
+4. Monitoring & service term. Monthly services continue for the term shown, then month to month. Either party may cancel after the term with 30 days' written notice.
+5. Access. You will provide reasonable access to the premises, power and network connections needed for the installation.
+6. Limitation. Security, camera and fire systems reduce risk but cannot guarantee that loss, injury or damage will not occur. We are not an insurer.
+7. Electronic signature. You agree that signing electronically is legally binding, the same as a handwritten signature.`,
 };
 export const DEFAULT_TEMPLATES = {
   tpl_scheduled_sms: '{company}: your {type} is scheduled for {date} at {time} with {tech}. Questions? Call {company_phone}. Reply STOP to opt out.',

@@ -10,6 +10,7 @@ import { ingest, processInvoice, receive, saveReview, parseInboundEmail, filePat
 import { aiConfigured } from './extract.js';
 import { callToEvent, buildCalendar } from './calendar.js';
 import { decodeImage, saveImage, sendImage, removeImage } from './media.js';
+import { sendForSignature, duplicate, publicView, byToken, markViewed, sign, decline, signingUrl } from './proposals.js';
 
 export function baseUrl(db, req) {
   const s = getSettings(db);
@@ -236,6 +237,43 @@ export function buildRoutes() {
     push('Vehicle', list(db, 'vehicles', { q, limit: 3 }), v => ({ id: v.id, title: v.unit_name, sub: [v.year, v.make, v.model].filter(Boolean).join(' '), href: `#/vehicles/${v.id}` }));
     push('Technician', list(db, 'technicians', { q, limit: 3 }), t => ({ id: t.id, title: t.name, sub: t.phone || '', href: `#/technicians` }));
     return out;
+  });
+
+  // ------------------------------------------------------------ proposals & agreements
+  r('POST', '/api/proposals/:id/send', G.sales, ({ db, params, body, user }) =>
+    sendForSignature(db, params.id, user, { email: body.email !== false, sms: !!body.sms, message: String(body.message || '').slice(0, 2000) }));
+
+  r('POST', '/api/proposals/:id/duplicate', G.sales, ({ db, params, user }) => duplicate(db, params.id, user));
+
+  r('GET', '/api/proposals/:id/document', G.salesOrBilling, ({ db, params }) => {
+    const p = db.prepare('SELECT * FROM proposals WHERE id = ?').get(Number(params.id));
+    if (!p) throw new HttpError(404, 'Not found');
+    return { ...publicView(db, p), link: p.public_token ? signingUrl(db, p.public_token) : null };
+  });
+
+  r('GET', '/api/proposals/:id/signature', G.salesOrBilling, ({ db, params, res }) => {
+    const p = db.prepare('SELECT signature_key FROM proposals WHERE id = ?').get(Number(params.id));
+    if (!p?.signature_key) throw new HttpError(404, 'Not signed');
+    sendImage(res, 'signatures', p.signature_key);
+    return undefined;
+  });
+
+  // Public signing page (no login: the long random link is the key).
+  r('GET', '/api/public/proposals/:token', null, ({ db, params }) => {
+    const p = byToken(db, params.token);
+    markViewed(db, p);
+    return publicView(db, db.prepare('SELECT * FROM proposals WHERE id = ?').get(p.id));
+  });
+  r('POST', '/api/public/proposals/:token/sign', null, ({ db, params, body, ip, req }) => {
+    sign(db, params.token, body, { ip, agent: req.headers['user-agent'] });
+    return publicView(db, byToken(db, params.token));
+  });
+  r('POST', '/api/public/proposals/:token/decline', null, ({ db, params, body }) => decline(db, params.token, body.reason));
+  r('GET', '/api/public/proposals/:token/signature', null, ({ db, params, res }) => {
+    const p = byToken(db, params.token);
+    if (p.status !== 'signed' || !p.signature_key) throw new HttpError(404, 'Not signed');
+    sendImage(res, 'signatures', p.signature_key, { cache: 'private, max-age=3600' });
+    return undefined;
   });
 
   // ------------------------------------------------------------ job photos & sign-off

@@ -51,7 +51,9 @@ function sendJson(res, status, data) {
 function serveStatic(req, res, pathname) {
   let file = path.normalize(path.join(PUBLIC, decodeURIComponent(pathname)));
   if (!file.startsWith(PUBLIC)) { res.writeHead(403); return res.end(); }
-  if (pathname === '/' || !fs.existsSync(file) || fs.statSync(file).isDirectory()) {
+  if (/^\/sign\/[A-Za-z0-9_-]+$/.test(pathname)) file = path.join(PUBLIC, 'sign.html');
+  else if (/^\/portal(\/.*)?$/.test(pathname) && !path.extname(pathname)) file = path.join(PUBLIC, 'portal.html');
+  else if (pathname === '/' || !fs.existsSync(file) || fs.statSync(file).isDirectory()) {
     if (path.extname(pathname)) { res.writeHead(404); return res.end('Not found'); }
     file = path.join(PUBLIC, 'index.html');
   }
@@ -87,7 +89,7 @@ export function createServer(db) {
       const token = cookies.sid;
       const user = sessionUser(db, token);
       const query = Object.fromEntries(url.searchParams);
-      const big = inbound || pathname === '/api/receiving/upload' || /\/(photos|signature|logo)$/.test(pathname);
+      const big = inbound || pathname === '/api/receiving/upload' || /\/(photos|signature|sign|logo)$/.test(pathname);
       const body = ['POST', 'PUT', 'PATCH'].includes(req.method) ? await readBody(req, big ? 40_000_000 : 1_000_000) : {};
       const https = secureCookies || req.headers['x-forwarded-proto'] === 'https';
       const setCookie = t => res.setHeader('Set-Cookie', t
