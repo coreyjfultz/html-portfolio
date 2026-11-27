@@ -17,6 +17,8 @@ import { registerTruckStockRoutes } from './truckstock.js';
 import { registerTimeClockRoutes } from './timeclock.js';
 import { registerPhoneRoutes, onCallFeedEvents } from './phone.js';
 import { registerTrackingRoutes } from './tracking.js';
+import { requestOrigin } from './net.js';
+import { runBackup, listBackups } from './backup.js';
 import { openAlerts, resolveAlert } from './alerts.js';
 import { putOnTest, clearTest, markConfirmed, logEvent, ingestSignals, stationInfo, CONNECTORS } from './monitoring.js';
 import { stripeConfig, checkoutForInvoice, checkoutForSetup, listMethods, removeMethod, setDefaultMethod, chargeSaved, payLink, handleWebhook } from './payments.js';
@@ -35,8 +37,7 @@ function callCustomerCheck(db, user, callId) {
 export function baseUrl(db, req) {
   const s = getSettings(db);
   if (s.public_url) return s.public_url.replace(/\/$/, '');
-  const proto = req?.headers['x-forwarded-proto'] || (req?.socket?.encrypted ? 'https' : 'http');
-  return `${proto}://${req?.headers['x-forwarded-host'] || req?.headers.host || 'localhost'}`;
+  return requestOrigin(req);
 }
 import {
   HttpError, list, get, create, update, adjustStock, techCustomerIds, assertCustomerVisible, grantAccess, recalcInvoice, round2, todayLocal, nowLocal, addMonths, addDays,
@@ -1106,6 +1107,16 @@ ${s.company_name}` }));
     res.end('﻿' + lines.join('\r\n'));
     audit(db, user, 'export', params.resource, null, String(rows.length));
     return undefined;
+  });
+
+  // Health check for the host / uptime monitor (no login, reveals nothing).
+  r('GET', '/api/health', null, ({ db }) => { db.prepare('SELECT 1').get(); return { ok: true }; });
+
+  r('GET', '/api/admin/backups', G.owner, () => ({ backups: listBackups(), keep: Math.max(1, Number(process.env.BACKUP_KEEP) || 14), hour: Number(process.env.BACKUP_HOUR ?? 2), disabled: process.env.BACKUP_DISABLED === '1' }));
+  r('POST', '/api/admin/backups', G.owner, ({ db, user }) => {
+    const b = runBackup(db, { reason: `manual (${user.name})` });
+    audit(db, user, 'backup to server', null, null, b.name);
+    return b;
   });
 
   r('GET', '/api/admin/backup', G.owner, ({ db, res, user }) => {

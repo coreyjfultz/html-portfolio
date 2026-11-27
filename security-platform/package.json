@@ -5,12 +5,14 @@
   "type": "module",
   "description": "All-in-one operations platform for a security, camera and fire protection company",
   "engines": {
-    "node": ">=22.5"
+    "node": ">=22.13"
   },
   "scripts": {
     "start": "node --disable-warning=ExperimentalWarning server/server.js",
     "seed": "node --disable-warning=ExperimentalWarning server/seed.js",
-    "test": "node --disable-warning=ExperimentalWarning --test test/*.test.js"
+    "test": "node --disable-warning=ExperimentalWarning --test test/*.test.js",
+    "backup": "node --disable-warning=ExperimentalWarning server/backup.js",
+    "restore": "node --disable-warning=ExperimentalWarning server/backup.js restore"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "1.8.0",

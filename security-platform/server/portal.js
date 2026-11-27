@@ -2,6 +2,7 @@
 // email verification, invites, and the customer's own invoices, payments,
 // service history, requests and agreements. Every query is limited to the
 // accounts the signed-in customer owns.
+import { isHttps } from './net.js';
 import crypto from 'node:crypto';
 import { getSettings, tx } from './db.js';
 import { HttpError, create, get, list, registerHooks, todayLocal } from './resources.js';
@@ -123,7 +124,7 @@ export function registerPortalRoutes(r) {
   const cookie = (setCookieHeader, https) => t => setCookieHeader(t
     ? `psid=${t}; HttpOnly; Path=/; SameSite=Lax; Max-Age=${30 * 86400}${https ? '; Secure' : ''}`
     : `psid=; HttpOnly; Path=/; SameSite=Lax; Max-Age=0${https ? '; Secure' : ''}`);
-  const setPortalCookie = (res, req) => cookie(v => res.setHeader('Set-Cookie', v), process.env.COOKIE_SECURE === '1' || req.headers['x-forwarded-proto'] === 'https');
+  const setPortalCookie = (res, req) => cookie(v => res.setHeader('Set-Cookie', v), isHttps(req));
   const company = db => { const s = getSettings(db); return { name: s.company_name, phone: s.company_phone, email: s.company_email, logo: !!s.logo_key, online_payments: stripeConfig(db).ok }; };
 
   r('GET', '/api/portal/state', null, ({ db, req }) => {

@@ -635,3 +635,4 @@ table.t tr.click:hover td { background: #f8faff; }
 .map-pin .pin.office { background: #0f172a; font-size: 14px; }
 .leaflet-container { font-family: Inter, system-ui, sans-serif; background: var(--surface-2); }
 @media (max-width: 900px) { .map-layout { grid-template-columns: 1fr; } .map-card { position: static; } .livemap { height: 60vh; } }
+@media (min-width: 900px) { .tabs { flex-wrap: wrap; } }

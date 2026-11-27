@@ -1,0 +1,38 @@
+# SecureOps + Caddy (automatic HTTPS certificates from Let's Encrypt).
+# 1. Point your domain's DNS (an A record) at this server.
+# 2. cp .env.example .env  and fill it in.
+# 3. docker compose up -d --build
+services:
+  app:
+    build: .
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      DATA_DIR: /data
+      TRUST_PROXY: "1"      # only Caddy can reach the app, so its forwarded headers are trusted
+      COOKIE_SECURE: "1"
+    volumes:
+      - secureops-data:/data
+    expose:
+      - "3000"
+
+  caddy:
+    image: caddy:2.8.4-alpine
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    environment:
+      DOMAIN: ${DOMAIN:?Set DOMAIN in .env}
+    volumes:
+      - ./deploy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+    depends_on:
+      - app
+
+volumes:
+  secureops-data:
+  caddy-data:
+  caddy-config:

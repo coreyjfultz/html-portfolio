@@ -1,0 +1,29 @@
+# Without Docker: run SecureOps as a systemd service behind Caddy or nginx.
+#   sudo cp deploy/secureops.service /etc/systemd/system/ && sudo systemctl enable --now secureops
+[Unit]
+Description=SecureOps
+After=network.target
+
+[Service]
+Type=simple
+User=secureops
+WorkingDirectory=/opt/secureops/security-platform
+Environment=NODE_ENV=production
+Environment=PORT=3000
+Environment=HOST=127.0.0.1
+Environment=DATA_DIR=/var/lib/secureops
+Environment=TRUST_PROXY=1
+Environment=COOKIE_SECURE=1
+Environment=TZ=America/New_York
+EnvironmentFile=-/etc/secureops.env
+ExecStart=/usr/bin/node --disable-warning=ExperimentalWarning server/server.js
+Restart=on-failure
+RestartSec=5
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/secureops
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

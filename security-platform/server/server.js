@@ -7,6 +7,7 @@ import { sessionUser, purgeSessions } from './security.js';
 import { HttpError, list, get, create, update, remove, reveal, getDef, canRead } from './resources.js';
 import { buildRoutes } from './routes.js';
 import { setBaseUrl } from './notify.js';
+import { clientIp, isHttps, requestOrigin } from './net.js';
 
 const PUBLIC = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', 'public');
 const MIME = {
@@ -104,12 +105,12 @@ export function createServer(db) {
       const query = Object.fromEntries(url.searchParams);
       const big = inbound || pathname === '/api/receiving/upload' || /\/(photos|signature|sign|logo)$/.test(pathname);
       const body = ['POST', 'PUT', 'PATCH'].includes(req.method) ? await readBody(req, big ? 40_000_000 : 1_000_000) : {};
-      const https = secureCookies || req.headers['x-forwarded-proto'] === 'https';
+      const https = secureCookies || isHttps(req);
       const setCookie = t => res.setHeader('Set-Cookie', t
         ? `sid=${t}; HttpOnly; Path=/; SameSite=Lax; Max-Age=${14 * 86400}${https ? '; Secure' : ''}`
         : `sid=; HttpOnly; Path=/; SameSite=Lax; Max-Age=0${https ? '; Secure' : ''}`);
-      const ip = req.headers['x-forwarded-for']?.split(',')[0].trim() || req.socket.remoteAddress;
-      if (req.headers.host) setBaseUrl(`${https ? 'https' : 'http'}://${req.headers['x-forwarded-host'] || req.headers.host}`);
+      const ip = clientIp(req);
+      if (req.headers.host) setBaseUrl(requestOrigin(req));
 
       for (const rt of routes) {
         if (rt.method !== req.method) continue;
@@ -165,7 +166,22 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
     setInterval(() => m.pollPositions(db).catch(e => console.error('tracking', e)), every).unref();
     setInterval(() => m.geocodeMissing(db).catch(e => console.error('geocode', e)), 10 * 60e3).unref();
   });
+  // Nightly backups (database + uploaded files), kept for BACKUP_KEEP days.
+  import('./backup.js').then(m => m.scheduleBackups(db));
   const port = Number(process.env.PORT) || 3000;
   const host = process.env.HOST || '0.0.0.0';
-  createServer(db).listen(port, host, () => console.log(`SecureOps running at http://localhost:${port}`));
+  const server = createServer(db);
+  server.listen(port, host, () => console.log(`SecureOps running at http://localhost:${port}`));
+  // Stop cleanly (docker stop, systemd, Ctrl-C): finish requests, write the database out.
+  let stopping = false;
+  const stop = sig => {
+    if (stopping) return;
+    stopping = true;
+    console.log(`${sig}: shutting down`);
+    server.close(() => { try { db.close(); } catch { /* already closed */ } process.exit(0); });
+    server.closeIdleConnections?.();
+    setTimeout(() => process.exit(0), 8000).unref();
+  };
+  process.on('SIGTERM', () => stop('SIGTERM'));
+  process.on('SIGINT', () => stop('SIGINT'));
 }

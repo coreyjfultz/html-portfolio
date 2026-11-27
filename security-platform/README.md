@@ -36,7 +36,7 @@ One system for the office and the field. It runs as a **website** and installs o
 
 ## Try it in 2 minutes
 
-Requires **Node.js 22.5 or newer**. The database (SQLite) is built into Node.
+Requires **Node.js 22.13 or newer**. The database (SQLite) is built into Node.
 
 ```bash
 cd security-platform
@@ -56,10 +56,14 @@ Run the tests with `npm test`.
 
 ## Going live
 
-The app has to run on a server everyone can reach. Options:
+**Step-by-step checklist: [`deploy/GO-LIVE.md`](deploy/GO-LIVE.md).** In short: a small Linux VPS (~$6–12/mo), point `app.yourcompany.com` at it, then
 
-- **A small VPS** (DigitalOcean, Linode, Hostinger VPS, etc., ~$6–12/mo) running Node 22, behind **Caddy** or **nginx** for HTTPS.
-- **Hostinger Node.js hosting**, or any host that runs Node.js apps with a persistent disk.
+```bash
+cp .env.example .env    # set DOMAIN and TZ
+docker compose up -d --build
+```
+
+That runs the app plus [Caddy](https://caddyserver.com), which gets and renews the HTTPS certificate automatically. Nightly backups (database + photos, signatures, supplier invoices) are built in; `/api/health` is there for uptime monitoring. Without Docker, use `deploy/secureops.service` (systemd) behind Caddy or nginx.
 
 Settings (environment variables):
 
@@ -69,6 +73,9 @@ Settings (environment variables):
 | `DATA_DIR` | Where the database and secret key live (default `./data`). **Must be on persistent storage** |
 | `APP_SECRET` | Optional 64-hex-char encryption key for stored passwords. If not set, one is generated in `DATA_DIR/secret.key` |
 | `COOKIE_SECURE=1` | Set when served over HTTPS (it always should be in production) |
+| `TRUST_PROXY=1` | Set when the app sits behind Caddy/nginx/a load balancer, so it uses the real visitor address and https from the proxy's headers. **Leave unset if the app is reachable directly**, or people could fake those headers |
+| `TZ` | Time zone for schedules, timesheets, reminders and backups, e.g. `America/New_York` |
+| `BACKUP_HOUR`, `BACKUP_KEEP`, `BACKUP_DIR` | Nightly backup time (default 2 = 2 AM), how many to keep (14) and where (`DATA_DIR/backups`). `BACKUP_DISABLED=1` turns them off. `BACKUP_INCLUDE_KEY=1` also copies the encryption key (off by default) |
 | `ANTHROPIC_API_KEY` | Claude API key, used only to read supplier invoice PDFs, photos and emails. Optional: without it, CSV invoices still work and other documents are entered by hand |
 | `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASS`, `MAIL_FROM` | Outgoing email (or enter them in Settings → Texts & email) |
 | `TWILIO_ACCOUNT_SID`, `TWILIO_AUTH_TOKEN`, `TWILIO_FROM` | Text messages (or Settings → Texts & email) |
@@ -158,6 +165,8 @@ Set up under **Monitoring → Stations**: add the station you use (e.g. CMS) wit
 - `server/notify.js` (email/text), `server/calendar.js` (Outlook/Google feeds and invites), `server/payments.js` (Stripe), `server/quickbooks.js` (QuickBooks sync and exports), `server/media.js` (photos, signatures, logo).
 - `public/js/doc.js` — the shared invoice and agreement document layout.
 - Icons: [Lucide](https://lucide.dev) (ISC); font: Inter (SIL Open Font License), both served from this app.
+- `server/backup.js` — nightly backups and restore (`npm run backup`, `npm run restore -- <name>`). `server/net.js` — reverse-proxy header handling.
+- `Dockerfile`, `docker-compose.yml`, `deploy/` — production setup (Caddy HTTPS, systemd unit, go-live checklist).
 - `test/` — end-to-end API tests (`node --test`). Outside services (Claude, Twilio, Stripe, QuickBooks, email) are tested against local stand-ins, so the tests run offline.
 
 ## Handing this project off

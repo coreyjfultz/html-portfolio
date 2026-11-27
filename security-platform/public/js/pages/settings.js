@@ -289,11 +289,34 @@ export async function render(view, _, query) {
         <p class="note small">Stored camera passwords and alarm codes are encrypted with the server's secret key (<span class="mono">data/secret.key</span> or the <span class="mono">APP_SECRET</span> setting).
           Back that key up separately and keep it safe — a backup can't decrypt those passwords without it.</p>
         ${state.user.role === 'owner' ? html`<a class="btn primary" href="/api/admin/backup">Download backup</a>` : html`<p class="muted">Only an owner can download backups.</p>`}</div></div>
+      ${state.user.role === 'owner' ? html`<div class="card" style="grid-column:1/-1" data-serverbackups></div>` : ''}
       <div class="card"><div class="card-head"><h2>Export to spreadsheet</h2></div><div class="card-body">
         <p>CSV files open in Excel or Google Sheets. Passwords are never exported.</p>
         <div class="row">${['customers', 'contacts', 'invoices', 'payments', 'expenses', 'service_calls', 'inventory_items', 'camera_systems', 'fire_systems', 'extinguishers', 'vehicles'].map(r =>
           html`<a class="btn sm" href="/api/export/${r}">${r.replace(/_/g, ' ')}</a>`)}</div></div></div>
     </div>`);
+    const box = $('[data-serverbackups]', pane);
+    const drawBackups = async () => {
+      const b = await GET('/api/admin/backups');
+      const mb = n => `${(n / 1e6).toFixed(1)} MB`;
+      mount(box, html`<div class="card-head"><div><h2>Automatic backups on the server</h2><div class="small muted">${b.disabled ? 'Nightly backups are turned off (BACKUP_DISABLED).' : `Every night at ${b.hour}:00 — the database plus job photos, signatures and supplier invoices. The last ${b.keep} are kept.`}</div></div>
+        <button class="btn sm" data-backupnow>Back up now</button></div>
+        <div class="card-body flush">${dataTable({
+          rows: b.backups, empty: 'No backups yet — the first one runs tonight.',
+          columns: [
+            { label: 'Backup', render: x => html`<span class="mono">${x.name}</span>` },
+            { label: 'Type', render: x => x.reason || '' },
+            { label: 'Size', render: x => mb(x.size), cls: 'num' },
+            { label: 'Key', render: x => x.includes_key ? badge('includes key', 'warn') : html`<span class="small muted">key not included</span>` },
+          ] })}</div>
+        <div class="card-body"><p class="small muted" style="margin:0">These sit on the same server. Copy them somewhere else too (see “Off-site copies” in deploy/GO-LIVE.md), or download one above every week.</p></div>`);
+      $('[data-backupnow]', box).addEventListener('click', async e => {
+        e.target.disabled = true;
+        try { const r = await POST('/api/admin/backups'); toast(`Backup saved (${mb(r.size)})`); } catch (err) { toast(err.message, 'error'); }
+        drawBackups();
+      });
+    };
+    if (box) drawBackups();
   }
 }
 
