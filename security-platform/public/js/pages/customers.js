@@ -3,7 +3,7 @@ import {
   html, raw, mount, $, $$, money, fmtDate, badge, typeBadge, stageBadge, relDays, dataTable, fieldColumns, openForm, renderValue,
   loading, toast, secretView, confirmDialog,
 } from '../ui.js';
-import { R, GET, POST } from '../api.js';
+import { R, GET, POST, api } from '../api.js';
 import { can, refresh } from '../app.js';
 import { completeMaintenance, scheduleFromMaintenance, maintenanceTable } from './maintenance.js';
 
@@ -282,6 +282,7 @@ export async function detail(view, [id], query) {
             { label: 'Total', render: i => money(i.total), cls: 'num' },
             { label: 'Balance', render: i => i.balance > 0 ? html`<b>${money(i.balance)}</b>` : money(0), cls: 'num' },
           ] })}</div></div>
+      <div class="card" data-pm-card><div class="card-head"><h2>Saved cards & bank accounts</h2></div><div class="card-body"><div class="muted small">Loading…</div></div></div>
       <div class="card"><div class="card-head"><h2>Payments</h2></div><div class="card-body flush">${dataTable({
         rows: payments, empty: 'No payments recorded.', href: p => `#/invoices/${p.invoice_id}`,
         columns: [
@@ -289,6 +290,7 @@ export async function detail(view, [id], query) {
           { label: 'Method', key: 'method' }, { label: 'Reference', render: p => p.reference || '—' },
           { label: 'Amount', render: p => money(p.amount), cls: 'num' }] })}</div></div>
     </div>`);
+    drawPaymentMethods($('[data-pm-card]', pane), c);
     $('[data-add-charge]', pane).addEventListener('click', () => openForm('recurring_charges', { defaults: { customer_id: c.id }, hide: ['customer_id'], onSaved: reload }));
     $$('[data-charge]', pane).forEach(b => b.addEventListener('click', () => openForm('recurring_charges', { record: charges.find(x => x.id === Number(b.dataset.charge)), hide: ['customer_id'], onSaved: reload, onDeleted: reload })));
     $('[data-ni]', pane).addEventListener('click', () => openForm('invoices', { defaults: { customer_id: c.id }, hide: ['customer_id'], onSaved: i => { location.hash = `#/invoices/${i.id}`; } }));
@@ -333,4 +335,30 @@ function systemCard(res, s) {
     <div class="actions"><button class="btn sm ghost" data-svc="${sys}" data-label="${title}">Service</button><button class="btn sm" data-edit-sys="${res}" data-id="${s.id}">Edit</button></div></div>
     <div class="card-body"><dl class="dl small">${shown.filter(f => f.name !== 'location').map(f => html`<dt>${f.label}</dt><dd>${f.type === 'date' && /next/.test(f.name) ? dueCell(s[f.name]) : renderValue(f, s, res)}</dd>`)}</dl>
     ${s.notes ? html`<div class="small" style="margin-top:10px;white-space:pre-wrap">${s.notes}</div>` : ''}</div></div>`;
+}
+
+async function drawPaymentMethods(card, c) {
+  const cfg = await GET('/api/payments/config').catch(() => ({ ok: false }));
+  if (!cfg.ok) {
+    mount(card, html`<div class="card-head"><h2>Saved cards & bank accounts</h2></div><div class="card-body small muted">Connect Stripe under Settings → Payments to save cards and bank accounts and take payments online. Preferred method on file: <b>${c.preferred_payment || '—'}</b>.</div>`);
+    return;
+  }
+  const pm = await GET(`/api/customers/${c.id}/payment-methods`).catch(e => ({ methods: [], error: e.message }));
+  mount(card, html`<div class="card-head"><div><h2>Saved cards & bank accounts</h2><div class="small muted">Stored securely by Stripe; used for “Charge now” and autopay</div></div>
+      <div class="actions"><button class="btn sm" data-pmlink>Email link to add one</button><button class="btn sm ghost" data-pmcopy>Copy link</button></div></div>
+    <div class="card-body flush">${dataTable({
+      rows: pm.methods, empty: pm.error || 'Nothing saved yet. Email the customer a secure link to add a card or bank account.',
+      columns: [
+        { label: 'Method', render: m => html`<b>${m.label}</b>${m.id === pm.default ? html` <span class="badge good">default</span>` : ''}` },
+        { label: 'Details', render: m => m.detail },
+        { label: '', cls: 'actions-cell', render: m => html`${m.id !== pm.default ? html`<button class="btn sm ghost" data-pmdef="${m.id}">Make default</button>` : ''}<button class="btn sm ghost danger" data-pmdel="${m.id}">Remove</button>` },
+      ] })}</div>`);
+  const again = () => drawPaymentMethods(card, c);
+  card.querySelector('[data-pmlink]').addEventListener('click', async () => { try { await POST(`/api/customers/${c.id}/payment-methods/link`, { email: true }); toast('Secure link emailed to the customer'); } catch (e) { toast(e.message, 'error'); } });
+  card.querySelector('[data-pmcopy]').addEventListener('click', async () => { try { const r = await POST(`/api/customers/${c.id}/payment-methods/link`, {}); await navigator.clipboard?.writeText(r.url); toast('Link copied (works for 24 hours)'); } catch (e) { toast(e.message, 'error'); } });
+  card.querySelectorAll('[data-pmdef]').forEach(b => b.addEventListener('click', async () => { await POST(`/api/customers/${c.id}/payment-methods/${b.dataset.pmdef}/default`); toast('Default updated'); again(); }));
+  card.querySelectorAll('[data-pmdel]').forEach(b => b.addEventListener('click', async () => {
+    if (!(await confirmDialog('Remove this saved payment method?', { okLabel: 'Remove', danger: true }))) return;
+    await api('DELETE', `/api/customers/${c.id}/payment-methods/${b.dataset.pmdel}`); toast('Removed'); again();
+  }));
 }

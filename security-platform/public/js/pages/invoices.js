@@ -129,7 +129,7 @@ export async function detail(view, [id]) {
         ${inv.status === 'draft' ? html`<button class="btn" data-sent>Mark sent</button>` : ''}
         ${mail ? html`<a class="btn" href="${mail}">Email</a>` : ''}
         <button class="btn" data-print>Print / PDF</button>
-        ${inv.balance > 0 && inv.status !== 'void' ? html`<button class="btn primary" data-pay>Record payment</button>` : ''}
+        ${inv.balance > 0 && inv.status !== 'void' ? html`<button class="btn" data-online>Get paid online ▾</button><button class="btn primary" data-pay>Record payment</button>` : ''}
       </div></div>
     <div class="grid g3">
       <div class="span2">
@@ -188,6 +188,7 @@ export async function detail(view, [id]) {
     if (inv.status === 'void') return;
     openForm('invoice_items', { record: items.find(i => i.id === Number(tr.dataset.item)), hide: ['invoice_id'], onSaved: reload, onDeleted: reload });
   }));
+  $('[data-online]', view)?.addEventListener('click', () => onlinePayDialog(inv, cust, reload));
   $('[data-pay]', view)?.addEventListener('click', () => openForm('payments', { defaults: { invoice_id: inv.id, amount: inv.balance, method: cust.preferred_payment || 'check' }, hide: ['invoice_id'], onSaved: reload }));
   $$('[data-editpay]', view).forEach(b => b.addEventListener('click', () => openForm('payments', { record: payments.find(p => p.id === Number(b.dataset.editpay)), hide: ['invoice_id'], onSaved: reload, onDeleted: reload })));
   $('[data-sent]', view)?.addEventListener('click', async () => { await POST(`/api/invoices/${id}/status`, { status: 'sent' }); toast('Marked as sent'); reload(); });
@@ -232,4 +233,34 @@ export async function payments(view, _, query) {
   $('[data-to]', view).addEventListener('change', e => { f.to = e.target.value; load(); });
   $('[data-method]', view).addEventListener('change', e => { f.method = e.target.value; load(); });
   await load();
+}
+
+// Online payment options for one invoice: email a pay link, copy it, or charge a saved card/bank.
+async function onlinePayDialog(inv, cust, onDone) {
+  const cfg = await GET('/api/payments/config');
+  if (!cfg.ok) {
+    openModal({ title: 'Get paid online', size: 'sm', body: html`<p>Online card and bank (ACH) payments use Stripe. An owner or admin can connect it under <b>Settings → Payments</b> in a few minutes.</p>
+      <p class="muted small">Until then you can record cash, check, card and ACH payments by hand with “Record payment”.</p>`, foot: html`<button class="btn" data-close>Close</button>` });
+    return;
+  }
+  const pm = await GET(`/api/customers/${cust.id}/payment-methods`).catch(() => ({ methods: [] }));
+  const { el, close } = openModal({
+    title: `Get paid online — ${money(inv.balance)}`, size: 'sm',
+    body: html`<div class="err-box hidden" data-err></div><div class="stack" style="gap:14px">
+      <div><b>Send a “Pay now” link</b><p class="small muted" style="margin:4px 0 8px">The customer pays by card or bank on Stripe’s secure page; the payment is recorded here automatically.</p>
+        <div class="row"><button class="btn primary" data-email ${cust.email ? '' : 'disabled'}>Email link${cust.email ? ` to ${cust.email}` : ' (no email on file)'}</button><button class="btn" data-copylink>Copy link</button></div></div>
+      <div><b>Charge a saved payment method</b>
+        ${pm.methods.length ? html`<div class="stack" style="gap:6px;margin-top:8px">${pm.methods.map(m => html`<label class="row"><input type="radio" name="pm" value="${m.id}" ${m.id === (pm.default || pm.methods[0].id) ? 'checked' : ''}> ${m.label} <span class="muted small">${m.detail}${m.id === pm.default ? ' · default' : ''}</span></label>`)}</div>
+          <button class="btn" data-charge style="margin-top:8px">Charge ${money(inv.balance)} now</button>`
+          : html`<p class="small muted" style="margin:4px 0">No saved card or bank account. Send them a link from their Billing tab to add one.</p>`}</div></div>`,
+    foot: html`<button class="btn" data-close>Close</button>`,
+  });
+  const err = msg => { const e = $('[data-err]', el); e.textContent = msg; e.classList.remove('hidden'); };
+  $('[data-email]', el).addEventListener('click', async () => { try { await POST(`/api/invoices/${inv.id}/email-pay-link`); close(); toast('Payment link emailed'); onDone(); } catch (e) { err(e.message); } });
+  $('[data-copylink]', el).addEventListener('click', async () => { try { const r = await POST(`/api/invoices/${inv.id}/pay-link`); await navigator.clipboard?.writeText(r.url); toast('Link copied — paste it into a text or email'); } catch (e) { err(e.message); } });
+  $('[data-charge]', el)?.addEventListener('click', async () => {
+    const pmId = $('input[name=pm]:checked', el)?.value;
+    if (!(await confirmDialog(`Charge ${money(inv.balance)} to ${pm.methods.find(m => m.id === pmId)?.label}?`, { okLabel: 'Charge now' }))) return;
+    try { const r = await POST(`/api/invoices/${inv.id}/charge`, { pm_id: pmId }); close(); toast(r.status === 'paid' ? 'Payment approved and recorded' : r.message); onDone(); } catch (e) { err(e.message); }
+  });
 }

@@ -71,6 +71,7 @@ export const RESOURCES = {
       { name: 'preferred_payment', label: 'Preferred payment', type: 'select', options: ['check', 'card', 'ach', 'cash'], optionLabels: PAYMENT_METHODS, default: 'check' },
       { name: 'notify_email', label: 'Email appointment updates', type: 'checkbox', default: 1 },
       { name: 'notify_sms', label: 'Text appointment updates', type: 'checkbox', default: 1 },
+      { name: 'stripe_customer_id', label: 'Stripe customer', type: 'text', readonly: true, hidden: true },
       { name: 'lead_source', label: 'Lead source', type: 'select', options: ['referral', 'website', 'google', 'facebook', 'yard sign', 'builder / contractor', 'repeat customer', 'portal sign-up', 'other'] },
       { name: 'tax_exempt', label: 'Tax exempt', type: 'checkbox' },
       { name: 'gate_code', label: 'Gate / door code', type: 'secret' },
@@ -440,6 +441,7 @@ export const RESOURCES = {
       { name: 'total', label: 'Total', type: 'money', readonly: true, list: true },
       { name: 'service_call_id', label: 'Service call', type: 'ref', ref: 'service_calls', readonly: true, onDelete: 'set null' },
       { name: 'notes', label: 'Notes (printed on invoice)', type: 'textarea', full: true },
+      { name: 'pay_token', label: 'Online payment link key', type: 'text', readonly: true, hidden: true },
     ],
   },
 

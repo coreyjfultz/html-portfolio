@@ -343,4 +343,72 @@ test('proposals: decline and expiry; technicians have no access', async () => {
   assert.equal((await t.get('/api/r/proposals')).status, 403);
 });
 
+test('online payments (Stripe): pay link, signed webhook records payment once, charge saved card', async () => {
+  const http = await import('node:http');
+  const crypto = await import('node:crypto');
+  const calls = [];
+  const fake = http.createServer((req, res) => {
+    let b = ''; req.on('data', c => { b += c; });
+    req.on('end', () => {
+      const params = Object.fromEntries(new URLSearchParams(b));
+      calls.push({ method: req.method, url: req.url, params, auth: req.headers.authorization });
+      const send = o => { res.writeHead(200, { 'Content-Type': 'application/json' }); res.end(JSON.stringify(o)); };
+      const u = req.url.split('?')[0];
+      if (u === '/v1/customers' && req.method === 'POST') return send({ id: 'cus_1' });
+      if (u === '/v1/checkout/sessions') return send({ id: 'cs_1', url: 'https://checkout.stripe.test/cs_1' });
+      if (u === '/v1/checkout/sessions/cs_1') return send({ id: 'cs_1', payment_intent: { id: 'pi_1', payment_method: { type: 'us_bank_account' } } });
+      if (u === '/v1/customers/cus_1/payment_methods') return send({ data: [{ id: 'pm_card', type: 'card', card: { brand: 'visa', last4: '4242', exp_month: 4, exp_year: 2030 } }] });
+      if (u === '/v1/customers/cus_1') return send({ id: 'cus_1', invoice_settings: { default_payment_method: 'pm_card' } });
+      if (u === '/v1/payment_intents') return send({ id: 'pi_2', status: 'succeeded', amount_received: Number(params.amount) });
+      res.writeHead(404); res.end('{}');
+    });
+  });
+  await new Promise(r => fake.listen(0, '127.0.0.1', r));
+  Object.assign(process.env, { STRIPE_SECRET_KEY: 'sk_test_123', STRIPE_WEBHOOK_SECRET: 'whsec_abc', STRIPE_API_BASE: `http://127.0.0.1:${fake.address().port}` });
+  try {
+    const inv = (await owner.post('/api/r/invoices', { customer_id: ids.cafe, status: 'sent', tax_rate: 0 })).data;
+    await owner.post('/api/r/invoice_items', { invoice_id: inv.id, description: 'Service', qty: 1, unit_price: 150 });
+    assert.equal((await owner.get('/api/payments/config')).data.test, true);
+    const link = (await owner.post(`/api/invoices/${inv.id}/pay-link`)).data.url;
+    const redirect = await fetch(link.replace(/^https?:\/\/[^/]+/, base), { redirect: 'manual' });
+    assert.equal(redirect.status, 303);
+    assert.equal(redirect.headers.get('location'), 'https://checkout.stripe.test/cs_1');
+    const checkout = calls.find(c => c.url === '/v1/checkout/sessions');
+    assert.equal(checkout.params['line_items[0][price_data][unit_amount]'], '15000', 'charges the balance in cents');
+    assert.equal(checkout.params['payment_method_types[1]'], 'us_bank_account', 'bank ACH offered');
+    assert.equal(checkout.params['metadata[invoice_id]'], String(inv.id));
+    assert.equal(checkout.auth, 'Bearer sk_test_123');
+
+    // Webhook: forged signature rejected; real one records the payment exactly once
+    const event = JSON.stringify({ type: 'checkout.session.completed', data: { object: { id: 'cs_1', mode: 'payment', payment_status: 'paid', amount_total: 15000, metadata: { invoice_id: String(inv.id) } } } });
+    const t = Math.floor(Date.now() / 1000);
+    const sig = crypto.createHmac('sha256', 'whsec_abc').update(`${t}.${event}`).digest('hex');
+    const post = s => fetch(`${base}/api/stripe/webhook`, { method: 'POST', headers: { 'Content-Type': 'application/json', 'Stripe-Signature': s }, body: event });
+    assert.equal((await post(`t=${t},v1=${'0'.repeat(64)}`)).status, 400);
+    assert.equal((await post(`t=${t},v1=${sig}`)).status, 200);
+    assert.equal((await post(`t=${t},v1=${sig}`)).status, 200, 'Stripe retries are harmless');
+    const pays = (await owner.get(`/api/r/payments?invoice_id=${inv.id}`)).data;
+    assert.equal(pays.length, 1);
+    assert.equal(pays[0].method, 'ach');
+    assert.equal(pays[0].amount, 150);
+    assert.equal((await owner.get(`/api/r/invoices/${inv.id}`)).data.status, 'paid');
+
+    // Saved card: list, then charge a second invoice
+    const pm = (await owner.get(`/api/customers/${ids.cafe}/payment-methods`)).data;
+    assert.equal(pm.methods[0].label, 'VISA •••• 4242');
+    const inv2 = (await owner.post('/api/r/invoices', { customer_id: ids.cafe, status: 'sent', tax_rate: 0 })).data;
+    await owner.post('/api/r/invoice_items', { invoice_id: inv2.id, description: 'Monitoring', qty: 1, unit_price: 30 });
+    const charged = (await owner.post(`/api/invoices/${inv2.id}/charge`, {})).data;
+    assert.equal(charged.status, 'paid');
+    assert.equal(calls.find(c => c.url === '/v1/payment_intents').params.off_session, 'true');
+    assert.equal((await owner.get(`/api/r/invoices/${inv2.id}`)).data.status, 'paid');
+    // Secrets never come back to the browser
+    await owner.put('/api/settings', { stripe_secret: 'sk_live_should_not_leak' });
+    assert.ok(!JSON.stringify((await owner.get('/api/settings')).data).includes('sk_live_should_not_leak'));
+  } finally {
+    fake.close();
+    for (const k of ['STRIPE_SECRET_KEY', 'STRIPE_WEBHOOK_SECRET', 'STRIPE_API_BASE']) delete process.env[k];
+  }
+});
+
 export { owner, ids, db, base };

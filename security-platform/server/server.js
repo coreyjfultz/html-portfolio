@@ -37,7 +37,8 @@ function readBody(req, limit = 1_000_000) {
     });
     req.on('end', () => {
       if (!chunks.length) return resolve({});
-      try { resolve(JSON.parse(Buffer.concat(chunks).toString('utf8'))); } catch { reject(new HttpError(400, 'Invalid JSON')); }
+      req.rawBody = Buffer.concat(chunks).toString('utf8'); // needed to verify webhook signatures
+      try { resolve(JSON.parse(req.rawBody)); } catch { reject(new HttpError(400, 'Invalid JSON')); }
     });
     req.on('error', reject);
   });
@@ -82,7 +83,7 @@ export function createServer(db) {
     try {
       // CSRF defence: state-changing API calls must come from our own JS (custom
       // header cannot be sent cross-site without a CORS preflight, which we never allow).
-      const inbound = pathname.startsWith('/api/inbound/');
+      const inbound = pathname.startsWith('/api/inbound/') || pathname === '/api/stripe/webhook';
       if (req.method !== 'GET' && !inbound && req.headers['x-requested-with'] !== 'SecureOps') throw new HttpError(403, 'Missing request header');
 
       const cookies = parseCookies(req.headers.cookie);

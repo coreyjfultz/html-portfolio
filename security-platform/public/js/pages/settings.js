@@ -14,7 +14,7 @@ const SETTINGS = [
 export async function render(view, _, query) {
   const tab = query.tab || 'company';
   mount(view, html`<div class="page-head"><div><h1>Settings</h1><div class="sub">Company, users and data</div></div></div>
-    <div class="tabs">${[['company', 'Company & billing'], ['notifications', 'Texts & email'], ['calendars', 'Calendars'], ['receiving', 'Receiving'], ['users', 'Users & logins'], ['audit', 'Activity log'], ['data', 'Backup & data']].map(([k, l]) => html`<button class="${k === tab ? 'on' : ''}" data-tab="${k}">${l}</button>`)}</div>
+    <div class="tabs">${[['company', 'Company & billing'], ['payments', 'Payments'], ['notifications', 'Texts & email'], ['calendars', 'Calendars'], ['receiving', 'Receiving'], ['users', 'Users & logins'], ['audit', 'Activity log'], ['data', 'Backup & data']].map(([k, l]) => html`<button class="${k === tab ? 'on' : ''}" data-tab="${k}">${l}</button>`)}</div>
     <div data-pane></div>`);
   $$('[data-tab]', view).forEach(b => b.addEventListener('click', () => { location.hash = `#/settings?tab=${b.dataset.tab}`; }));
   const pane = $('[data-pane]', view);
@@ -31,6 +31,28 @@ export async function render(view, _, query) {
       state.settings = await PUT('/api/settings', data);
       toast('Settings saved');
       $('.sidebar .brand span').textContent = state.settings.company_name;
+    });
+  }
+
+  if (tab === 'payments') {
+    const [s2, cfg] = await Promise.all([GET('/api/settings'), GET('/api/payments/config')]);
+    mount(pane, html`<div class="grid g2">
+      <div class="card"><div class="card-head"><h2>Accepted payment methods</h2></div><div class="card-body small">
+        <p>✔ <b>Cash</b> and ✔ <b>Check</b>: record them on the invoice with “Record payment”.</p>
+        <p>✔ <b>Credit card</b> and ✔ <b>Bank ACH</b>: customers pay online from a “Pay now” link or the customer portal, or you charge a card/bank they've saved. Payments post to the invoice automatically.</p>
+        <p class="muted">Online payments run through Stripe (about 2.9% + 30¢ per card payment; ACH 0.8%, capped at $5). Card and bank numbers stay with Stripe and never touch this system.</p></div></div>
+      <div class="card"><div class="card-head"><h2>Stripe connection</h2>${cfg.ok ? html`<span class="badge good">${cfg.test ? 'Connected (test mode)' : 'Connected'}</span>` : html`<span class="badge warn">Not connected</span>`}</div>
+        <div class="card-body"><form class="stack" data-pform style="gap:12px">
+          <div class="field"><label for="sk">Secret key</label><input id="sk" type="password" name="stripe_secret" placeholder="${s2.stripe_secret__set ? 'Saved — leave blank to keep' : 'sk_live_… (Stripe Dashboard → Developers → API keys)'}" autocomplete="off"></div>
+          <div class="field"><label for="wh">Webhook signing secret</label><input id="wh" type="password" name="stripe_webhook_secret" placeholder="${s2.stripe_webhook_secret__set ? 'Saved — leave blank to keep' : 'whsec_…'}" autocomplete="off">
+            <span class="help">In Stripe: Developers → Webhooks → Add endpoint <span class="mono">${cfg.webhook_url}</span> with events <span class="mono">checkout.session.completed, checkout.session.async_payment_succeeded, checkout.session.async_payment_failed, payment_intent.succeeded, payment_intent.payment_failed</span>, then paste its signing secret here.</span></div>
+          <label class="row"><input type="checkbox" name="stripe_ach" ${s2.stripe_ach !== '0' ? raw('checked') : ''}> Offer bank (ACH) payments as well as cards</label>
+          <div><button class="btn primary">Save</button></div></form></div></div></div>`);
+    $('[data-pform]', pane).addEventListener('submit', async e => {
+      e.preventDefault();
+      const f = e.target;
+      await PUT('/api/settings', { stripe_secret: f.stripe_secret.value.trim(), stripe_webhook_secret: f.stripe_webhook_secret.value.trim(), stripe_ach: f.stripe_ach.checked ? '1' : '0' });
+      toast('Saved'); refresh();
     });
   }
 

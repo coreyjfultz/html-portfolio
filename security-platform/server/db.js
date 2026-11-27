@@ -39,6 +39,7 @@ export const DEFAULT_SETTINGS = {
   twilio_sid: '', twilio_token: '', twilio_from: '',
   notify_on_schedule: '1', notify_on_way: '1', notify_tech_invites: '1',
   proposal_next_number: '1001',
+  stripe_secret: '', stripe_webhook_secret: '', stripe_ach: '1',
   proposal_valid_days: '30',
   proposal_terms: `1. Scope. We will furnish and install the equipment and services listed above. Work outside this scope will be quoted separately.
 2. Payment. The deposit shown is due at signing; the balance is due on completion. Monthly service fees are billed in advance each month.
@@ -56,9 +57,9 @@ export const DEFAULT_TEMPLATES = {
 };
 Object.assign(DEFAULT_SETTINGS, DEFAULT_TEMPLATES);
 // Settings stored encrypted; never sent back to the browser.
-export const SECRET_SETTINGS = new Set(['smtp_pass', 'twilio_token']);
+export const SECRET_SETTINGS = new Set(['smtp_pass', 'twilio_token', 'stripe_secret', 'stripe_webhook_secret']);
 // Settings that are never sent to non-admin users or editable through PUT /api/settings.
-export const PRIVATE_SETTINGS = new Set(['inbound_token', 'calendar_token', 'smtp_pass', 'twilio_token']);
+export const PRIVATE_SETTINGS = new Set(['inbound_token', 'calendar_token', 'smtp_pass', 'twilio_token', 'stripe_secret', 'stripe_webhook_secret']);
 
 function columnSql(f) {
   let sql = `"${f.name}" ${SQL_TYPES[f.type] || 'TEXT'}`;

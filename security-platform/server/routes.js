@@ -11,6 +11,7 @@ import { aiConfigured } from './extract.js';
 import { callToEvent, buildCalendar } from './calendar.js';
 import { decodeImage, saveImage, sendImage, removeImage } from './media.js';
 import { sendForSignature, duplicate, publicView, byToken, markViewed, sign, decline, signingUrl } from './proposals.js';
+import { stripeConfig, checkoutForInvoice, checkoutForSetup, listMethods, removeMethod, setDefaultMethod, chargeSaved, payLink, handleWebhook } from './payments.js';
 
 export function baseUrl(db, req) {
   const s = getSettings(db);
@@ -238,6 +239,85 @@ export function buildRoutes() {
     push('Technician', list(db, 'technicians', { q, limit: 3 }), t => ({ id: t.id, title: t.name, sub: t.phone || '', href: `#/technicians` }));
     return out;
   });
+
+  // ------------------------------------------------------------ online payments (Stripe)
+  r('GET', '/api/payments/config', BILLING, ({ db }) => {
+    const c = stripeConfig(db);
+    return { ok: c.ok, test: c.test, ach: c.ach, webhook_ready: !!c.webhookSecret, webhook_url: `${appUrl(db)}/api/stripe/webhook` };
+  });
+  r('POST', '/api/invoices/:id/pay-link', BILLING, ({ db, params }) => {
+    if (!stripeConfig(db).ok) throw new HttpError(400, 'Online payments are not set up yet (Settings → Payments).');
+    return { url: payLink(db, Number(params.id)) };
+  });
+  r('POST', '/api/invoices/:id/email-pay-link', BILLING, ({ db, params, user }) => {
+    if (!stripeConfig(db).ok) throw new HttpError(400, 'Online payments are not set up yet (Settings → Payments).');
+    const inv = get(db, 'invoices', params.id);
+    if (!(inv.balance > 0)) throw new HttpError(400, 'Nothing is owed on this invoice');
+    const c = db.prepare('SELECT name, contact_name, email FROM customers WHERE id = ?').get(inv.customer_id);
+    if (!c.email) throw new HttpError(400, 'This customer has no email address');
+    const url = payLink(db, inv.id);
+    const s = getSettings(db);
+    queue(() => sendEmail(db, { to: c.email, related: { type: 'invoice', id: inv.id }, subject: `Invoice #${inv.number} from ${s.company_name} — $${inv.balance.toFixed(2)} due`,
+      text: `Hi ${c.contact_name || c.name},
+
+Invoice #${inv.number} for $${inv.balance.toFixed(2)} is due ${inv.due_date || 'now'}.
+
+Pay securely online by card or bank transfer:
+${url}
+
+Thank you,
+${s.company_name}` }));
+    if (inv.status === 'draft') db.prepare("UPDATE invoices SET status = 'sent' WHERE id = ?").run(inv.id);
+    audit(db, user, 'email pay link', 'invoices', inv.id);
+    return { ok: true, url };
+  });
+  r('POST', '/api/invoices/:id/charge', BILLING, async ({ db, params, body, user }) => {
+    const r2 = await chargeSaved(db, Number(params.id), user, { pmId: body.pm_id });
+    audit(db, user, 'charge saved payment method', 'invoices', Number(params.id), r2.status);
+    return r2;
+  });
+  r('GET', '/api/customers/:id/payment-methods', BILLING, ({ db, params }) => listMethods(db, Number(params.id)));
+  r('POST', '/api/customers/:id/payment-methods/link', BILLING, async ({ db, params, body, user }) => {
+    const { url } = await checkoutForSetup(db, Number(params.id), { returnUrl: `${appUrl(db)}/portal#/payment-methods` });
+    if (body.email) {
+      const c = db.prepare('SELECT name, contact_name, email FROM customers WHERE id = ?').get(Number(params.id));
+      if (!c.email) throw new HttpError(400, 'This customer has no email address');
+      const s = getSettings(db);
+      queue(() => sendEmail(db, { to: c.email, related: { type: 'customer', id: Number(params.id) }, subject: `${s.company_name}: add or update your payment method`,
+        text: `Hi ${c.contact_name || c.name},
+
+Use this secure link to add or update the card or bank account we use for your account (link works for 24 hours):
+
+${url}
+
+Thank you,
+${s.company_name}` }));
+    }
+    audit(db, user, 'payment method link', 'customers', Number(params.id));
+    return { url };
+  });
+  r('DELETE', '/api/customers/:id/payment-methods/:pm', BILLING, ({ db, params }) => removeMethod(db, Number(params.id), params.pm));
+  r('POST', '/api/customers/:id/payment-methods/:pm/default', BILLING, ({ db, params }) => setDefaultMethod(db, Number(params.id), params.pm));
+
+  // Public "Pay now" link from emails: sends the customer to Stripe's secure page.
+  r('GET', '/api/public/pay/:token', null, async ({ db, params, res }) => {
+    const inv = /^[A-Za-z0-9_-]{20,64}$/.test(params.token) && db.prepare('SELECT id, status FROM invoices WHERE pay_token = ?').get(params.token);
+    const page = (title, msg) => { res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' }); res.end(`<!doctype html><meta name="viewport" content="width=device-width,initial-scale=1"><title>${title}</title><body style="font-family:system-ui;max-width:480px;margin:60px auto;padding:0 16px;color:#0f172a"><h2>${title}</h2><p>${msg}</p></body>`); };
+    if (!inv) return page('Link not valid', 'This payment link is not valid. Please contact us.');
+    try {
+      const { url } = await checkoutForInvoice(db, inv.id, { returnUrl: `${appUrl(db)}/api/public/pay/${params.token}/done` });
+      res.writeHead(303, { Location: url }); res.end();
+    } catch (e) { page('Nothing to pay', e.message); }
+    return undefined;
+  });
+  r('GET', '/api/public/pay/:token/done', null, ({ query, res }) => {
+    res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
+    res.end(`<!doctype html><meta name="viewport" content="width=device-width,initial-scale=1"><title>Thank you</title><body style="font-family:system-ui;max-width:480px;margin:60px auto;padding:0 16px;color:#0f172a"><h2>${query.paid ? 'Thank you! Your payment was received.' : 'Payment not completed'}</h2><p>${query.paid ? 'A receipt will be emailed to you. Bank payments can take a few days to clear.' : 'You can use the link in your email to try again.'}</p></body>`);
+    return undefined;
+  });
+
+  // Stripe → us. Authenticity is checked with the webhook signing secret.
+  r('POST', '/api/stripe/webhook', null, async ({ db, req }) => handleWebhook(db, req.rawBody || '', req.headers['stripe-signature']));
 
   // ------------------------------------------------------------ proposals & agreements
   r('POST', '/api/proposals/:id/send', G.sales, ({ db, params, body, user }) =>
