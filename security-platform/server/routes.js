@@ -16,6 +16,17 @@ import { registerPortalRoutes, invite as portalInvite } from './portal.js';
 import { putOnTest, clearTest, markConfirmed, logEvent, ingestSignals, stationInfo, CONNECTORS } from './monitoring.js';
 import { stripeConfig, checkoutForInvoice, checkoutForSetup, listMethods, removeMethod, setDefaultMethod, chargeSaved, payLink, handleWebhook } from './payments.js';
 
+/** For technicians, keep only rows about customers on their schedule (rows with no customer, like vehicles, stay). */
+function scoped(db, user, rows, key = 'customer_id') {
+  const ids = techCustomerIds(db, user);
+  return ids ? rows.filter(r => r[key] == null || ids.has(r[key])) : rows;
+}
+function callCustomerCheck(db, user, callId) {
+  const call = db.prepare('SELECT customer_id FROM service_calls WHERE id = ?').get(Number(callId));
+  if (!call) throw new HttpError(404, 'Service call not found');
+  assertCustomerVisible(db, user, call.customer_id);
+}
+
 export function baseUrl(db, req) {
   const s = getSettings(db);
   if (s.public_url) return s.public_url.replace(/\/$/, '');
@@ -23,7 +34,7 @@ export function baseUrl(db, req) {
   return `${proto}://${req?.headers['x-forwarded-host'] || req?.headers.host || 'localhost'}`;
 }
 import {
-  HttpError, list, get, create, update, adjustStock, recalcInvoice, round2, todayLocal, nowLocal, addMonths, addDays,
+  HttpError, list, get, create, update, adjustStock, techCustomerIds, assertCustomerVisible, grantAccess, recalcInvoice, round2, todayLocal, nowLocal, addMonths, addDays,
 } from './resources.js';
 import {
   hashPassword, verifyPassword, validatePassword, createSession, destroySession, audit, encrypt,
@@ -227,7 +238,7 @@ export function buildRoutes() {
       unassignedCalls: db.prepare(`SELECT COUNT(*) AS n FROM service_calls WHERE status NOT IN ('completed','cancelled') AND technician_id IS NULL`).get().n,
       emergencies: db.prepare(`SELECT COUNT(*) AS n FROM service_calls t WHERE status NOT IN ('completed','cancelled') AND priority = 'emergency' ${callWhere}`).get().n,
       customers: db.prepare(`SELECT type, COUNT(*) AS n FROM customers WHERE status = 'active' GROUP BY type`).all(),
-      maintenance: maintenanceDue(db, 30),
+      maintenance: scoped(db, user, maintenanceDue(db, 30)),
       lowStock: db.prepare(`SELECT i.id, i.name, i.sku, i.reorder_level, COALESCE(SUM(s.qty),0) AS total_qty
         FROM inventory_items i LEFT JOIN stock s ON s.item_id = i.id WHERE i.active = 1
         GROUP BY i.id HAVING total_qty < i.reorder_level ORDER BY total_qty - i.reorder_level LIMIT 10`).all(),
@@ -257,8 +268,8 @@ export function buildRoutes() {
     if (q.length < 2) return [];
     const out = [];
     const push = (kind, rows, toItem) => rows.forEach(x => out.push({ kind, ...toItem(x) }));
-    push('Customer', list(db, 'customers', { q, limit: 8 }), c => ({ id: c.id, title: c.name, sub: [c.type, c.phone, c.city].filter(Boolean).join(' · '), href: `#/customers/${c.id}` }));
-    push('Service call', list(db, 'service_calls', { q, limit: 6 }), c => ({ id: c.id, title: `SC-${c.number} ${c.title}`, sub: `${c.customer_id_label} · ${c.status}`, href: `#/calls/${c.id}` }));
+    push('Customer', list(db, 'customers', { q, limit: 8 }, user), c => ({ id: c.id, title: c.name, sub: [c.type, c.phone, c.city].filter(Boolean).join(' · '), href: `#/customers/${c.id}` }));
+    push('Service call', list(db, 'service_calls', { q, limit: 6 }, user), c => ({ id: c.id, title: `SC-${c.number} ${c.title}`, sub: `${c.customer_id_label} · ${c.status}`, href: `#/calls/${c.id}` }));
     if (BILLING.includes(user.role)) {
       push('Invoice', list(db, 'invoices', { q, limit: 5 }), i => ({ id: i.id, title: `Invoice #${i.number}`, sub: `${i.customer_id_label} · $${i.total}`, href: `#/invoices/${i.id}` }));
     }
@@ -269,13 +280,14 @@ export function buildRoutes() {
   });
 
   // ------------------------------------------------------------ alarm monitoring
-  const acctOr404 = (db, id) => {
+  const acctOr404 = (db, id, user) => {
     const a = db.prepare('SELECT * FROM monitoring_accounts WHERE id = ?').get(Number(id));
     if (!a) throw new HttpError(404, 'Monitoring account not found');
+    if (user) assertCustomerVisible(db, user, a.customer_id);
     return a;
   };
-  r('GET', '/api/monitoring/:id/events', ALL, ({ db, params, query }) => {
-    acctOr404(db, params.id);
+  r('GET', '/api/monitoring/:id/events', ALL, ({ db, params, query, user }) => {
+    acctOr404(db, params.id, user);
     const where = ['account_id = ?'];
     const args = [Number(params.id)];
     if (query.type) { where.push('event_type IN (' + String(query.type).split(',').map(() => '?').join(',') + ')'); args.push(...String(query.type).split(',')); }
@@ -284,18 +296,18 @@ export function buildRoutes() {
     return db.prepare(`SELECT * FROM monitoring_events WHERE ${where.join(' AND ')} ORDER BY occurred_at DESC, id DESC LIMIT ?`).all(...args, Math.min(Number(query.limit) || 300, 2000));
   });
   r('POST', '/api/monitoring/:id/events', ALL, ({ db, params, body, user }) => {
-    acctOr404(db, params.id);
+    acctOr404(db, params.id, user);
     const description = String(body.description || '').trim();
     if (!description) throw new HttpError(400, 'Describe what happened');
     logEvent(db, Number(params.id), { type: ['note', 'alarm', 'trouble', 'restore', 'test', 'cancel', 'other'].includes(body.type) ? body.type : 'note', code: body.code, zone: body.zone, description, disposition: body.disposition, time: body.time, source: 'manual', user });
     return { ok: true };
   });
-  r('GET', '/api/monitoring/:id/station', ALL, ({ db, params }) => stationInfo(db, acctOr404(db, params.id).station_id));
-  r('POST', '/api/monitoring/:id/test', ALL, ({ db, params, body, user }) => putOnTest(db, params.id, body, user));
-  r('POST', '/api/monitoring/:id/test/clear', ALL, ({ db, params, user }) => clearTest(db, params.id, user));
-  r('POST', '/api/monitoring/:id/confirmed', ALL, ({ db, params, user }) => { acctOr404(db, params.id); markConfirmed(db, params.id, user); return { ok: true }; });
-  r('GET', '/api/monitoring-on-test', ALL, ({ db }) => db.prepare(`SELECT a.id, a.account_number, a.test_until, a.test_reason, a.test_by, a.customer_id, c.name AS customer, s.name AS station
-    FROM monitoring_accounts a JOIN customers c ON c.id = a.customer_id JOIN monitoring_stations s ON s.id = a.station_id WHERE a.status = 'on test' ORDER BY a.test_until`).all());
+  r('GET', '/api/monitoring/:id/station', ALL, ({ db, params, user }) => stationInfo(db, acctOr404(db, params.id, user).station_id));
+  r('POST', '/api/monitoring/:id/test', ALL, ({ db, params, body, user }) => { acctOr404(db, params.id, user); return putOnTest(db, params.id, body, user); });
+  r('POST', '/api/monitoring/:id/test/clear', ALL, ({ db, params, user }) => { acctOr404(db, params.id, user); return clearTest(db, params.id, user); });
+  r('POST', '/api/monitoring/:id/confirmed', ALL, ({ db, params, user }) => { acctOr404(db, params.id, user); markConfirmed(db, params.id, user); return { ok: true }; });
+  r('GET', '/api/monitoring-on-test', ALL, ({ db, user }) => scoped(db, user, db.prepare(`SELECT a.id, a.account_number, a.test_until, a.test_reason, a.test_by, a.customer_id, c.name AS customer, s.name AS station
+    FROM monitoring_accounts a JOIN customers c ON c.id = a.customer_id JOIN monitoring_stations s ON s.id = a.station_id WHERE a.status = 'on test' ORDER BY a.test_until`).all()));
   r('GET', '/api/monitoring-stations/:id/feed', MANAGE, ({ db, params, req }) => {
     const s = db.prepare('SELECT inbound_token, connector FROM monitoring_stations WHERE id = ?').get(Number(params.id));
     if (!s) throw new HttpError(404, 'Not found');
@@ -491,10 +503,11 @@ ${s.company_name}` }));
   const callFor = (db, id, user) => {
     const call = db.prepare('SELECT * FROM service_calls WHERE id = ?').get(Number(id));
     if (!call) throw new HttpError(404, 'Service call not found');
+    assertCustomerVisible(db, user, call.customer_id);
     return call;
   };
 
-  r('GET', '/api/service_calls/:id/photos', ALL, ({ db, params }) =>
+  r('GET', '/api/service_calls/:id/photos', ALL, ({ db, params, user }) => callFor(db, params.id, user) &&
     db.prepare('SELECT id, kind, caption, user_name, show_customer, created_at FROM job_photos WHERE service_call_id = ? ORDER BY id').all(Number(params.id)));
 
   r('POST', '/api/service_calls/:id/photos', ALL, ({ db, params, body, user }) => {
@@ -508,9 +521,10 @@ ${s.company_name}` }));
     return { id: Number(info.lastInsertRowid) };
   });
 
-  r('GET', '/api/photos/:id', ALL, ({ db, params, res }) => {
-    const p = db.prepare('SELECT file_key FROM job_photos WHERE id = ?').get(Number(params.id));
+  r('GET', '/api/photos/:id', ALL, ({ db, params, res, user }) => {
+    const p = db.prepare('SELECT file_key, service_call_id FROM job_photos WHERE id = ?').get(Number(params.id));
     if (!p) throw new HttpError(404, 'Not found');
+    callCustomerCheck(db, user, p.service_call_id);
     sendImage(res, 'photos', p.file_key);
     return undefined;
   });
@@ -518,6 +532,7 @@ ${s.company_name}` }));
   r('PUT', '/api/photos/:id', ALL, ({ db, params, body, user }) => {
     const p = db.prepare('SELECT * FROM job_photos WHERE id = ?').get(Number(params.id));
     if (!p) throw new HttpError(404, 'Not found');
+    callCustomerCheck(db, user, p.service_call_id);
     if (p.user_id !== user.id && !MANAGE.includes(user.role)) throw new HttpError(403, 'Only the person who took it or an admin can change this photo');
     db.prepare('UPDATE job_photos SET caption = ?, kind = ?, show_customer = ? WHERE id = ?').run(
       body.caption === undefined ? p.caption : String(body.caption).slice(0, 300),
@@ -529,6 +544,7 @@ ${s.company_name}` }));
   r('DELETE', '/api/photos/:id', ALL, ({ db, params, user }) => {
     const p = db.prepare('SELECT * FROM job_photos WHERE id = ?').get(Number(params.id));
     if (!p) throw new HttpError(404, 'Not found');
+    callCustomerCheck(db, user, p.service_call_id);
     if (p.user_id !== user.id && !MANAGE.includes(user.role)) throw new HttpError(403, 'Only the person who took it or an admin can delete this photo');
     db.prepare('DELETE FROM job_photos WHERE id = ?').run(p.id);
     removeImage('photos', p.file_key);
@@ -550,7 +566,8 @@ ${s.company_name}` }));
     return get(db, 'service_calls', call.id);
   });
 
-  r('GET', '/api/service_calls/:id/signature', G.all, ({ db, params, res }) => {
+  r('GET', '/api/service_calls/:id/signature', G.all, ({ db, params, res, user }) => {
+    callCustomerCheck(db, user, params.id);
     const call = db.prepare('SELECT signature_key FROM service_calls WHERE id = ?').get(Number(params.id));
     if (!call?.signature_key) throw new HttpError(404, 'Not signed');
     sendImage(res, 'signatures', call.signature_key, { cache: 'private, no-cache' });
@@ -559,7 +576,7 @@ ${s.company_name}` }));
 
   // ------------------------------------------------------------ notifications
   r('POST', '/api/service_calls/:id/on-my-way', ALL, ({ db, params, body, user }) => {
-    const call = get(db, 'service_calls', params.id);
+    const call = get(db, 'service_calls', params.id, user);
     if (user.role === 'technician' && user.technician_id && call.technician_id && call.technician_id !== user.technician_id) throw new HttpError(403, 'This job is assigned to someone else');
     const eta = Number(body.eta_minutes) > 0 ? Math.round(Number(body.eta_minutes)) : null;
     const updated = update(db, 'service_calls', call.id, { status: 'en route' }, user);
@@ -578,6 +595,10 @@ ${s.company_name}` }));
 
   r('GET', '/api/notifications', ALL, ({ db, query, user }) => {
     if (query.related_type && query.related_id) {
+      if (techCustomerIds(db, user)) {
+        if (query.related_type !== 'service_call') throw new HttpError(403, 'Not allowed');
+        callCustomerCheck(db, user, query.related_id);
+      }
       return db.prepare('SELECT * FROM notifications WHERE related_type = ? AND related_id = ? ORDER BY id DESC LIMIT 100').all(query.related_type, Number(query.related_id));
     }
     if (!MANAGE.includes(user.role)) throw new HttpError(403, 'Not allowed');
@@ -638,7 +659,22 @@ ${s.company_name}` }));
     return { ok: true };
   });
 
-  r('GET', '/api/customers/:id/stage-log', ALL, ({ db, params }) =>
+  r('GET', '/api/customers/:id/access', MANAGE, ({ db, params }) => db.prepare(`SELECT g.*, u.name AS user_name FROM tech_access_grants g JOIN users u ON u.id = g.user_id
+    WHERE g.customer_id = ? AND g.expires_at > ? ORDER BY g.expires_at DESC`).all(Number(params.id), nowLocal()));
+  r('POST', '/api/customers/:id/access', MANAGE, ({ db, params, body, user }) => {
+    const tech = db.prepare("SELECT id, name FROM users WHERE id = ? AND role = 'technician' AND active = 1").get(Number(body.user_id));
+    if (!tech) throw new HttpError(400, 'Choose a technician');
+    const until = grantAccess(db, { userId: tech.id, customerId: Number(params.id), hours: body.hours, reason: String(body.reason || '').slice(0, 200) || 'Granted by office', by: user.name });
+    audit(db, user, 'grant customer access', 'customers', Number(params.id), `${tech.name} until ${until}`);
+    return { ok: true, until };
+  });
+  r('DELETE', '/api/customers/:id/access/:grant', MANAGE, ({ db, params, user }) => {
+    db.prepare('DELETE FROM tech_access_grants WHERE id = ? AND customer_id = ?').run(Number(params.grant), Number(params.id));
+    audit(db, user, 'revoke customer access', 'customers', Number(params.id));
+    return { ok: true };
+  });
+
+  r('GET', '/api/customers/:id/stage-log', ALL, ({ db, params, user }) => assertCustomerVisible(db, user, params.id) ||
     db.prepare('SELECT * FROM customer_stage_log WHERE customer_id = ? ORDER BY id DESC LIMIT 100').all(Number(params.id)));
 
   // Pipeline board: open opportunities plus recently won customers.
@@ -652,7 +688,10 @@ ${s.company_name}` }));
   });
 
   // ------------------------------------------------------------ maintenance
-  r('GET', '/api/maintenance', ALL, ({ db, query }) => maintenanceDue(db, Number(query.days) || 60, query.customer_id));
+  r('GET', '/api/maintenance', ALL, ({ db, query, user }) => {
+    if (query.customer_id) assertCustomerVisible(db, user, query.customer_id);
+    return scoped(db, user, maintenanceDue(db, Number(query.days) || 60, query.customer_id));
+  });
 
   r('POST', '/api/maintenance/complete', ALL, ({ db, body, user }) => {
     const m = MAINTENANCE[body.key];
@@ -663,6 +702,7 @@ ${s.company_name}` }));
       for (const id of ids) {
         const row = db.prepare(`SELECT * FROM "${m.table}" WHERE id = ?`).get(id);
         if (!row) continue;
+        if (row.customer_id) assertCustomerVisible(db, user, row.customer_id);
         let next = body.next_date;
         if (!next) {
           if (m.intervalYearsField) next = addMonths(date, (Number(row[m.intervalYearsField]) || 12) * 12);

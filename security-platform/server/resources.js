@@ -86,6 +86,58 @@ function selectSql(name) {
   return `SELECT ${cols.join(', ')} FROM "${name}" t`;
 }
 
+// ---------------------------------------------------------------- technician scope
+// Technicians only see customers on their own schedule (a week back to two weeks
+// ahead, plus any open job assigned to them) and customers they were granted
+// temporary access to (e.g. an after-hours call routed to them while on call).
+const SCOPE_SQL = {
+  customers: 't.id',
+  monitoring_zones: '(SELECT customer_id FROM monitoring_accounts m WHERE m.id = t.account_id)',
+  monitoring_contacts: '(SELECT customer_id FROM monitoring_accounts m WHERE m.id = t.account_id)',
+  service_call_parts: '(SELECT customer_id FROM service_calls s WHERE s.id = t.service_call_id)',
+};
+export const isScoped = user => user?.role === 'technician';
+function scopeExpr(name) {
+  if (SCOPE_SQL[name]) return SCOPE_SQL[name];
+  return RESOURCES[name]?.fields.some(f => f.name === 'customer_id') ? 't.customer_id' : null;
+}
+export function techCustomerIds(db, user) {
+  if (!isScoped(user)) return null;
+  const now = nowLocal();
+  const ids = new Set();
+  if (user.technician_id) {
+    for (const r of db.prepare(`SELECT DISTINCT customer_id FROM service_calls WHERE technician_id = ? AND status <> 'cancelled' AND (
+        (status NOT IN ('completed') AND (scheduled_start IS NULL OR scheduled_start >= datetime(?, '-7 days')))
+        OR (scheduled_start BETWEEN datetime(?, '-7 days') AND datetime(?, '+14 days')))`).all(user.technician_id, now, now, now)) ids.add(r.customer_id);
+  }
+  for (const r of db.prepare('SELECT customer_id FROM tech_access_grants WHERE user_id = ? AND expires_at > ?').all(user.id, now)) ids.add(r.customer_id);
+  return ids;
+}
+/** Give a technician temporary access to one customer (e.g. an after-hours call). */
+export function grantAccess(db, { userId, customerId, hours = 24, reason = null, by = null }) {
+  const d = new Date(Date.now() + Math.min(Math.max(Number(hours) || 24, 1), 24 * 14) * 3600e3);
+  const p = n => String(n).padStart(2, '0');
+  const until = `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}T${p(d.getHours())}:${p(d.getMinutes())}`;
+  db.prepare('INSERT INTO tech_access_grants (user_id, customer_id, reason, granted_by, expires_at) VALUES (?,?,?,?,?)').run(userId, customerId, reason, by, until);
+  return until;
+}
+/** Throws 404 (not 403, so nothing is revealed) if a technician asks for a customer outside their schedule. */
+export function assertCustomerVisible(db, user, customerId) {
+  const ids = techCustomerIds(db, user);
+  if (ids && !ids.has(Number(customerId))) throw new HttpError(404, 'Not found — this customer is not on your schedule');
+}
+function customerOf(db, name, row) {
+  if (!row) return null;
+  if (name === 'customers') return row.id;
+  if (name === 'monitoring_zones' || name === 'monitoring_contacts') return db.prepare('SELECT customer_id FROM monitoring_accounts WHERE id = ?').get(row.account_id)?.customer_id;
+  if (name === 'service_call_parts') return db.prepare('SELECT customer_id FROM service_calls WHERE id = ?').get(row.service_call_id)?.customer_id;
+  return row.customer_id;
+}
+function assertRowVisible(db, name, row, user) {
+  if (!isScoped(user) || !scopeExpr(name)) return;
+  assertCustomerVisible(db, user, customerOf(db, name, row));
+}
+
 export function getDef(name) {
   const def = RESOURCES[name];
   if (!def) throw new HttpError(404, 'Unknown resource');
@@ -154,15 +206,22 @@ export function list(db, name, query = {}, user) {
     where.push('t.technician_id = ?');
     params.push(user.technician_id);
   }
+  const expr = isScoped(user) && scopeExpr(name);
+  if (expr) {
+    const ids = [...techCustomerIds(db, user)];
+    where.push(ids.length ? `${expr} IN (${ids.map(() => '?').join(',')})` : '0');
+    params.push(...ids);
+  }
   const limit = Math.min(parseInt(query.limit, 10) || 1000, 5000);
   const sql = `${selectSql(name)} ${where.length ? 'WHERE ' + where.join(' AND ') : ''} ORDER BY ${def.order || 't.id DESC'} LIMIT ${limit}`;
   return db.prepare(sql).all(...params).map(r => present(name, r));
 }
 
-export function get(db, name, id) {
+export function get(db, name, id, user) {
   getDef(name);
   const row = db.prepare(`${selectSql(name)} WHERE t.id = ?`).get(Number(id));
   if (!row) throw new HttpError(404, 'Not found');
+  if (user) assertRowVisible(db, name, row, user);
   return present(name, row);
 }
 
@@ -240,6 +299,7 @@ export function create(db, name, body, user) {
   if (!canWrite(def, user)) throw new HttpError(403, 'Not allowed');
   return tx(db, () => {
     const data = cleanInput(def, body, true, user);
+    if (isScoped(user) && scopeExpr(name) && name !== 'customers') assertRowVisible(db, name, data, user);
     checkSite(db, data, null);
     HOOKS[name]?.beforeSave?.(db, data, { isCreate: true, existing: null, user, body });
     const keys = Object.keys(data);
@@ -259,7 +319,9 @@ export function update(db, name, id, body, user) {
   return tx(db, () => {
     const existing = raw(db, name, id);
     if (!existing) throw new HttpError(404, 'Not found');
+    assertRowVisible(db, name, existing, user);
     const data = cleanInput(def, body, false, user);
+    if (isScoped(user) && 'customer_id' in data) assertCustomerVisible(db, user, data.customer_id);
     checkSite(db, data, existing);
     HOOKS[name]?.beforeSave?.(db, data, { isCreate: false, existing, user, body });
     const keys = Object.keys(data);
@@ -280,6 +342,7 @@ export function remove(db, name, id, user) {
   return tx(db, () => {
     const existing = raw(db, name, id);
     if (!existing) throw new HttpError(404, 'Not found');
+    assertRowVisible(db, name, existing, user);
     HOOKS[name]?.beforeDelete?.(db, existing, { user });
     try {
       db.prepare(`DELETE FROM "${name}" WHERE id = ?`).run(Number(id));
@@ -302,6 +365,7 @@ export function reveal(db, name, id, field, user) {
   if (!f) throw new HttpError(400, 'Not a secret field');
   const row = raw(db, name, id);
   if (!row) throw new HttpError(404, 'Not found');
+  assertRowVisible(db, name, row, user);
   audit(db, user, 'reveal', name, Number(id), field);
   return { value: decrypt(row[field]) };
 }

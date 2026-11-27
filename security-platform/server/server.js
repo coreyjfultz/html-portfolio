@@ -123,7 +123,7 @@ export function createServer(db) {
       let out;
       if (action === 'reveal' && req.method === 'POST') out = reveal(db, name, id, body.field, user);
       else if (req.method === 'GET' && !id) out = list(db, name, query, user);
-      else if (req.method === 'GET') out = get(db, name, id);
+      else if (req.method === 'GET') out = get(db, name, id, user);
       else if (req.method === 'POST' && !id) out = create(db, name, body, user);
       else if (req.method === 'PUT' && id) out = update(db, name, id, body, user);
       else if (req.method === 'DELETE' && id) out = remove(db, name, id, user);

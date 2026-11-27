@@ -636,6 +636,9 @@ test('alarm monitoring: stations, auto account numbers, zones, call list, test m
   await owner.put(`/api/r/monitoring_accounts/${acct.id}`, { status: 'active' });
   const tech = client();
   await tech.post('/api/auth/login', { email: 'tess-login@example.com', password: 'password123' });
+  assert.equal((await tech.post(`/api/monitoring/${acct.id}/test`, { minutes: 120 })).status, 404, 'not on their schedule yet');
+  const today = new Date().toISOString().slice(0, 10);
+  await owner.post('/api/r/service_calls', { customer_id: ids.cafe, title: 'Smoke detector swap', technician_id: ids.tech, scheduled_start: `${today}T23:00`, duration_hours: 0.5, allow_conflict: true });
   const t = await tech.post(`/api/monitoring/${acct.id}/test`, { minutes: 120, reason: 'Replacing kitchen smoke' });
   assert.equal(t.status, 200, JSON.stringify(t.data));
   assert.equal(t.data.account.status, 'on test');

@@ -1,7 +1,7 @@
 import { RESOURCES, STAGES, STAGE_INFO, PAYMENT_METHODS } from '../schema.js';
 import {
   html, raw, icon, mount, $, $$, money, fmtDate, badge, typeBadge, stageBadge, relDays, dataTable, fieldColumns, openForm, renderValue,
-  loading, toast, secretView, confirmDialog, openModal,
+  loading, toast, secretView, confirmDialog, openModal, fmtDateTime,
 } from '../ui.js';
 import { R, GET, POST, api } from '../api.js';
 import { can, refresh } from '../app.js';
@@ -116,6 +116,7 @@ export async function detail(view, [id], query) {
         ${editor ? html`<button class="btn" data-edit>Edit</button>` : ''}
         <button class="btn" data-newcall>+ Service call</button>
         ${editor ? html`<button class="btn" data-portal>Portal access</button>` : ''}
+        ${can.manage() ? html`<button class="btn" data-techaccess title="Technicians only see customers on their schedule">Tech access</button>` : ''}
         ${can.sales() ? html`<button class="btn" data-newprop>+ Proposal</button>` : ''}
         ${office ? html`<button class="btn primary" data-newinv>+ Invoice</button>` : ''}
       </div></div>
@@ -126,6 +127,7 @@ export async function detail(view, [id], query) {
   $('[data-edit]', view)?.addEventListener('click', () => openForm('customers', { record: c, onSaved: reload, onDeleted: () => { location.hash = '#/customers'; } }));
   $('[data-newcall]', view).addEventListener('click', () => newCall({}));
   $('[data-portal]', view)?.addEventListener('click', () => portalDialog(c));
+  $('[data-techaccess]', view)?.addEventListener('click', () => techAccessDialog(c));
   $('[data-newprop]', view)?.addEventListener('click', async () => (await import('./proposals.js')).newProposal({ customer_id: c.id }));
   $('[data-stage-sel]', view)?.addEventListener('change', async e => {
     try { await R.update('customers', c.id, { stage: e.target.value }); toast(`Moved to ${STAGE_INFO[e.target.value].label}`); reload(); }
@@ -395,4 +397,24 @@ async function portalDialog(c) {
   };
   $('[data-send]', el).addEventListener('click', () => go(false));
   $('[data-copy]', el).addEventListener('click', () => go(true));
+}
+
+async function techAccessDialog(c) {
+  const [grants, users] = await Promise.all([GET(`/api/customers/${c.id}/access`), GET('/api/users')]);
+  const techs = users.filter(u => u.role === 'technician' && u.active);
+  const { el, close } = openModal({
+    title: 'Technician access', size: 'sm',
+    body: html`<p class="muted" style="margin-top:0">Technicians automatically see customers on their schedule. Give someone temporary access to ${c.name} for anything else (a phone consult, a backup tech).</p>
+      ${grants.length ? html`<div class="stack" style="gap:6px;margin-bottom:12px">${grants.map(g => html`<div class="row" style="justify-content:space-between"><span><b>${g.user_name}</b> until ${fmtDateTime(g.expires_at)}<br><span class="small muted">${g.reason || ''}</span></span><button class="btn sm ghost danger" data-revoke="${g.id}">Revoke</button></div>`)}</div>` : ''}
+      <div class="err-box hidden" data-err></div>
+      <div class="field"><label for="ta_u">Technician</label><select id="ta_u">${techs.map(u => html`<option value="${u.id}">${u.name}</option>`)}</select></div>
+      <div class="field" style="margin-top:10px"><label for="ta_h">For</label><select id="ta_h"><option value="4">4 hours</option><option value="24" selected>24 hours</option><option value="72">3 days</option><option value="168">1 week</option></select></div>
+      <div class="field" style="margin-top:10px"><label for="ta_r">Reason</label><input id="ta_r" type="text" placeholder="e.g. covering for Mike"></div>`,
+    foot: html`<button class="btn" data-close>Close</button><button class="btn primary" data-grant ${techs.length ? '' : 'disabled'}>Give access</button>`,
+  });
+  $('[data-grant]', el).addEventListener('click', async () => {
+    try { await POST(`/api/customers/${c.id}/access`, { user_id: $('#ta_u', el).value, hours: $('#ta_h', el).value, reason: $('#ta_r', el).value }); toast('Access given'); close(); }
+    catch (e) { const b = $('[data-err]', el); b.textContent = e.message; b.classList.remove('hidden'); }
+  });
+  el.querySelectorAll('[data-revoke]').forEach(b => b.addEventListener('click', async () => { await api('DELETE', `/api/customers/${c.id}/access/${b.dataset.revoke}`); toast('Access removed'); close(); }));
 }

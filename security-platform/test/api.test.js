@@ -209,8 +209,19 @@ test('technician role: field access only, no billing or reports', async () => {
   assert.equal((await tech.del(`/api/r/service_calls/${ids.call}`)).status, 403);
   const dash = (await tech.get('/api/dashboard')).data;
   assert.equal(dash.mrr, undefined, 'no money figures for technicians');
+  // Techs only see customers on their schedule
+  assert.equal((await tech.get('/api/r/customers')).data.length, 0, 'nothing scheduled in the current window');
+  assert.equal((await tech.put(`/api/r/service_calls/${ids.call}`, { resolution: 'Tested OK' })).status, 404, 'a job years away is not on their schedule');
+  const soon = new Date(Date.now() + 2 * 864e5).toISOString().slice(0, 10);
+  const job = (await admin.post('/api/r/service_calls', { customer_id: ids.com, title: 'Panel check', technician_id: ids.tech, scheduled_start: `${soon}T09:00` })).data;
+  const visible = (await tech.get('/api/r/customers')).data;
+  assert.deepEqual(visible.map(c => c.id), [ids.com]);
+  assert.equal((await tech.get(`/api/r/customers/${ids.res}`)).status, 404, 'other customers are hidden');
+  assert.equal((await tech.get(`/api/r/customers/${ids.com}`)).status, 200);
+  assert.equal((await tech.get('/api/search?q=Jane')).data.length, 0, 'search is scoped too');
+  assert.equal((await tech.post('/api/r/service_calls', { customer_id: ids.res, title: 'Sneaky' })).status, 404);
   // Techs can update their jobs and load their truck
-  assert.equal((await tech.put(`/api/r/service_calls/${ids.call}`, { resolution: 'Tested OK' })).status, 200);
+  assert.equal((await tech.put(`/api/r/service_calls/${job.id}`, { resolution: 'Tested OK' })).status, 200);
   assert.equal((await tech.post('/api/stock/transfer', { item_id: ids.item, qty: 1, from: 0, to: ids.van })).status, 200);
 });
 

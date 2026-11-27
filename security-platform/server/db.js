@@ -171,6 +171,14 @@ function migrate(db) {
       portal_user_id INTEGER NOT NULL REFERENCES portal_users(id) ON DELETE CASCADE,
       expires_at INTEGER NOT NULL
     );
+    CREATE TABLE IF NOT EXISTS tech_access_grants (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      customer_id INTEGER NOT NULL REFERENCES customers(id) ON DELETE CASCADE,
+      reason TEXT, granted_by TEXT, expires_at TEXT NOT NULL,
+      created_at TEXT NOT NULL DEFAULT (datetime('now','localtime'))
+    );
+    CREATE INDEX IF NOT EXISTS idx_grants_user ON tech_access_grants(user_id, expires_at);
     CREATE TABLE IF NOT EXISTS monitoring_events (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       account_id INTEGER NOT NULL REFERENCES monitoring_accounts(id) ON DELETE CASCADE,
