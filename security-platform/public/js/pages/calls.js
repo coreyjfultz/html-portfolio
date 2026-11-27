@@ -1,7 +1,8 @@
 import {
   html, mount, $, $$, money, fmtDate, fmtDateTime, badge, typeBadge, relDays, dataTable, openForm, promptForm, loading, toast, confirmDialog,
+  openModal, signaturePad, resizeImage, pickPhotos,
 } from '../ui.js';
-import { R, POST } from '../api.js';
+import { R, POST, GET, api } from '../api.js';
 import { can, refresh, state } from '../app.js';
 
 const OPEN = 'new,scheduled,in progress,on hold';
@@ -77,7 +78,8 @@ export async function detail(view, [id]) {
   loading(view);
   const office = can.billing();
   const c = await R.get('service_calls', id);
-  const [cust, parts] = await Promise.all([R.get('customers', c.customer_id), R.list('service_call_parts', { service_call_id: id })]);
+  const [cust, parts, messages] = await Promise.all([R.get('customers', c.customer_id), R.list('service_call_parts', { service_call_id: id }),
+    GET('/api/notifications', { related_type: 'service_call', related_id: id }).catch(() => [])]);
   const reload = () => refresh();
   const partsBilled = parts.reduce((s, p) => s + p.qty * (p.unit_price || 0), 0);
   const partsCost = parts.reduce((s, p) => s + p.qty * (p.unit_cost || 0), 0);
@@ -92,8 +94,11 @@ export async function detail(view, [id]) {
         <div class="sub row">${badge(c.status)} ${badge(c.priority)} <span>${c.call_type} · ${c.system_type || ''}</span></div></div>
       <div class="actions">
         <button class="btn" data-edit>Edit</button>
-        ${c.status === 'new' || c.status === 'scheduled' || c.status === 'on hold' ? html`<button class="btn" data-start>Start job</button>` : ''}
+        ${['new', 'scheduled', 'on hold'].includes(c.status) && c.technician_id ? html`<button class="btn" data-onway>🚗 On my way</button>` : ''}
+        ${['new', 'scheduled', 'on hold', 'en route'].includes(c.status) ? html`<button class="btn" data-start>Start job</button>` : ''}
+        ${can.staff() && c.scheduled_start && !closed ? html`<button class="btn ghost" data-resend title="Email/text the customer their appointment details again">Resend confirmation</button>` : ''}
         ${!closed ? html`<button class="btn primary" data-complete>Complete job</button>` : ''}
+        ${c.status === 'completed' && !c.signed_by ? html`<button class="btn" data-sign>Get customer signature</button>` : ''}
         ${office && c.status === 'completed' && c.billable && !c.invoice_id ? html`<button class="btn primary" data-invoice>Create invoice</button>` : ''}
         ${office && c.invoice_id ? html`<a class="btn" href="#/invoices/${c.invoice_id}">View invoice ${c.invoice_id_label}</a>` : ''}
       </div></div>
@@ -110,6 +115,8 @@ export async function detail(view, [id]) {
           <dt>Labor</dt><dd>${c.labor_hours ?? 0} h${office ? html` × ${money(c.labor_rate)}` : ''}</dd>
           <dt>Work performed</dt><dd style="white-space:pre-wrap">${c.resolution || '—'}</dd>` : ''}
         <dt>Billable</dt><dd>${c.billable ? 'Yes' : 'No (warranty / estimate / no charge)'}</dd>
+        ${c.signed_by ? html`<dt>Customer sign-off</dt><dd><div class="sig-box"><img src="/api/service_calls/${c.id}/signature?v=${encodeURIComponent(c.signed_at)}" alt="Signature of ${c.signed_by}"></div>
+          <div class="small muted">${c.signed_by} · ${fmtDateTime(c.signed_at)}</div></dd>` : ''}
       </dl>
       <div class="row" style="margin-top:14px"><a class="btn sm" href="#/customers/${cust.id}?tab=systems">View customer's systems & passwords</a></div>
       </div></div>
@@ -129,24 +136,32 @@ export async function detail(view, [id]) {
             ...(office ? [{ label: 'Price', render: p => money(p.unit_price), cls: 'num' }, { label: 'Line', render: p => money(p.qty * p.unit_price), cls: 'num' }] : []),
             { label: '', cls: 'actions-cell', render: p => html`<button class="btn sm ghost danger" data-rmpart="${p.id}" title="Remove and return to stock">Remove</button>` },
           ] })}</div></div>
+      <div class="card" data-photos-card></div>
+      <div class="card span2"><div class="card-head"><div><h2>Messages to customer & tech</h2><div class="small muted">Texts, emails and calendar invites sent for this job</div></div></div>
+        <div class="card-body flush">${dataTable({
+          rows: messages, empty: 'Nothing sent yet. Confirmations go out when the job is scheduled with a technician.',
+          columns: [
+            { label: 'When', render: m => m.created_at },
+            { label: 'Type', render: m => m.channel === 'sms' ? '💬 Text' : '✉️ Email' },
+            { label: 'To', render: m => m.to_addr || '—' },
+            { label: 'Message', render: m => html`${m.subject ? html`<b>${m.subject}</b><br>` : ''}<span class="small" style="white-space:pre-wrap">${(m.body || '').slice(0, 220)}</span>` },
+            { label: 'Status', render: m => html`${badge(m.status, m.status === 'sent' ? 'good' : m.status === 'failed' ? 'bad' : '')}${m.error ? html`<div class="small muted">${m.error}</div>` : ''}` },
+          ] })}</div></div>
     </div>`);
 
   $('[data-edit]', view).addEventListener('click', () => openForm('service_calls', { record: c, onSaved: reload, onDeleted: () => { location.hash = '#/calls'; }, allowDelete: office }));
-  $('[data-start]', view)?.addEventListener('click', async () => { await R.update('service_calls', id, { status: 'in progress' }); toast('Job started'); reload(); });
-  $('[data-complete]', view)?.addEventListener('click', () => promptForm({
-    title: 'Complete job', size: '',
-    fields: [
-      { name: 'labor_hours', label: 'Labor hours', type: 'number', step: '0.25', value: c.labor_hours ?? c.duration_hours ?? 1 },
-      { name: 'resolution', label: 'Work performed / notes for the customer', type: 'textarea', value: c.resolution || '' },
-    ],
-    intro: html`<p class="muted" style="margin-top:0">Add any parts used before or after completing. ${office ? 'You can create the invoice next.' : 'The office will invoice it.'}</p>`,
-    submitLabel: 'Mark completed',
-    onSubmit: async d => {
-      await R.update('service_calls', id, { status: 'completed', labor_hours: d.labor_hours, resolution: d.resolution });
-      toast('Job completed');
-      reload();
-    },
+  $('[data-onway]', view)?.addEventListener('click', () => promptForm({
+    title: 'Let the customer know you’re on the way',
+    intro: html`<p class="muted" style="margin-top:0">${cust.name} gets a text${cust.email ? ' and email' : ''} (per their preferences).</p>`,
+    fields: [{ name: 'eta_minutes', label: 'Arriving in about (minutes, optional)', type: 'number', value: '' }],
+    submitLabel: 'Send “On my way”',
+    onSubmit: async d => { await POST(`/api/service_calls/${id}/on-my-way`, d); toast('Customer notified'); setTimeout(reload, 800); },
   }));
+  $('[data-resend]', view)?.addEventListener('click', async () => { await POST(`/api/service_calls/${id}/resend-confirmation`); toast('Confirmation sent'); setTimeout(reload, 800); });
+  $('[data-start]', view)?.addEventListener('click', async () => { await R.update('service_calls', id, { status: 'in progress' }); toast('Job started'); reload(); });
+  $('[data-sign]', view)?.addEventListener('click', () => completeDialog(c, cust, { signOnly: true, onDone: reload }));
+  drawPhotos($('[data-photos-card]', view), c);
+  $('[data-complete]', view)?.addEventListener('click', () => completeDialog(c, cust, { office, onDone: reload }));
   $('[data-invoice]', view)?.addEventListener('click', async () => {
     const r = await POST(`/api/service_calls/${id}/invoice`);
     toast('Draft invoice created');
@@ -159,4 +174,71 @@ export async function detail(view, [id]) {
     toast('Part removed and returned to stock');
     reload();
   }));
+}
+
+// ------------------------------------------------------------------ photos
+async function drawPhotos(card, c) {
+  if (!card) return;
+  const photos = await GET(`/api/service_calls/${c.id}/photos`).catch(() => []);
+  const group = kind => photos.filter(p => p.kind === kind);
+  const grid = (kind, label) => html`<div class="photo-group"><div class="small muted" style="margin-bottom:6px">${label} (${group(kind).length})</div>
+    ${group(kind).length ? html`<div class="photo-grid">${group(kind).map(p => html`<figure class="photo">
+        <a href="/api/photos/${p.id}" target="_blank" rel="noopener"><img src="/api/photos/${p.id}" alt="${p.caption || label + ' photo'}" loading="lazy"></a>
+        <button class="photo-del" data-delphoto="${p.id}" title="Delete photo" aria-label="Delete photo">✕</button>
+        ${p.caption ? html`<figcaption>${p.caption}</figcaption>` : ''}</figure>`)}</div>` : html`<div class="muted small">None yet</div>`}</div>`;
+  mount(card, html`<div class="card-head"><div><h2>Photos</h2><div class="small muted">Before & after, saved with the job</div></div></div>
+    <div class="card-body stack" style="gap:14px">
+      <div class="row"><button class="btn sm" data-addphoto="before">📷 Before</button><button class="btn sm" data-addphoto="after">📷 After</button><button class="btn sm ghost" data-addphoto="other">+ Other</button></div>
+      ${grid('before', 'Before')}${grid('after', 'After')}${group('other').length ? grid('other', 'Other') : ''}</div>`);
+  card.querySelectorAll('[data-addphoto]').forEach(b => b.addEventListener('click', async () => {
+    const files = await pickPhotos();
+    if (!files.length) return;
+    toast(`Uploading ${files.length} photo${files.length > 1 ? 's' : ''}…`);
+    try {
+      for (const f of files) await POST(`/api/service_calls/${c.id}/photos`, { kind: b.dataset.addphoto, data: await resizeImage(f) });
+      toast('Photos saved');
+    } catch (e) { toast(e.message, 'error'); }
+    drawPhotos(card, c);
+  }));
+  card.querySelectorAll('[data-delphoto]').forEach(b => b.addEventListener('click', async () => {
+    if (!(await confirmDialog('Delete this photo?', { okLabel: 'Delete', danger: true }))) return;
+    try { await api('DELETE', `/api/photos/${b.dataset.delphoto}`); } catch (e) { toast(e.message, 'error'); }
+    drawPhotos(card, c);
+  }));
+}
+
+// ------------------------------------------------------------------ completion + signature
+function completeDialog(c, cust, { signOnly = false, office = false, onDone } = {}) {
+  const { el, close } = openModal({
+    title: signOnly ? 'Customer sign-off' : 'Complete job',
+    body: html`<div class="err-box hidden" data-err></div>
+      ${signOnly ? '' : html`<div class="form-grid">
+        <div class="field"><label for="cd_hours">Labor hours</label><input id="cd_hours" type="number" step="0.25" value="${c.labor_hours ?? c.duration_hours ?? 1}"></div>
+        <div class="field"></div>
+        <div class="field full"><label for="cd_res">Work performed (shown to the customer)</label><textarea id="cd_res">${c.resolution || ''}</textarea></div></div>`}
+      <div class="sign-area">
+        <div class="row" style="justify-content:space-between"><b>Customer signature</b><button type="button" class="btn sm ghost" data-clear>Clear</button></div>
+        <p class="small muted" style="margin:4px 0 8px">I confirm the work above was completed to my satisfaction.</p>
+        <canvas class="sig-pad" data-pad aria-label="Sign here"></canvas>
+        <div class="field" style="margin-top:10px"><label for="cd_name">Signer's name</label><input id="cd_name" type="text" value="${cust.contact_name || cust.name}" autocomplete="off"></div>
+        ${signOnly ? '' : html`<label class="row small" style="margin-top:8px"><input type="checkbox" data-nosig> Customer not available to sign</label>`}
+      </div>`,
+    foot: html`<button class="btn" data-close>Cancel</button><button class="btn primary" data-go>${signOnly ? 'Save signature' : 'Complete job'}</button>`,
+  });
+  const pad = signaturePad($('[data-pad]', el));
+  $('[data-clear]', el).addEventListener('click', () => pad.clear());
+  const err = $('[data-err]', el);
+  $('[data-go]', el).addEventListener('click', async () => {
+    const noSig = $('[data-nosig]', el)?.checked;
+    const name = $('#cd_name', el).value.trim();
+    if (!noSig && pad.isEmpty()) { err.textContent = signOnly ? 'Please sign in the box.' : 'Have the customer sign, or tick “not available to sign”.'; err.classList.remove('hidden'); return; }
+    $('[data-go]', el).disabled = true;
+    try {
+      if (!signOnly) await R.update('service_calls', c.id, { status: 'completed', labor_hours: $('#cd_hours', el).value, resolution: $('#cd_res', el).value });
+      if (!noSig) await POST(`/api/service_calls/${c.id}/signature`, { name, image: pad.toDataURL() });
+      close();
+      toast(signOnly ? 'Signature saved' : noSig ? 'Job completed' : 'Job completed and signed');
+      onDone?.();
+    } catch (e) { err.textContent = e.message; err.classList.remove('hidden'); $('[data-go]', el).disabled = false; }
+  });
 }

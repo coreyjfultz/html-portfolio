@@ -14,7 +14,7 @@ const SETTINGS = [
 export async function render(view, _, query) {
   const tab = query.tab || 'company';
   mount(view, html`<div class="page-head"><div><h1>Settings</h1><div class="sub">Company, users and data</div></div></div>
-    <div class="tabs">${[['company', 'Company & billing'], ['calendars', 'Calendars'], ['receiving', 'Receiving'], ['users', 'Users & logins'], ['audit', 'Activity log'], ['data', 'Backup & data']].map(([k, l]) => html`<button class="${k === tab ? 'on' : ''}" data-tab="${k}">${l}</button>`)}</div>
+    <div class="tabs">${[['company', 'Company & billing'], ['notifications', 'Texts & email'], ['calendars', 'Calendars'], ['receiving', 'Receiving'], ['users', 'Users & logins'], ['audit', 'Activity log'], ['data', 'Backup & data']].map(([k, l]) => html`<button class="${k === tab ? 'on' : ''}" data-tab="${k}">${l}</button>`)}</div>
     <div data-pane></div>`);
   $$('[data-tab]', view).forEach(b => b.addEventListener('click', () => { location.hash = `#/settings?tab=${b.dataset.tab}`; }));
   const pane = $('[data-pane]', view);
@@ -32,6 +32,57 @@ export async function render(view, _, query) {
       toast('Settings saved');
       $('.sidebar .brand span').textContent = state.settings.company_name;
     });
+  }
+
+  if (tab === 'notifications') {
+    const [s2, log] = await Promise.all([GET('/api/settings'), GET('/api/notifications')]);
+    const chk = (k, label) => html`<label class="row"><input type="checkbox" name="${k}" ${s2[k] === '1' ? raw('checked') : ''}> ${label}</label>`;
+    const inp = (k, label, extra = {}) => html`<div class="field"><label for="n_${k}">${label}</label><input id="n_${k}" name="${k}" type="${extra.type || 'text'}" value="${extra.type === 'password' ? '' : s2[k] ?? ''}" placeholder="${extra.ph || ''}" autocomplete="off">${extra.help ? html`<span class="help">${extra.help}</span>` : ''}</div>`;
+    mount(pane, html`<form data-nform class="stack">
+      <div class="grid g2">
+        <div class="card"><div class="card-head"><h2>Email (SMTP)</h2>${s2.email_ready ? html`<span class="badge good">Ready</span>` : html`<span class="badge warn">Not set up</span>`}</div><div class="card-body form-grid">
+          ${inp('smtp_host', 'SMTP server', { ph: 'smtp.office365.com or smtp.gmail.com' })}${inp('smtp_port', 'Port', { ph: '587' })}
+          ${inp('smtp_user', 'Username', { ph: 'office@yourcompany.com' })}${inp('smtp_pass', 'Password / app password', { type: 'password', ph: s2.smtp_pass__set ? 'Saved — leave blank to keep' : '' })}
+          ${inp('mail_from', 'Send from address', { ph: 'office@yourcompany.com', help: 'Microsoft 365: use an account with SMTP AUTH enabled. Gmail: create an app password.' })}
+          <div class="field"><label>&nbsp;</label><button type="button" class="btn" data-test="email">Send test email</button></div></div></div>
+        <div class="card"><div class="card-head"><h2>Text messages (Twilio)</h2>${s2.sms_ready ? html`<span class="badge good">Ready</span>` : html`<span class="badge warn">Not set up</span>`}</div><div class="card-body form-grid">
+          ${inp('twilio_sid', 'Account SID', { ph: 'AC…' })}${inp('twilio_token', 'Auth token', { type: 'password', ph: s2.twilio_token__set ? 'Saved — leave blank to keep' : '' })}
+          ${inp('twilio_from', 'Texting number', { ph: '+15555550100', help: 'A Twilio number registered for business texting (A2P 10DLC).' })}
+          <div class="field"><label>&nbsp;</label><button type="button" class="btn" data-test="sms">Send test text</button></div></div></div>
+      </div>
+      <div class="card"><div class="card-head"><h2>When to send</h2></div><div class="card-body stack" style="gap:10px">
+        ${chk('notify_on_schedule', 'Confirm with the customer when a job is scheduled or moved (email and/or text, per customer)')}
+        ${chk('notify_on_way', 'Text/email the customer when the technician taps “On my way”')}
+        ${chk('notify_tech_invites', 'Email technicians a calendar invite (Outlook/Gmail) when they’re booked, moved or unassigned')}
+        <p class="small muted" style="margin:0">Each customer can be set to email only, text only, both or neither on their profile.</p></div></div>
+      <div class="card"><div class="card-head"><div><h2>Message wording</h2><div class="small muted">Placeholders: {customer} {company} {company_phone} {tech} {date} {time} {type} {address} {eta} {call_number}</div></div></div>
+        <div class="card-body form-grid">
+          ${[['tpl_scheduled_sms', 'Appointment text'], ['tpl_onway_sms', 'On-my-way text'], ['tpl_scheduled_email', 'Appointment email'], ['tpl_onway_email', 'On-my-way email']].map(([k, l]) =>
+            html`<div class="field"><label for="n_${k}">${l}</label><textarea id="n_${k}" name="${k}" rows="${k.endsWith('email') ? 7 : 3}">${s2[k]}</textarea></div>`)}</div></div>
+      <div><button class="btn primary">Save</button></div></form>
+      <div class="card" style="margin-top:16px"><div class="card-head"><h2>Recent messages</h2></div><div class="card-body flush">${dataTable({
+        rows: log, empty: 'Nothing sent yet.',
+        columns: [{ label: 'When', key: 'created_at' }, { label: 'Type', render: m => m.channel === 'sms' ? 'Text' : 'Email' }, { label: 'To', render: m => m.to_addr },
+          { label: 'Subject / message', render: m => (m.subject || m.body || '').slice(0, 90) },
+          { label: 'Status', render: m => html`${badge(m.status, m.status === 'sent' ? 'good' : m.status === 'failed' ? 'bad' : '')}${m.error ? html`<div class="small muted">${m.error}</div>` : ''}` }],
+      })}</div></div>`);
+    const form = $('[data-nform]', pane);
+    const collect = () => {
+      const d = Object.fromEntries(new FormData(form));
+      for (const k of ['notify_on_schedule', 'notify_on_way', 'notify_tech_invites']) d[k] = form.elements[k].checked ? '1' : '0';
+      return d;
+    };
+    form.addEventListener('submit', async e => { e.preventDefault(); await PUT('/api/settings', collect()); toast('Saved'); refresh(); });
+    $$('[data-test]', pane).forEach(b => b.addEventListener('click', async () => {
+      await PUT('/api/settings', collect());
+      const channel = b.dataset.test;
+      promptForm({
+        title: channel === 'sms' ? 'Send a test text' : 'Send a test email',
+        fields: [{ name: 'to', label: channel === 'sms' ? 'Mobile number' : 'Email address', type: channel === 'sms' ? 'tel' : 'email', value: channel === 'sms' ? '' : state.user.email }],
+        submitLabel: 'Send',
+        onSubmit: async d => { await POST('/api/notifications/test', { channel, to: d.to }); toast('Sent!'); },
+      });
+    }));
   }
 
   if (tab === 'calendars') {

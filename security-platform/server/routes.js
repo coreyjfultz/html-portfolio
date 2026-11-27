@@ -4,10 +4,12 @@ import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
 import { RESOURCES, MAINTENANCE } from '../public/js/schema.js';
-import { getSettings, DEFAULT_SETTINGS, PRIVATE_SETTINGS, tx, DATA_DIR } from './db.js';
+import { getSettings, DEFAULT_SETTINGS, PRIVATE_SETTINGS, SECRET_SETTINGS, tx, DATA_DIR } from './db.js';
+import { queue, notifyOnMyWay, notifyScheduled, sendEmail, sendSms, mailConfig, smsConfig, appUrl } from './notify.js';
 import { ingest, processInvoice, receive, saveReview, parseInboundEmail, filePath } from './receiving.js';
 import { aiConfigured } from './extract.js';
 import { callToEvent, buildCalendar } from './calendar.js';
+import { decodeImage, saveImage, sendImage, removeImage } from './media.js';
 
 export function baseUrl(db, req) {
   const s = getSettings(db);
@@ -16,10 +18,10 @@ export function baseUrl(db, req) {
   return `${proto}://${req?.headers['x-forwarded-host'] || req?.headers.host || 'localhost'}`;
 }
 import {
-  HttpError, list, get, create, update, adjustStock, recalcInvoice, round2, todayLocal, addMonths, addDays,
+  HttpError, list, get, create, update, adjustStock, recalcInvoice, round2, todayLocal, nowLocal, addMonths, addDays,
 } from './resources.js';
 import {
-  hashPassword, verifyPassword, validatePassword, createSession, destroySession, audit,
+  hashPassword, verifyPassword, validatePassword, createSession, destroySession, audit, encrypt,
   loginAllowed, recordFailedLogin, clearLogins,
 } from './security.js';
 
@@ -160,12 +162,18 @@ export function buildRoutes() {
   // ------------------------------------------------------------ settings
   r('GET', '/api/settings', ALL, ({ db, user }) => {
     const s = getSettings(db);
+    for (const k of SECRET_SETTINGS) { s[`${k}__set`] = !!s[k]; delete s[k]; }
     if (!MANAGE.includes(user.role)) for (const k of PRIVATE_SETTINGS) delete s[k];
+    else { s.email_ready = mailConfig(db).ok; s.sms_ready = smsConfig(db).ok; }
     return s;
   });
   r('PUT', '/api/settings', MANAGE, ({ db, body, user }) => {
     const up = db.prepare('INSERT INTO settings(key, value) VALUES (?,?) ON CONFLICT(key) DO UPDATE SET value = excluded.value');
-    for (const k of Object.keys(DEFAULT_SETTINGS)) if (k in body && !PRIVATE_SETTINGS.has(k)) up.run(k, String(body[k] ?? ''));
+    for (const k of Object.keys(DEFAULT_SETTINGS)) {
+      if (!(k in body)) continue;
+      if (SECRET_SETTINGS.has(k)) { if (body[k]) up.run(k, encrypt(String(body[k]))); continue; } // blank = keep
+      if (!PRIVATE_SETTINGS.has(k)) up.run(k, String(body[k] ?? ''));
+    }
     audit(db, user, 'update', 'settings', null);
     return getSettings(db);
   });
@@ -228,6 +236,113 @@ export function buildRoutes() {
     push('Vehicle', list(db, 'vehicles', { q, limit: 3 }), v => ({ id: v.id, title: v.unit_name, sub: [v.year, v.make, v.model].filter(Boolean).join(' '), href: `#/vehicles/${v.id}` }));
     push('Technician', list(db, 'technicians', { q, limit: 3 }), t => ({ id: t.id, title: t.name, sub: t.phone || '', href: `#/technicians` }));
     return out;
+  });
+
+  // ------------------------------------------------------------ job photos & sign-off
+  const callFor = (db, id, user) => {
+    const call = db.prepare('SELECT * FROM service_calls WHERE id = ?').get(Number(id));
+    if (!call) throw new HttpError(404, 'Service call not found');
+    return call;
+  };
+
+  r('GET', '/api/service_calls/:id/photos', ALL, ({ db, params }) =>
+    db.prepare('SELECT id, kind, caption, user_name, show_customer, created_at FROM job_photos WHERE service_call_id = ? ORDER BY id').all(Number(params.id)));
+
+  r('POST', '/api/service_calls/:id/photos', ALL, ({ db, params, body, user }) => {
+    const call = callFor(db, params.id, user);
+    const kind = ['before', 'after', 'other'].includes(body.kind) ? body.kind : 'other';
+    const img = decodeImage(body.data, { maxBytes: 8 * 1024 * 1024 });
+    const key = saveImage('photos', img);
+    const info = db.prepare('INSERT INTO job_photos (service_call_id, kind, file_key, caption, user_id, user_name) VALUES (?,?,?,?,?,?)')
+      .run(call.id, kind, key, String(body.caption || '').slice(0, 300) || null, user.id, user.name);
+    audit(db, user, 'add photo', 'service_calls', call.id, kind);
+    return { id: Number(info.lastInsertRowid) };
+  });
+
+  r('GET', '/api/photos/:id', ALL, ({ db, params, res }) => {
+    const p = db.prepare('SELECT file_key FROM job_photos WHERE id = ?').get(Number(params.id));
+    if (!p) throw new HttpError(404, 'Not found');
+    sendImage(res, 'photos', p.file_key);
+    return undefined;
+  });
+
+  r('PUT', '/api/photos/:id', ALL, ({ db, params, body, user }) => {
+    const p = db.prepare('SELECT * FROM job_photos WHERE id = ?').get(Number(params.id));
+    if (!p) throw new HttpError(404, 'Not found');
+    if (p.user_id !== user.id && !MANAGE.includes(user.role)) throw new HttpError(403, 'Only the person who took it or an admin can change this photo');
+    db.prepare('UPDATE job_photos SET caption = ?, kind = ?, show_customer = ? WHERE id = ?').run(
+      body.caption === undefined ? p.caption : String(body.caption).slice(0, 300),
+      ['before', 'after', 'other'].includes(body.kind) ? body.kind : p.kind,
+      body.show_customer === undefined ? p.show_customer : (body.show_customer ? 1 : 0), p.id);
+    return { ok: true };
+  });
+
+  r('DELETE', '/api/photos/:id', ALL, ({ db, params, user }) => {
+    const p = db.prepare('SELECT * FROM job_photos WHERE id = ?').get(Number(params.id));
+    if (!p) throw new HttpError(404, 'Not found');
+    if (p.user_id !== user.id && !MANAGE.includes(user.role)) throw new HttpError(403, 'Only the person who took it or an admin can delete this photo');
+    db.prepare('DELETE FROM job_photos WHERE id = ?').run(p.id);
+    removeImage('photos', p.file_key);
+    audit(db, user, 'delete photo', 'service_calls', p.service_call_id);
+    return { ok: true };
+  });
+
+  // Customer signs on the technician's phone/tablet when the job is done.
+  r('POST', '/api/service_calls/:id/signature', ALL, ({ db, params, body, user, ip }) => {
+    const call = callFor(db, params.id, user);
+    const name = String(body.name || '').trim();
+    if (name.length < 2) throw new HttpError(400, "Enter the signer's name");
+    const img = decodeImage(body.image, { maxBytes: 1024 * 1024, allowed: ['image/png'] });
+    const key = saveImage('signatures', img);
+    removeImage('signatures', call.signature_key);
+    db.prepare("UPDATE service_calls SET signed_by = ?, signed_at = ?, signature_key = ?, updated_at = datetime('now','localtime') WHERE id = ?")
+      .run(name.slice(0, 120), nowLocal(), key, call.id);
+    audit(db, user, 'customer signature', 'service_calls', call.id, `${name} from ${ip}`);
+    return get(db, 'service_calls', call.id);
+  });
+
+  r('GET', '/api/service_calls/:id/signature', G.all, ({ db, params, res }) => {
+    const call = db.prepare('SELECT signature_key FROM service_calls WHERE id = ?').get(Number(params.id));
+    if (!call?.signature_key) throw new HttpError(404, 'Not signed');
+    sendImage(res, 'signatures', call.signature_key, { cache: 'private, no-cache' });
+    return undefined;
+  });
+
+  // ------------------------------------------------------------ notifications
+  r('POST', '/api/service_calls/:id/on-my-way', ALL, ({ db, params, body, user }) => {
+    const call = get(db, 'service_calls', params.id);
+    if (user.role === 'technician' && user.technician_id && call.technician_id && call.technician_id !== user.technician_id) throw new HttpError(403, 'This job is assigned to someone else');
+    const eta = Number(body.eta_minutes) > 0 ? Math.round(Number(body.eta_minutes)) : null;
+    const updated = update(db, 'service_calls', call.id, { status: 'en route' }, user);
+    if (getSettings(db).notify_on_way === '1') queue(() => notifyOnMyWay(db, updated, { etaMinutes: eta }));
+    audit(db, user, 'on my way', 'service_calls', call.id, eta ? `ETA ${eta} min` : null);
+    return updated;
+  });
+
+  r('POST', '/api/service_calls/:id/resend-confirmation', G.staff, ({ db, params, user }) => {
+    const call = get(db, 'service_calls', params.id);
+    if (!call.scheduled_start) throw new HttpError(400, 'Schedule the job first');
+    queue(() => notifyScheduled(db, call, { force: true }));
+    audit(db, user, 'resend confirmation', 'service_calls', call.id);
+    return { ok: true };
+  });
+
+  r('GET', '/api/notifications', ALL, ({ db, query, user }) => {
+    if (query.related_type && query.related_id) {
+      return db.prepare('SELECT * FROM notifications WHERE related_type = ? AND related_id = ? ORDER BY id DESC LIMIT 100').all(query.related_type, Number(query.related_id));
+    }
+    if (!MANAGE.includes(user.role)) throw new HttpError(403, 'Not allowed');
+    return db.prepare('SELECT * FROM notifications ORDER BY id DESC LIMIT 300').all();
+  });
+
+  r('POST', '/api/notifications/test', MANAGE, async ({ db, body }) => {
+    const company = getSettings(db).company_name;
+    const ok = body.channel === 'sms'
+      ? await sendSms(db, { to: body.to, body: `${company}: test text from SecureOps. It works!` })
+      : await sendEmail(db, { to: body.to, subject: 'SecureOps test email', text: `This is a test email from ${company}. Email is working.` });
+    const last = db.prepare('SELECT status, error FROM notifications ORDER BY id DESC LIMIT 1').get();
+    if (ok !== true) throw new HttpError(400, last?.error || 'Not sent');
+    return { ok: true };
   });
 
   // ------------------------------------------------------------ calendars

@@ -348,6 +348,9 @@ export const RESOURCES = {
       { name: 'completed_at', label: 'Completed', type: 'datetime', readonly: true },
       { name: 'invoice_id', label: 'Invoice', type: 'ref', ref: 'invoices', readonly: true, onDelete: 'set null' },
       { name: 'cal_sequence', label: 'Calendar revision', type: 'number', readonly: true, hidden: true },
+      { name: 'signed_by', label: 'Signed off by', type: 'text', readonly: true },
+      { name: 'signed_at', label: 'Signed', type: 'datetime', readonly: true },
+      { name: 'signature_key', label: 'Signature image', type: 'text', readonly: true, hidden: true },
     ],
   },
 

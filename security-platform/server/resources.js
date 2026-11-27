@@ -4,6 +4,7 @@ import { encrypt, decrypt, audit } from './security.js';
 import { getSettings, nextNumber, tx, DATA_DIR } from './db.js';
 import fs from 'node:fs';
 import { randomBytes } from 'node:crypto';
+import { queue, notifyScheduled, sendTechInvite, appUrl } from './notify.js';
 import path from 'node:path';
 
 export class HttpError extends Error {
@@ -344,6 +345,36 @@ export function findConflict(db, { id, technician_id, scheduled_start, duration_
   return null;
 }
 
+// ---------------------------------------------------------------- appointment notifications
+function scheduleNotifications(db, row, existing, body) {
+  if (body?.notify === false) return;
+  const s = getSettings(db);
+  const isNew = !existing;
+  const timeChanged = isNew || existing.scheduled_start !== row.scheduled_start || existing.duration_hours !== row.duration_hours;
+  const techChanged = isNew || existing.technician_id !== row.technician_id;
+  const booked = !!(row.technician_id && row.scheduled_start && row.status === 'scheduled' && row.scheduled_start >= nowLocal());
+  const wasBooked = !!(existing?.technician_id && existing?.scheduled_start && !['cancelled', 'completed'].includes(existing.status));
+  const cancelled = row.status === 'cancelled' && existing && existing.status !== 'cancelled';
+  const tasks = [];
+  if (booked && (timeChanged || techChanged || existing?.status === 'new')) {
+    const reason = existing?.scheduled_start && existing.scheduled_start !== row.scheduled_start && wasBooked ? 'rescheduled' : 'scheduled';
+    tasks.push(call => notifyScheduled(db, call, { reason }));
+  }
+  if (s.notify_tech_invites === '1') {
+    if (wasBooked && (cancelled || (techChanged && existing.technician_id))) {
+      const old = { ...existing };
+      tasks.push(call => sendTechInvite(db, { ...call, scheduled_start: old.scheduled_start, technician_id: old.technician_id }, old.technician_id, { cancel: true, baseUrl: appUrl(db) }));
+    }
+    if (booked && (timeChanged || techChanged)) tasks.push(call => sendTechInvite(db, call, call.technician_id, { baseUrl: appUrl(db) }));
+  }
+  if (!tasks.length) return;
+  const id = row.id;
+  queue(async () => {
+    const call = get(db, 'service_calls', id); // fresh, with names and address, after the save is committed
+    for (const t of tasks) await t(call);
+  });
+}
+
 // ---------------------------------------------------------------- customer stages
 /**
  * Move a customer to a pipeline stage and log it. With forwardOnly, a customer is
@@ -514,7 +545,8 @@ const HOOKS = {
       if (data.status === 'completed' && !existing?.completed_at) data.completed_at = nowLocal();
       if (data.status && data.status !== 'completed' && existing?.completed_at) data.completed_at = null;
     },
-    afterSave(db, row, { existing, user }) {
+    afterSave(db, row, { existing, user, body }) {
+      scheduleNotifications(db, row, existing, body);
       // Keep the customer's pipeline stage in step with the work.
       if (row.call_type === 'installation') {
         if (row.status === 'completed' && existing?.status !== 'completed') setStage(db, row.customer_id, 'active', { forwardOnly: true, user, reason: `Installation SC-${row.number} completed` });

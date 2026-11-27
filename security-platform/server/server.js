@@ -6,6 +6,7 @@ import { openDb } from './db.js';
 import { sessionUser, purgeSessions } from './security.js';
 import { HttpError, list, get, create, update, remove, reveal, getDef, canRead } from './resources.js';
 import { buildRoutes } from './routes.js';
+import { setBaseUrl } from './notify.js';
 
 const PUBLIC = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', 'public');
 const MIME = {
@@ -18,7 +19,7 @@ const SECURITY_HEADERS = {
   'Referrer-Policy': 'same-origin',
   'X-Frame-Options': 'DENY',
   'Permissions-Policy': 'camera=(), microphone=(), geolocation=()',
-  'Content-Security-Policy': "default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; script-src 'self'; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'",
+  'Content-Security-Policy': "default-src 'self'; img-src 'self' data: blob:; style-src 'self' 'unsafe-inline'; script-src 'self'; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'",
 };
 
 function parseCookies(header = '') {
@@ -86,13 +87,14 @@ export function createServer(db) {
       const token = cookies.sid;
       const user = sessionUser(db, token);
       const query = Object.fromEntries(url.searchParams);
-      const big = inbound || pathname === '/api/receiving/upload';
+      const big = inbound || pathname === '/api/receiving/upload' || /\/(photos|signature|logo)$/.test(pathname);
       const body = ['POST', 'PUT', 'PATCH'].includes(req.method) ? await readBody(req, big ? 40_000_000 : 1_000_000) : {};
       const https = secureCookies || req.headers['x-forwarded-proto'] === 'https';
       const setCookie = t => res.setHeader('Set-Cookie', t
         ? `sid=${t}; HttpOnly; Path=/; SameSite=Lax; Max-Age=${14 * 86400}${https ? '; Secure' : ''}`
         : `sid=; HttpOnly; Path=/; SameSite=Lax; Max-Age=0${https ? '; Secure' : ''}`);
       const ip = req.headers['x-forwarded-for']?.split(',')[0].trim() || req.socket.remoteAddress;
+      if (req.headers.host) setBaseUrl(`${https ? 'https' : 'http'}://${req.headers['x-forwarded-host'] || req.headers.host}`);
 
       for (const rt of routes) {
         if (rt.method !== req.method) continue;

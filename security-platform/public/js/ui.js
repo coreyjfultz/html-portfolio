@@ -353,6 +353,73 @@ export async function saveWithConflictCheck(fn, data) {
   }
 }
 
+// ---------------------------------------------------------------- signature pad & photos
+/** Turns a <canvas> into a finger/mouse signature pad. */
+export function signaturePad(canvas) {
+  const ctx = canvas.getContext('2d');
+  let drawing = false, empty = true, last = null;
+  const setup = () => {
+    const r = canvas.getBoundingClientRect();
+    const dpr = window.devicePixelRatio || 1;
+    canvas.width = Math.max(1, r.width * dpr);
+    canvas.height = Math.max(1, r.height * dpr);
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    Object.assign(ctx, { lineWidth: 2.4, lineCap: 'round', lineJoin: 'round', strokeStyle: '#0f172a' });
+    empty = true;
+  };
+  setup();
+  canvas.style.touchAction = 'none';
+  const pos = e => { const r = canvas.getBoundingClientRect(); return { x: e.clientX - r.left, y: e.clientY - r.top }; };
+  canvas.addEventListener('pointerdown', e => { drawing = true; last = pos(e); canvas.setPointerCapture?.(e.pointerId); e.preventDefault(); });
+  canvas.addEventListener('pointermove', e => {
+    if (!drawing) return;
+    const p = pos(e);
+    ctx.beginPath(); ctx.moveTo(last.x, last.y); ctx.lineTo(p.x, p.y); ctx.stroke();
+    last = p; empty = false;
+  });
+  ['pointerup', 'pointercancel'].forEach(t => canvas.addEventListener(t, () => { drawing = false; }));
+  return {
+    isEmpty: () => empty,
+    clear: () => { ctx.clearRect(0, 0, canvas.width, canvas.height); empty = true; },
+    // PNG on a white background so it prints and shows in dark mode.
+    toDataURL: () => {
+      const out = document.createElement('canvas');
+      out.width = canvas.width; out.height = canvas.height;
+      const o = out.getContext('2d');
+      o.fillStyle = '#fff'; o.fillRect(0, 0, out.width, out.height); o.drawImage(canvas, 0, 0);
+      return out.toDataURL('image/png');
+    },
+  };
+}
+
+/** Shrink a photo in the browser before upload (phones take 4000px+ pictures). */
+export function resizeImage(file, max = 1600, quality = 0.82) {
+  return new Promise((resolve, reject) => {
+    const url = URL.createObjectURL(file);
+    const img = new Image();
+    img.onload = () => {
+      const s = Math.min(1, max / Math.max(img.naturalWidth, img.naturalHeight));
+      const c = document.createElement('canvas');
+      c.width = Math.round(img.naturalWidth * s); c.height = Math.round(img.naturalHeight * s);
+      c.getContext('2d').drawImage(img, 0, 0, c.width, c.height);
+      URL.revokeObjectURL(url);
+      resolve(c.toDataURL('image/jpeg', quality));
+    };
+    img.onerror = () => { URL.revokeObjectURL(url); reject(new Error(`Could not read ${file.name}`)); };
+    img.src = url;
+  });
+}
+
+export function pickPhotos({ camera = true, multiple = true } = {}) {
+  return new Promise(resolve => {
+    const input = document.createElement('input');
+    input.type = 'file'; input.accept = 'image/*'; input.multiple = multiple;
+    if (camera) input.capture = 'environment';
+    input.addEventListener('change', () => resolve([...input.files]));
+    input.click();
+  });
+}
+
 export function loading(view) { mount(view, html`<div class="empty">Loading…</div>`); }
 export function errorView(view, e) { mount(view, html`<div class="card"><div class="empty">⚠️ ${e.message}</div></div>`); }
 

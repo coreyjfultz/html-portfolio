@@ -144,4 +144,118 @@ test('calendar feeds for Outlook/Google: central and per technician, secret link
   assert.equal((await owner.get(`/api/r/service_calls/${job.id}`)).data.cal_sequence, seq + 1);
 });
 
+test('texts and emails: booking confirmations, tech calendar invites, on-my-way', async () => {
+  const http = await import('node:http');
+  const texts = [];
+  const twilio = http.createServer((req, res) => {
+    let b = ''; req.on('data', c => { b += c; });
+    req.on('end', () => {
+      texts.push({ auth: req.headers.authorization, url: req.url, ...Object.fromEntries(new URLSearchParams(b)) });
+      res.writeHead(201, { 'Content-Type': 'application/json' }); res.end('{"sid":"SM1"}');
+    });
+  });
+  await new Promise(r => twilio.listen(0, '127.0.0.1', r));
+  Object.assign(process.env, { SMTP_HOST: 'json', MAIL_FROM: 'office@test.example', TWILIO_ACCOUNT_SID: 'AC123', TWILIO_AUTH_TOKEN: 'tok', TWILIO_FROM: '+15550001111', TWILIO_API_BASE: `http://127.0.0.1:${twilio.address().port}` });
+  const { notifyIdle } = await import('../server/notify.js');
+  try {
+    await owner.put(`/api/r/technicians/${ids.tech}`, { email: 'tess@example.com' });
+    const cust = (await owner.post('/api/r/customers', { name: 'Pat Home', type: 'residential', email: 'pat@example.com', phone: '(555) 222-3333', notify_sms: 1, notify_email: 1 })).data;
+    const soon = new Date(Date.now() + 5 * 864e5).toISOString().slice(0, 10);
+    const job = (await owner.post('/api/r/service_calls', { customer_id: cust.id, title: 'Keypad', technician_id: ids.tech, scheduled_start: `${soon}T14:00` })).data;
+    await notifyIdle();
+    let msgs = (await owner.get(`/api/notifications?related_type=service_call&related_id=${job.id}`)).data;
+    const custEmail = msgs.find(m => m.channel === 'email' && m.to_addr === 'pat@example.com');
+    assert.equal(custEmail?.status, 'sent');
+    assert.match(custEmail.subject, /Confirmed/);
+    assert.match(custEmail.body, /2:00 PM/);
+    assert.equal(msgs.find(m => m.channel === 'sms')?.to_addr, '+15552223333', 'US numbers normalized for texting');
+    assert.match(texts[0].Body, /scheduled for .* at 2:00 PM with Tess/);
+    assert.match(texts[0].url, /\/Accounts\/AC123\/Messages\.json/);
+    assert.equal(texts[0].auth, 'Basic ' + Buffer.from('AC123:tok').toString('base64'));
+    const invite = msgs.find(m => m.to_addr === 'tess@example.com');
+    assert.equal(invite?.status, 'sent', 'technician gets a calendar invite');
+
+    // Moving it sends updates; reassigning cancels the old tech's invite
+    await owner.put(`/api/r/service_calls/${job.id}`, { scheduled_start: `${soon}T16:00`, technician_id: ids.tech2 });
+    await notifyIdle();
+    msgs = (await owner.get(`/api/notifications?related_type=service_call&related_id=${job.id}`)).data;
+    assert.ok(msgs.some(m => m.subject?.startsWith('Updated:')), 'customer told about the new time');
+    assert.ok(msgs.some(m => m.to_addr === 'tess@example.com' && m.subject.startsWith('Cancelled')), 'old tech gets a cancellation');
+
+    // On my way
+    const before = texts.length;
+    const r = await owner.post(`/api/service_calls/${job.id}/on-my-way`, { eta_minutes: 20 });
+    assert.equal(r.data.status, 'en route');
+    await notifyIdle();
+    assert.match(texts[before].Body, /Bo is on the way and should arrive in about 20 minutes/);
+
+    // Customer preferences are respected
+    await owner.put(`/api/r/customers/${cust.id}`, { notify_sms: 0 });
+    const n = texts.length;
+    await owner.post(`/api/service_calls/${job.id}/resend-confirmation`);
+    await notifyIdle();
+    assert.equal(texts.length, n, 'no text when the customer opted out');
+
+    // Settings: secrets are write-only
+    await owner.put('/api/settings', { smtp_pass: 'super-secret', twilio_token: 'also-secret' });
+    const s = (await owner.get('/api/settings')).data;
+    assert.equal(s.smtp_pass, undefined);
+    assert.equal(s.smtp_pass__set, true);
+    assert.ok(!db.prepare("SELECT value FROM settings WHERE key = 'smtp_pass'").get().value.includes('super-secret'), 'stored encrypted');
+  } finally {
+    twilio.close();
+    for (const k of ['SMTP_HOST', 'MAIL_FROM', 'TWILIO_ACCOUNT_SID', 'TWILIO_AUTH_TOKEN', 'TWILIO_FROM', 'TWILIO_API_BASE']) delete process.env[k];
+  }
+});
+
+test('without email/text set up, messages are logged as not sent (nothing breaks)', async () => {
+  const { notifyIdle } = await import('../server/notify.js');
+  const cust = (await owner.post('/api/r/customers', { name: 'No Setup', type: 'residential', email: 'x@example.com', phone: '5551112222' })).data;
+  const soon = new Date(Date.now() + 9 * 864e5).toISOString().slice(0, 10);
+  const job = await owner.post('/api/r/service_calls', { customer_id: cust.id, title: 'Test', technician_id: ids.tech, scheduled_start: `${soon}T10:00` });
+  assert.equal(job.status, 200);
+  await notifyIdle();
+  const msgs = (await owner.get(`/api/notifications?related_type=service_call&related_id=${job.data.id}`)).data;
+  assert.ok(msgs.length >= 2);
+  assert.ok(msgs.every(m => m.status === 'skipped'));
+  assert.match(msgs.find(m => m.channel === 'sms').error, /not set up/);
+});
+
+// 1x1 PNG / JPEG
+const PNG = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==';
+const JPG = Buffer.from([0xff, 0xd8, 0xff, 0xe0, ...Buffer.alloc(200)]).toString('base64');
+
+test('before/after photos and customer sign-off on completion', async () => {
+  const job = (await owner.post('/api/r/service_calls', { customer_id: ids.cust, title: 'Replace keypad' })).data;
+  assert.equal((await owner.post(`/api/service_calls/${job.id}/photos`, { kind: 'before', data: JPG, caption: 'Old keypad' })).status, 200);
+  assert.equal((await owner.post(`/api/service_calls/${job.id}/photos`, { kind: 'after', data: 'data:image/jpeg;base64,' + JPG })).status, 200);
+  assert.equal((await owner.post(`/api/service_calls/${job.id}/photos`, { kind: 'after', data: Buffer.from('<script>alert(1)</script>').toString('base64') })).status, 400, 'only real images');
+  const photos = (await owner.get(`/api/service_calls/${job.id}/photos`)).data;
+  assert.deepEqual(photos.map(p => p.kind), ['before', 'after']);
+  const img = await owner.call('GET', `/api/photos/${photos[0].id}`, undefined, { raw: true });
+  assert.equal(img.headers.get('content-type'), 'image/jpeg');
+  assert.equal((await fetch(`${base}/api/photos/${photos[0].id}`)).status, 401, 'photos need a login');
+
+  // Technicians can delete their own photos but not someone else's
+  await owner.post('/api/users', { name: 'Tess', email: 'tess-login@example.com', password: 'password123', role: 'technician', technician_id: ids.tech });
+  const tech = client();
+  await tech.post('/api/auth/login', { email: 'tess-login@example.com', password: 'password123' });
+  assert.equal((await tech.del(`/api/photos/${photos[0].id}`)).status, 403);
+  const mine = (await tech.post(`/api/service_calls/${job.id}/photos`, { kind: 'after', data: JPG })).data;
+  assert.equal((await tech.del(`/api/photos/${mine.id}`)).status, 200);
+
+  // Sign-off
+  await tech.put(`/api/r/service_calls/${job.id}`, { status: 'completed', labor_hours: 1, resolution: 'Replaced keypad' });
+  assert.equal((await tech.post(`/api/service_calls/${job.id}/signature`, { name: 'A', image: PNG })).status, 400, 'needs a name');
+  assert.equal((await tech.post(`/api/service_calls/${job.id}/signature`, { name: 'Pat Customer', image: JPG })).status, 400, 'signature must be a PNG');
+  const signed = await tech.post(`/api/service_calls/${job.id}/signature`, { name: 'Pat Customer', image: PNG });
+  assert.equal(signed.data.signed_by, 'Pat Customer');
+  assert.ok(signed.data.signed_at);
+  const sig = await owner.call('GET', `/api/service_calls/${job.id}/signature`, undefined, { raw: true });
+  assert.equal(sig.headers.get('content-type'), 'image/png');
+  // The signature can't be forged through a normal edit
+  await owner.put(`/api/r/service_calls/${job.id}`, { signed_by: 'Someone else' });
+  assert.equal((await owner.get(`/api/r/service_calls/${job.id}`)).data.signed_by, 'Pat Customer');
+});
+
 export { owner, ids, db, base };

@@ -34,9 +34,22 @@ export const DEFAULT_SETTINGS = {
   calendar_token: '',
   timezone: 'America/New_York',
   public_url: '',
+  // Notifications
+  smtp_host: '', smtp_port: '587', smtp_user: '', smtp_pass: '', mail_from: '',
+  twilio_sid: '', twilio_token: '', twilio_from: '',
+  notify_on_schedule: '1', notify_on_way: '1', notify_tech_invites: '1',
 };
+export const DEFAULT_TEMPLATES = {
+  tpl_scheduled_sms: '{company}: your {type} is scheduled for {date} at {time} with {tech}. Questions? Call {company_phone}. Reply STOP to opt out.',
+  tpl_scheduled_email: 'Hi {customer},\n\nYour {type} appointment is confirmed:\n\n{date} at {time}\nTechnician: {tech}\nAddress: {address}\n\nIf you need to reschedule, reply to this email or call {company_phone}.\n\nThank you,\n{company}',
+  tpl_onway_sms: '{company}: {tech} is on the way{eta}. See you soon!',
+  tpl_onway_email: 'Hi {customer},\n\n{tech} from {company} is on the way to {address}{eta}.\n\nThank you,\n{company}',
+};
+Object.assign(DEFAULT_SETTINGS, DEFAULT_TEMPLATES);
+// Settings stored encrypted; never sent back to the browser.
+export const SECRET_SETTINGS = new Set(['smtp_pass', 'twilio_token']);
 // Settings that are never sent to non-admin users or editable through PUT /api/settings.
-export const PRIVATE_SETTINGS = new Set(['inbound_token', 'calendar_token']);
+export const PRIVATE_SETTINGS = new Set(['inbound_token', 'calendar_token', 'smtp_pass', 'twilio_token']);
 
 function columnSql(f) {
   let sql = `"${f.name}" ${SQL_TYPES[f.type] || 'TEXT'}`;
@@ -128,6 +141,21 @@ function migrate(db) {
     );
     CREATE INDEX IF NOT EXISTS idx_service_calls_sched ON service_calls(scheduled_start);
     CREATE INDEX IF NOT EXISTS idx_invoices_period ON invoices(customer_id, kind, period);
+    CREATE TABLE IF NOT EXISTS job_photos (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      service_call_id INTEGER NOT NULL REFERENCES service_calls(id) ON DELETE CASCADE,
+      kind TEXT NOT NULL CHECK (kind IN ('before','after','other')),
+      file_key TEXT NOT NULL, caption TEXT, user_id INTEGER, user_name TEXT, show_customer INTEGER NOT NULL DEFAULT 1,
+      created_at TEXT NOT NULL DEFAULT (datetime('now','localtime'))
+    );
+    CREATE INDEX IF NOT EXISTS idx_job_photos_call ON job_photos(service_call_id);
+    CREATE TABLE IF NOT EXISTS notifications (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      channel TEXT NOT NULL, to_addr TEXT, subject TEXT, body TEXT,
+      status TEXT NOT NULL, error TEXT, related_type TEXT, related_id INTEGER,
+      created_at TEXT NOT NULL DEFAULT (datetime('now','localtime'))
+    );
+    CREATE INDEX IF NOT EXISTS idx_notifications_rel ON notifications(related_type, related_id);
     CREATE TABLE IF NOT EXISTS customer_stage_log (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       customer_id INTEGER NOT NULL REFERENCES customers(id) ON DELETE CASCADE,

@@ -112,6 +112,7 @@ export async function detail(view, [id]) {
   loading(view);
   const inv = await R.get('invoices', id);
   const [cust, items, payments] = await Promise.all([R.get('customers', inv.customer_id), R.list('invoice_items', { invoice_id: id }), R.list('payments', { invoice_id: id })]);
+  const job = inv.service_call_id ? await R.get('service_calls', inv.service_call_id).catch(() => null) : null;
   const s = state.settings;
   const reload = () => refresh();
   const addr = [cust.billing_address, [cust.city, cust.state].filter(Boolean).join(', ') + (cust.zip ? ' ' + cust.zip : '')].filter(x => x && x.trim());
@@ -159,6 +160,9 @@ export async function detail(view, [id]) {
             <div style="font-weight:700"><span>Balance due</span><span>${money(inv.balance)}</span></div>
           </div>
           ${inv.notes ? html`<div style="margin-top:20px;white-space:pre-wrap">${inv.notes}</div>` : ''}
+          ${job?.signed_by ? html`<div class="doc-sign"><div class="doc-sign-label">Work completed and accepted</div>
+            <img src="/api/service_calls/${job.id}/signature" alt="Customer signature">
+            <div>${job.signed_by} · ${new Date(job.signed_at).toLocaleString('en-US', { month: 'short', day: 'numeric', year: 'numeric', hour: 'numeric', minute: '2-digit' })} · SC-${job.number}</div></div>` : ''}
           ${s.invoice_footer ? html`<div style="margin-top:28px;color:#555;white-space:pre-wrap;border-top:1px solid #ddd;padding-top:12px">${s.invoice_footer}</div>` : ''}
         </div>
       </div>
