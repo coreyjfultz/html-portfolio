@@ -3,7 +3,7 @@ import { R } from '../api.js';
 import { can, refresh } from '../app.js';
 
 export async function render(view) {
-  const office = can.office();
+  const office = can.manage();
   const from = todayStr(), to = addDays(from, 6);
   const [techs, upcoming, open, vehicles] = await Promise.all([
     R.list('technicians'), R.list('service_calls', { from, to, status__not: 'cancelled' }),

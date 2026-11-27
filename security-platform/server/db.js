@@ -31,9 +31,12 @@ export const DEFAULT_SETTINGS = {
   receiving_update_costs: '1',
   trusted_vendor_domains: '',
   inbound_token: '',
+  calendar_token: '',
+  timezone: 'America/New_York',
+  public_url: '',
 };
 // Settings that are never sent to non-admin users or editable through PUT /api/settings.
-export const PRIVATE_SETTINGS = new Set(['inbound_token']);
+export const PRIVATE_SETTINGS = new Set(['inbound_token', 'calendar_token']);
 
 function columnSql(f) {
   let sql = `"${f.name}" ${SQL_TYPES[f.type] || 'TEXT'}`;
@@ -81,7 +84,7 @@ function migrate(db) {
       name TEXT NOT NULL,
       email TEXT NOT NULL UNIQUE COLLATE NOCASE,
       password_hash TEXT NOT NULL,
-      role TEXT NOT NULL CHECK (role IN ('admin','office','technician')),
+      role TEXT NOT NULL CHECK (role IN ('owner','admin','sales','accounting','technician')),
       technician_id INTEGER REFERENCES technicians(id) ON DELETE SET NULL,
       active INTEGER NOT NULL DEFAULT 1,
       created_at TEXT NOT NULL DEFAULT (datetime('now','localtime')),
@@ -125,12 +128,42 @@ function migrate(db) {
     );
     CREATE INDEX IF NOT EXISTS idx_service_calls_sched ON service_calls(scheduled_start);
     CREATE INDEX IF NOT EXISTS idx_invoices_period ON invoices(customer_id, kind, period);
+    CREATE TABLE IF NOT EXISTS customer_stage_log (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      customer_id INTEGER NOT NULL REFERENCES customers(id) ON DELETE CASCADE,
+      from_stage TEXT, to_stage TEXT NOT NULL, user_name TEXT, reason TEXT,
+      created_at TEXT NOT NULL DEFAULT (datetime('now','localtime'))
+    );
+    CREATE INDEX IF NOT EXISTS idx_stage_log ON customer_stage_log(customer_id);
   `);
+
+  // Roles changed from admin/office/technician to owner/admin/sales/accounting/technician:
+  // old admins become owners, old office users become administrators.
+  const usersSql = db.prepare("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'users'").get()?.sql || '';
+  if (usersSql.includes("'office'")) {
+    db.exec(`PRAGMA foreign_keys = OFF; BEGIN;
+      CREATE TABLE users_new (
+        id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL, email TEXT NOT NULL UNIQUE COLLATE NOCASE, password_hash TEXT NOT NULL,
+        role TEXT NOT NULL CHECK (role IN ('owner','admin','sales','accounting','technician')),
+        technician_id INTEGER REFERENCES technicians(id) ON DELETE SET NULL, active INTEGER NOT NULL DEFAULT 1,
+        created_at TEXT NOT NULL DEFAULT (datetime('now','localtime')), last_login TEXT);
+      INSERT INTO users_new SELECT id, name, email, password_hash, CASE role WHEN 'admin' THEN 'owner' WHEN 'office' THEN 'admin' ELSE role END,
+        technician_id, active, created_at, last_login FROM users;
+      DROP TABLE users; ALTER TABLE users_new RENAME TO users;
+      COMMIT; PRAGMA foreign_keys = ON;`);
+  }
+
+  // Customers that existed before stages were added get a stage from their status.
+  db.exec(`UPDATE customers SET stage = CASE status WHEN 'prospect' THEN 'lead' WHEN 'inactive' THEN 'lost' ELSE 'active' END WHERE stage IS NULL`);
 
   const ins = db.prepare('INSERT OR IGNORE INTO settings(key, value) VALUES (?, ?)');
   for (const [k, v] of Object.entries(DEFAULT_SETTINGS)) ins.run(k, v);
   // Secret for the inbound-email webhook URL.
   db.prepare("UPDATE settings SET value = ? WHERE key = 'inbound_token' AND (value IS NULL OR value = '')").run(randomBytes(24).toString('base64url'));
+  db.prepare("UPDATE settings SET value = ? WHERE key = 'calendar_token' AND (value IS NULL OR value = '')").run(randomBytes(18).toString('base64url'));
+  for (const t of db.prepare('SELECT id FROM technicians WHERE calendar_token IS NULL').all()) {
+    db.prepare('UPDATE technicians SET calendar_token = ? WHERE id = ?').run(randomBytes(18).toString('base64url'), t.id);
+  }
 }
 
 export function getSettings(db) {

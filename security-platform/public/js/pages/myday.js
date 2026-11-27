@@ -26,7 +26,7 @@ export async function render(view) {
 
   mount(view, html`
     <div class="page-head"><div><h1>My day</h1><div class="sub">${new Date().toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' })} · ${calls.length} job${calls.length === 1 ? '' : 's'} today</div></div>
-      <div class="actions"><a class="btn" href="#/calls?new=1">+ Service call</a></div></div>
+      <div class="actions"><button class="btn" data-sync>Add to my phone calendar</button><a class="btn" href="#/calendar">My calendar</a><a class="btn" href="#/calls?new=1">+ Service call</a></div></div>
     <div class="stack">
       ${calls.length ? calls.map(c => html`<a class="card" href="#/calls/${c.id}" style="display:block;color:inherit;text-decoration:none;border-left:5px solid ${c.priority === 'emergency' ? 'var(--bad)' : c.technician_color || 'var(--primary)'}">
           <div class="card-body"><div class="row" style="justify-content:space-between">
@@ -43,5 +43,6 @@ export async function render(view) {
           columns: [{ label: 'Item', render: s => html`${s.name}<div class="small muted">${s.sku || ''}</div>` }, { label: 'Qty', render: s => num(s.qty), cls: 'num' }],
         }) : html`<div class="empty">No vehicle assigned to you.</div>`}</div></div>
     </div>`);
+  $('[data-sync]', view).addEventListener('click', async () => (await import('./calendar.js')).syncDialog());
   $('[data-load]', view)?.addEventListener('click', () => transferStock(items, null, () => render(view), { from: 0, to: truck.id }));
 }

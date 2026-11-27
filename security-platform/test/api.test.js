@@ -50,7 +50,7 @@ test('first-run setup creates the admin, and only once', async () => {
   assert.equal(r.status, 200);
   const again = await client().post('/api/auth/setup', { name: 'X', email: 'x@example.com', password: 'whatever12' });
   assert.equal(again.status, 409);
-  assert.equal((await admin.get('/api/auth/state')).data.user.role, 'admin');
+  assert.equal((await admin.get('/api/auth/state')).data.user.role, 'owner', 'the first account is the owner');
 });
 
 test('rejects bad logins and unauthenticated access', async () => {
@@ -214,10 +214,43 @@ test('technician role: field access only, no billing or reports', async () => {
   assert.equal((await tech.post('/api/stock/transfer', { item_id: ids.item, qty: 1, from: 0, to: ids.van })).status, 200);
 });
 
-test('last admin cannot be demoted or deactivated', async () => {
+test('last owner cannot be demoted or deactivated', async () => {
   const users = (await admin.get('/api/users')).data;
-  const me = users.find(u => u.role === 'admin');
-  assert.equal((await admin.put(`/api/users/${me.id}`, { role: 'office' })).status, 400);
+  const me = users.find(u => u.role === 'owner');
+  assert.equal((await admin.put(`/api/users/${me.id}`, { role: 'admin' })).status, 400);
+  assert.equal((await admin.put(`/api/users/${me.id}`, { active: false })).status, 400);
+});
+
+test('roles: sales, accounting and administrator each see the right things', async () => {
+  const mk = async (role) => {
+    await admin.post('/api/users', { name: role, email: `${role}@example.com`, password: 'password-123', role });
+    const c = client();
+    assert.equal((await c.post('/api/auth/login', { email: `${role}@example.com`, password: 'password-123' })).status, 200);
+    return c;
+  };
+  const sales = await mk('sales');
+  const acct = await mk('accounting');
+  const adm = await mk('admin');
+  // Sales: customers yes, money no
+  assert.equal((await sales.post('/api/r/customers', { name: 'Lead Co', type: 'commercial' })).status, 200);
+  assert.equal((await sales.get('/api/r/invoices')).status, 403);
+  assert.equal((await sales.get('/api/reports/pnl')).status, 403);
+  assert.equal((await sales.get('/api/r/recurring_charges')).status, 200, 'sales can see monitoring rates');
+  assert.equal((await sales.post('/api/r/recurring_charges', { customer_id: ids.com, description: 'x', amount: 1 })).status, 403);
+  assert.equal((await sales.get('/api/dashboard')).data.mrr, undefined);
+  // Accounting: billing and reports yes, team management no
+  assert.equal((await acct.get('/api/r/invoices')).status, 200);
+  assert.equal((await acct.get('/api/reports/pnl')).status, 200);
+  assert.equal((await acct.get('/api/users')).status, 403);
+  assert.equal((await acct.post('/api/r/technicians', { name: 'X' })).status, 403);
+  assert.ok((await acct.get('/api/dashboard')).data.mrr !== undefined);
+  // Administrator: runs the team but cannot touch owners or download backups
+  assert.equal((await adm.get('/api/users')).status, 200);
+  assert.equal((await adm.post('/api/users', { name: 'X', email: 'x2@example.com', password: 'password-123', role: 'owner' })).status, 403);
+  const owner = (await adm.get('/api/users')).data.find(u => u.role === 'owner');
+  assert.equal((await adm.put(`/api/users/${owner.id}`, { password: 'new-password-1' })).status, 403);
+  assert.equal((await adm.get('/api/admin/backup')).status, 403);
+  assert.equal((await admin.call('GET', '/api/admin/backup')).status, 200);
 });
 
 test('reports return consistent totals', async () => {

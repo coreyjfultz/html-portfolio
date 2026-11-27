@@ -7,6 +7,14 @@ import { RESOURCES, MAINTENANCE } from '../public/js/schema.js';
 import { getSettings, DEFAULT_SETTINGS, PRIVATE_SETTINGS, tx, DATA_DIR } from './db.js';
 import { ingest, processInvoice, receive, saveReview, parseInboundEmail, filePath } from './receiving.js';
 import { aiConfigured } from './extract.js';
+import { callToEvent, buildCalendar } from './calendar.js';
+
+export function baseUrl(db, req) {
+  const s = getSettings(db);
+  if (s.public_url) return s.public_url.replace(/\/$/, '');
+  const proto = req?.headers['x-forwarded-proto'] || (req?.socket?.encrypted ? 'https' : 'http');
+  return `${proto}://${req?.headers['x-forwarded-host'] || req?.headers.host || 'localhost'}`;
+}
 import {
   HttpError, list, get, create, update, adjustStock, recalcInvoice, round2, todayLocal, addMonths, addDays,
 } from './resources.js';
@@ -15,9 +23,10 @@ import {
   loginAllowed, recordFailedLogin, clearLogins,
 } from './security.js';
 
-const ADMIN = ['admin'];
-const OFFICE = ['admin', 'office'];
-const ALL = ['admin', 'office', 'technician'];
+import { G, ROLES } from '../public/js/schema.js';
+const ALL = G.all;
+const MANAGE = G.manage;
+const BILLING = G.billing;
 
 const monthLabel = p => new Date(p + '-15T00:00:00Z').toLocaleString('en-US', { month: 'long', year: 'numeric', timeZone: 'UTC' });
 const monthsBetween = (from, to) => {
@@ -63,7 +72,7 @@ export function buildRoutes() {
     const email = requireStr(body.email, 'Email').toLowerCase();
     const err = validatePassword(body.password);
     if (err) throw new HttpError(400, err);
-    const info = db.prepare("INSERT INTO users(name, email, password_hash, role) VALUES (?,?,?,'admin')").run(name, email, hashPassword(body.password));
+    const info = db.prepare("INSERT INTO users(name, email, password_hash, role) VALUES (?,?,?,'owner')").run(name, email, hashPassword(body.password));
     if (body.company_name) db.prepare("UPDATE settings SET value = ? WHERE key = 'company_name'").run(String(body.company_name).trim());
     setCookie(createSession(db, Number(info.lastInsertRowid)));
     audit(db, { id: Number(info.lastInsertRowid), name }, 'setup', 'users', Number(info.lastInsertRowid));
@@ -102,13 +111,14 @@ export function buildRoutes() {
   });
 
   // ------------------------------------------------------------ users
-  r('GET', '/api/users', ADMIN, ({ db }) => db.prepare(`SELECT u.id, u.name, u.email, u.role, u.technician_id, u.active, u.last_login,
+  r('GET', '/api/users', MANAGE, ({ db }) => db.prepare(`SELECT u.id, u.name, u.email, u.role, u.technician_id, u.active, u.last_login,
       t.name AS technician_name FROM users u LEFT JOIN technicians t ON t.id = u.technician_id ORDER BY u.active DESC, u.name`).all());
 
-  r('POST', '/api/users', ADMIN, ({ db, body, user }) => {
+  r('POST', '/api/users', MANAGE, ({ db, body, user }) => {
     const name = requireStr(body.name, 'Name');
     const email = requireStr(body.email, 'Email').toLowerCase();
-    if (!['admin', 'office', 'technician'].includes(body.role)) throw new HttpError(400, 'Invalid role');
+    if (!ROLES.includes(body.role)) throw new HttpError(400, 'Invalid role');
+    if (body.role === 'owner' && user.role !== 'owner') throw new HttpError(403, 'Only an owner can create another owner account');
     const err = validatePassword(body.password);
     if (err) throw new HttpError(400, err);
     try {
@@ -122,15 +132,16 @@ export function buildRoutes() {
     }
   });
 
-  r('PUT', '/api/users/:id', ADMIN, ({ db, body, user, params }) => {
+  r('PUT', '/api/users/:id', MANAGE, ({ db, body, user, params }) => {
     const target = db.prepare('SELECT * FROM users WHERE id = ?').get(Number(params.id));
     if (!target) throw new HttpError(404, 'Not found');
     const role = body.role ?? target.role;
     const active = body.active === undefined ? target.active : (body.active ? 1 : 0);
-    if (!['admin', 'office', 'technician'].includes(role)) throw new HttpError(400, 'Invalid role');
-    if (target.role === 'admin' && (role !== 'admin' || !active)) {
-      const admins = db.prepare("SELECT COUNT(*) AS n FROM users WHERE role = 'admin' AND active = 1").get().n;
-      if (admins <= 1) throw new HttpError(400, 'You must keep at least one active admin');
+    if (!ROLES.includes(role)) throw new HttpError(400, 'Invalid role');
+    if ((target.role === 'owner' || role === 'owner') && user.role !== 'owner') throw new HttpError(403, 'Only an owner can change owner accounts');
+    if (target.role === 'owner' && (role !== 'owner' || !active)) {
+      const owners = db.prepare("SELECT COUNT(*) AS n FROM users WHERE role = 'owner' AND active = 1").get().n;
+      if (owners <= 1) throw new HttpError(400, 'You must keep at least one active owner');
     }
     db.prepare('UPDATE users SET name = ?, email = ?, role = ?, active = ?, technician_id = ? WHERE id = ?').run(
       body.name?.trim() || target.name, body.email?.trim().toLowerCase() || target.email, role, active,
@@ -149,23 +160,24 @@ export function buildRoutes() {
   // ------------------------------------------------------------ settings
   r('GET', '/api/settings', ALL, ({ db, user }) => {
     const s = getSettings(db);
-    if (user.role !== 'admin') for (const k of PRIVATE_SETTINGS) delete s[k];
+    if (!MANAGE.includes(user.role)) for (const k of PRIVATE_SETTINGS) delete s[k];
     return s;
   });
-  r('PUT', '/api/settings', ADMIN, ({ db, body, user }) => {
+  r('PUT', '/api/settings', MANAGE, ({ db, body, user }) => {
     const up = db.prepare('INSERT INTO settings(key, value) VALUES (?,?) ON CONFLICT(key) DO UPDATE SET value = excluded.value');
     for (const k of Object.keys(DEFAULT_SETTINGS)) if (k in body && !PRIVATE_SETTINGS.has(k)) up.run(k, String(body[k] ?? ''));
     audit(db, user, 'update', 'settings', null);
     return getSettings(db);
   });
 
-  r('GET', '/api/audit', ADMIN, ({ db, query }) =>
+  r('GET', '/api/audit', MANAGE, ({ db, query }) =>
     db.prepare('SELECT * FROM audit_log ORDER BY id DESC LIMIT ?').all(Math.min(Number(query.limit) || 300, 2000)));
 
   // ------------------------------------------------------------ dashboard
   r('GET', '/api/dashboard', ALL, ({ db, user }) => {
     const today = todayLocal();
     const isTech = user.role === 'technician';
+    const seesMoney = BILLING.includes(user.role);
     const callWhere = isTech && user.technician_id ? `AND t.technician_id = ${Number(user.technician_id)}` : '';
     const todayCalls = list(db, 'service_calls', { from: today, to: today, limit: 200 }, user)
       .filter(c => !isTech || !user.technician_id || c.technician_id === user.technician_id)
@@ -182,7 +194,7 @@ export function buildRoutes() {
         FROM inventory_items i LEFT JOIN stock s ON s.item_id = i.id WHERE i.active = 1
         GROUP BY i.id HAVING total_qty < i.reorder_level ORDER BY total_qty - i.reorder_level LIMIT 10`).all(),
     };
-    if (!isTech) {
+    if (seesMoney) {
       const m = today.slice(0, 7);
       out.mrr = round2(db.prepare(`SELECT COALESCE(SUM(rc.amount),0) AS s FROM recurring_charges rc JOIN customers c ON c.id = rc.customer_id
         WHERE rc.active = 1 AND c.status = 'active'`).get().s);
@@ -209,13 +221,70 @@ export function buildRoutes() {
     const push = (kind, rows, toItem) => rows.forEach(x => out.push({ kind, ...toItem(x) }));
     push('Customer', list(db, 'customers', { q, limit: 8 }), c => ({ id: c.id, title: c.name, sub: [c.type, c.phone, c.city].filter(Boolean).join(' · '), href: `#/customers/${c.id}` }));
     push('Service call', list(db, 'service_calls', { q, limit: 6 }), c => ({ id: c.id, title: `SC-${c.number} ${c.title}`, sub: `${c.customer_id_label} · ${c.status}`, href: `#/calls/${c.id}` }));
-    if (OFFICE.includes(user.role)) {
+    if (BILLING.includes(user.role)) {
       push('Invoice', list(db, 'invoices', { q, limit: 5 }), i => ({ id: i.id, title: `Invoice #${i.number}`, sub: `${i.customer_id_label} · $${i.total}`, href: `#/invoices/${i.id}` }));
     }
     push('Item', list(db, 'inventory_items', { q, limit: 5 }), i => ({ id: i.id, title: i.name, sub: `${i.sku || ''} · ${i.total_qty} on hand`, href: `#/inventory/${i.id}` }));
     push('Vehicle', list(db, 'vehicles', { q, limit: 3 }), v => ({ id: v.id, title: v.unit_name, sub: [v.year, v.make, v.model].filter(Boolean).join(' '), href: `#/vehicles/${v.id}` }));
     push('Technician', list(db, 'technicians', { q, limit: 3 }), t => ({ id: t.id, title: t.name, sub: t.phone || '', href: `#/technicians` }));
     return out;
+  });
+
+  // ------------------------------------------------------------ calendars
+  // Subscription feeds for Outlook / Google / Apple calendars. The secret key in the
+  // file name is the only credential (calendar apps can't log in).
+  r('GET', '/api/cal/:file', null, ({ db, params, res, req }) => {
+    const m = String(params.file).match(/^(central|tech)-([A-Za-z0-9_-]{16,64})\.ics$/);
+    if (!m) throw new HttpError(404, 'Not found');
+    const s = getSettings(db);
+    let tech = null;
+    if (m[1] === 'central') {
+      if (!s.calendar_token || m[2] !== s.calendar_token) throw new HttpError(404, 'Not found');
+    } else {
+      tech = db.prepare('SELECT id, name FROM technicians WHERE calendar_token = ?').get(m[2]);
+      if (!tech) throw new HttpError(404, 'Not found');
+    }
+    const from = addDays(todayLocal(), -60), to = addDays(todayLocal(), 365);
+    const calls = list(db, 'service_calls', { from, to, scheduled_start__null: '0', ...(tech ? { technician_id: tech.id } : {}), limit: 5000 }, null)
+      .filter(c => c.scheduled_start && c.status !== 'cancelled');
+    const ics = buildCalendar(calls.map(c => callToEvent(c, { tz: s.timezone, baseUrl: baseUrl(db, req), withTech: !tech })),
+      { name: tech ? `${s.company_name} — ${tech.name}` : `${s.company_name} — all technicians` });
+    res.writeHead(200, { 'Content-Type': 'text/calendar; charset=utf-8', 'Cache-Control': 'no-cache', 'Content-Disposition': `inline; filename="${m[1]}.ics"` });
+    res.end(ics);
+    return undefined;
+  });
+
+  r('GET', '/api/calendar/feeds', ALL, ({ db, user, req }) => {
+    const base = baseUrl(db, req);
+    const s = getSettings(db);
+    const techs = db.prepare('SELECT id, name, color, calendar_token FROM technicians WHERE active = 1 ORDER BY name').all()
+      .filter(t => MANAGE.includes(user.role) || t.id === user.technician_id);
+    return {
+      timezone: s.timezone,
+      central: MANAGE.includes(user.role) ? `${base}/api/cal/central-${s.calendar_token}.ics` : null,
+      technicians: techs.map(t => ({ id: t.id, name: t.name, color: t.color, url: `${base}/api/cal/tech-${t.calendar_token}.ics` })),
+    };
+  });
+
+  r('POST', '/api/calendar/reset/:which', MANAGE, ({ db, params, user }) => {
+    const tok = crypto.randomBytes(18).toString('base64url');
+    if (params.which === 'central') db.prepare("UPDATE settings SET value = ? WHERE key = 'calendar_token'").run(tok);
+    else db.prepare('UPDATE technicians SET calendar_token = ? WHERE id = ?').run(tok, Number(params.which));
+    audit(db, user, 'reset calendar link', 'calendar', null, params.which);
+    return { ok: true };
+  });
+
+  r('GET', '/api/customers/:id/stage-log', ALL, ({ db, params }) =>
+    db.prepare('SELECT * FROM customer_stage_log WHERE customer_id = ? ORDER BY id DESC LIMIT 100').all(Number(params.id)));
+
+  // Pipeline board: open opportunities plus recently won customers.
+  r('GET', '/api/pipeline', G.staff, ({ db, query }) => {
+    const params = [];
+    let where = "(c.stage <> 'active' OR c.updated_at >= date('now','-30 days'))";
+    if (query.type) { where += ' AND c.type = ?'; params.push(query.type); }
+    return db.prepare(`SELECT c.id, c.name, c.type, c.stage, c.phone, c.city, c.lead_source, c.updated_at,
+        (SELECT created_at FROM customer_stage_log g WHERE g.customer_id = c.id ORDER BY g.id DESC LIMIT 1) AS stage_since
+      FROM customers c WHERE ${where} ORDER BY c.updated_at DESC LIMIT 1000`).all(...params);
   });
 
   // ------------------------------------------------------------ maintenance
@@ -249,7 +318,7 @@ export function buildRoutes() {
   });
 
   // ------------------------------------------------------------ billing
-  r('POST', '/api/invoices/generate-monthly', OFFICE, ({ db, body, user }) => {
+  r('POST', '/api/invoices/generate-monthly', BILLING, ({ db, body, user }) => {
     const period = /^\d{4}-\d{2}$/.test(body.period || '') ? body.period : todayLocal().slice(0, 7);
     const issue = todayLocal().slice(0, 7) === period ? todayLocal() : `${period}-01`;
     const customers = db.prepare(`SELECT c.id, c.name, c.type FROM customers c WHERE c.status = 'active'
@@ -273,7 +342,7 @@ export function buildRoutes() {
     return { period, created: created.length };
   });
 
-  r('POST', '/api/service_calls/:id/invoice', OFFICE, ({ db, params, user }) => {
+  r('POST', '/api/service_calls/:id/invoice', BILLING, ({ db, params, user }) => {
     const call = get(db, 'service_calls', params.id);
     if (call.invoice_id) return { id: call.invoice_id, existing: true };
     return tx(db, () => {
@@ -291,7 +360,7 @@ export function buildRoutes() {
     });
   });
 
-  r('POST', '/api/invoices/:id/status', OFFICE, ({ db, params, body, user }) => {
+  r('POST', '/api/invoices/:id/status', BILLING, ({ db, params, body, user }) => {
     if (!['draft', 'sent', 'void'].includes(body.status)) throw new HttpError(400, 'Invalid status');
     db.prepare("UPDATE invoices SET status = ?, updated_at = datetime('now','localtime') WHERE id = ?").run(body.status, Number(params.id));
     recalcInvoice(db, Number(params.id));
@@ -299,7 +368,7 @@ export function buildRoutes() {
     return get(db, 'invoices', params.id);
   });
 
-  r('POST', '/api/invoices/send-drafts', OFFICE, ({ db, user }) => {
+  r('POST', '/api/invoices/send-drafts', BILLING, ({ db, user }) => {
     const n = db.prepare("UPDATE invoices SET status = 'sent' WHERE status = 'draft'").run().changes;
     audit(db, user, 'mark drafts sent', 'invoices', null, String(n));
     return { count: n };
@@ -347,7 +416,7 @@ export function buildRoutes() {
     if (id !== 0 && !db.prepare('SELECT 1 FROM vehicles WHERE id = ?').get(id)) throw new HttpError(400, 'Vehicle not found');
   };
 
-  r('POST', '/api/stock/receive', OFFICE, ({ db, body, user }) => {
+  r('POST', '/api/stock/receive', BILLING, ({ db, body, user }) => {
     const item = checkItem(db, body.item_id);
     const qty = Number(body.qty);
     if (!(qty > 0)) throw new HttpError(400, 'Quantity must be greater than zero');
@@ -380,7 +449,7 @@ export function buildRoutes() {
     });
   });
 
-  r('POST', '/api/stock/count', OFFICE, ({ db, body, user }) => {
+  r('POST', '/api/stock/count', BILLING, ({ db, body, user }) => {
     const item = checkItem(db, body.item_id);
     const loc = locId(body.location_id ?? 0);
     checkLocation(db, loc);
@@ -394,23 +463,23 @@ export function buildRoutes() {
   });
 
   // ------------------------------------------------------------ supplier invoices (receiving)
-  r('GET', '/api/receiving/info', OFFICE, ({ db, user }) => {
+  r('GET', '/api/receiving/info', BILLING, ({ db, user }) => {
     const s = getSettings(db);
     return {
       ai: aiConfigured(), auto_receive: s.auto_receive === '1', update_costs: s.receiving_update_costs === '1',
       trusted_vendor_domains: s.trusted_vendor_domains,
-      inbound_path: user.role === 'admin' ? `/api/inbound/email/${s.inbound_token}` : null,
+      inbound_path: MANAGE.includes(user.role) ? `/api/inbound/email/${s.inbound_token}` : null,
       counts: Object.fromEntries(db.prepare('SELECT status, COUNT(*) AS n FROM purchase_invoices GROUP BY status').all().map(r => [r.status, r.n])),
     };
   });
 
-  r('POST', '/api/receiving/token', ADMIN, ({ db, user }) => {
+  r('POST', '/api/receiving/token', MANAGE, ({ db, user }) => {
     db.prepare("UPDATE settings SET value = ? WHERE key = 'inbound_token'").run(crypto.randomBytes(24).toString('base64url'));
     audit(db, user, 'regenerate inbound email address', 'settings', null);
     return { ok: true };
   });
 
-  r('POST', '/api/receiving/upload', OFFICE, ({ db, body, user }) => {
+  r('POST', '/api/receiving/upload', BILLING, ({ db, body, user }) => {
     if (!Array.isArray(body.files) || !body.files.length) throw new HttpError(400, 'Choose a file to upload');
     const ids = ingest(db, { source: 'upload', files: body.files, user });
     if (!ids.length) throw new HttpError(400, 'Upload a PDF, photo (JPG/PNG), or CSV file');
@@ -418,7 +487,7 @@ export function buildRoutes() {
     return { ids };
   });
 
-  r('GET', '/api/receiving/:id/file', OFFICE, ({ db, params, res }) => {
+  r('GET', '/api/receiving/:id/file', BILLING, ({ db, params, res }) => {
     const row = db.prepare('SELECT file_key, file_type, file_name FROM purchase_invoices WHERE id = ?').get(Number(params.id));
     if (!row) throw new HttpError(404, 'Not found');
     const p = filePath(row);
@@ -434,12 +503,12 @@ export function buildRoutes() {
     return undefined;
   });
 
-  r('PUT', '/api/receiving/:id', OFFICE, ({ db, params, body, user }) => saveReview(db, Number(params.id), body, user));
+  r('PUT', '/api/receiving/:id', BILLING, ({ db, params, body, user }) => saveReview(db, Number(params.id), body, user));
 
-  r('POST', '/api/receiving/:id/receive', OFFICE, ({ db, params, body, user }) =>
+  r('POST', '/api/receiving/:id/receive', BILLING, ({ db, params, body, user }) =>
     receive(db, Number(params.id), user, { record_expense: body.record_expense !== false, allowDuplicate: !!body.allow_duplicate }));
 
-  r('POST', '/api/receiving/:id/reread', OFFICE, ({ db, params, user }) => {
+  r('POST', '/api/receiving/:id/reread', BILLING, ({ db, params, user }) => {
     const row = db.prepare('SELECT status FROM purchase_invoices WHERE id = ?').get(Number(params.id));
     if (!row) throw new HttpError(404, 'Not found');
     if (row.status === 'received') throw new HttpError(409, 'Already received');
@@ -449,7 +518,7 @@ export function buildRoutes() {
     return { ok: true };
   });
 
-  r('POST', '/api/receiving/:id/reject', OFFICE, ({ db, params, user }) => {
+  r('POST', '/api/receiving/:id/reject', BILLING, ({ db, params, user }) => {
     const n = db.prepare("UPDATE purchase_invoices SET status = 'rejected' WHERE id = ? AND status <> 'received'").run(Number(params.id)).changes;
     if (!n) throw new HttpError(409, 'Received invoices cannot be rejected');
     audit(db, user, 'reject', 'purchase_invoices', Number(params.id));
@@ -469,7 +538,7 @@ export function buildRoutes() {
   });
 
   // ------------------------------------------------------------ reports
-  r('GET', '/api/reports/pnl', OFFICE, ({ db, query }) => {
+  r('GET', '/api/reports/pnl', BILLING, ({ db, query }) => {
     const to = /^\d{4}-\d{2}$/.test(query.to || '') ? query.to : todayLocal().slice(0, 7);
     const from = /^\d{4}-\d{2}$/.test(query.from || '') ? query.from : addMonths(to + '-01', -5).slice(0, 7);
     const months = monthsBetween(from, to);
@@ -509,7 +578,7 @@ export function buildRoutes() {
     };
   });
 
-  r('GET', '/api/reports/technicians', OFFICE, ({ db, query }) => {
+  r('GET', '/api/reports/technicians', BILLING, ({ db, query }) => {
     const from = query.from || monthStart();
     const to = query.to || monthEnd(todayLocal());
     let workdays = 0;
@@ -542,7 +611,7 @@ export function buildRoutes() {
     };
   });
 
-  r('GET', '/api/reports/segments', OFFICE, ({ db, query }) => {
+  r('GET', '/api/reports/segments', BILLING, ({ db, query }) => {
     const from = query.from || addMonths(monthStart(), -11);
     const to = query.to || todayLocal();
     return ['residential', 'commercial'].map(type => {
@@ -557,7 +626,7 @@ export function buildRoutes() {
     });
   });
 
-  r('GET', '/api/reports/aging', OFFICE, ({ db, user }) => {
+  r('GET', '/api/reports/aging', BILLING, ({ db, user }) => {
     const today = todayLocal();
     const open = list(db, 'invoices', { status__in: 'sent,partial' }, user).filter(i => i.balance > 0);
     const byCust = new Map();
@@ -573,7 +642,7 @@ export function buildRoutes() {
     return { customers: [...byCust.values()].sort((a, b) => b.total - a.total), totals };
   });
 
-  r('GET', '/api/reports/jobs', OFFICE, ({ db, query }) => {
+  r('GET', '/api/reports/jobs', BILLING, ({ db, query }) => {
     const from = query.from || monthStart();
     const to = query.to || todayLocal();
     return db.prepare(`SELECT sc.id, sc.number, sc.title, sc.call_type, sc.completed_at, c.name AS customer, c.type AS customer_type, t.name AS technician,
@@ -592,9 +661,10 @@ export function buildRoutes() {
   });
 
   // ------------------------------------------------------------ export / backup
-  r('GET', '/api/export/:resource', OFFICE, ({ db, params, res, user }) => {
+  r('GET', '/api/export/:resource', G.staff, ({ db, params, res, user }) => {
     const def = RESOURCES[params.resource];
     if (!def) throw new HttpError(404, 'Unknown resource');
+    if (!def.read.includes(user.role)) throw new HttpError(403, 'Your role does not have access to this');
     const rows = list(db, params.resource, { limit: 5000 }, user);
     const fields = def.fields.filter(f => f.type !== 'secret');
     const cell = v => {
@@ -612,7 +682,7 @@ export function buildRoutes() {
     return undefined;
   });
 
-  r('GET', '/api/admin/backup', ADMIN, ({ db, res, user }) => {
+  r('GET', '/api/admin/backup', G.owner, ({ db, res, user }) => {
     const file = path.join(DATA_DIR, `backup-${crypto.randomBytes(6).toString('hex')}.db`);
     db.exec(`VACUUM INTO '${file.replace(/'/g, "''")}'`);
     const buf = fs.readFileSync(file);

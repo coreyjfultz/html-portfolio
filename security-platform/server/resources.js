@@ -1,15 +1,16 @@
 // Generic, schema-driven CRUD with business-rule hooks.
-import { RESOURCES, MAINTENANCE, fieldDefault } from '../public/js/schema.js';
+import { RESOURCES, MAINTENANCE, STAGES, fieldDefault } from '../public/js/schema.js';
 import { encrypt, decrypt, audit } from './security.js';
 import { getSettings, nextNumber, tx, DATA_DIR } from './db.js';
 import fs from 'node:fs';
+import { randomBytes } from 'node:crypto';
 import path from 'node:path';
 
 export class HttpError extends Error {
   constructor(status, message) { super(message); this.status = status; }
 }
 
-const OFFICE = ['admin', 'office'];
+
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 const DATETIME_RE = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(:\d{2})?$/;
 
@@ -36,6 +37,9 @@ export const addDays = (dateStr, days) => {
 // Extra computed columns for list/get queries.
 const EXTRAS = {
   customers: [
+    `(SELECT COUNT(*) FROM locations l WHERE l.customer_id = t.id AND l.active = 1) AS location_count`,
+    `(SELECT COUNT(*) FROM customers k WHERE k.parent_id = t.id) AS child_count`,
+    `(SELECT created_at FROM customer_stage_log g WHERE g.customer_id = t.id ORDER BY g.id DESC LIMIT 1) AS stage_since`,
     `(SELECT COALESCE(SUM(amount),0) FROM recurring_charges rc WHERE rc.customer_id = t.id AND rc.active = 1) AS mrr`,
     `(SELECT COALESCE(SUM(i.total),0) FROM invoices i WHERE i.customer_id = t.id AND i.status NOT IN ('void','draft'))
       - (SELECT COALESCE(SUM(p.amount),0) FROM payments p JOIN invoices i ON i.id = p.invoice_id
@@ -54,8 +58,11 @@ const EXTRAS = {
     `(SELECT color FROM technicians x WHERE x.id = t.technician_id) AS technician_color`,
     `(SELECT type FROM customers c WHERE c.id = t.customer_id) AS customer_type`,
     `(SELECT phone FROM customers c WHERE c.id = t.customer_id) AS customer_phone`,
-    `(SELECT COALESCE(NULLIF(service_address,''), billing_address) || ', ' || COALESCE(NULLIF(service_city,''), city, '')
-       FROM customers c WHERE c.id = t.customer_id) AS customer_address`,
+    `COALESCE((SELECT l.address || COALESCE(', ' || NULLIF(l.city,''), '') FROM locations l WHERE l.id = t.site_id AND COALESCE(l.address,'') <> ''),
+       (SELECT COALESCE(NULLIF(service_address,''), billing_address) || ', ' || COALESCE(NULLIF(service_city,''), city, '')
+       FROM customers c WHERE c.id = t.customer_id)) AS customer_address`,
+    `(SELECT email FROM customers c WHERE c.id = t.customer_id) AS customer_email`,
+    `(SELECT stage FROM customers c WHERE c.id = t.customer_id) AS customer_stage`,
   ],
   service_call_parts: [
     `CASE WHEN t.location_id = 0 THEN 'Warehouse' ELSE (SELECT unit_name FROM vehicles v WHERE v.id = t.location_id) END AS location_id_label`,
@@ -87,8 +94,9 @@ export function getDef(name) {
 export function canRead(def, user) { return def.read.includes(user.role); }
 export function canWrite(def, user) { return def.write.includes(user.role); }
 function canDelete(name, def, user) {
+  if (def.del) return def.del.includes(user.role);
   if (name === 'service_call_parts') return canWrite(def, user);
-  return OFFICE.includes(user.role) && canWrite(def, user);
+  return ['owner', 'admin', 'accounting'].includes(user.role) && canWrite(def, user);
 }
 
 export function present(name, row) {
@@ -231,6 +239,7 @@ export function create(db, name, body, user) {
   if (!canWrite(def, user)) throw new HttpError(403, 'Not allowed');
   return tx(db, () => {
     const data = cleanInput(def, body, true, user);
+    checkSite(db, data, null);
     HOOKS[name]?.beforeSave?.(db, data, { isCreate: true, existing: null, user, body });
     const keys = Object.keys(data);
     const info = db.prepare(`INSERT INTO "${name}" (${keys.map(k => `"${k}"`).join(',')}) VALUES (${keys.map(() => '?').join(',')})`)
@@ -250,6 +259,7 @@ export function update(db, name, id, body, user) {
     const existing = raw(db, name, id);
     if (!existing) throw new HttpError(404, 'Not found');
     const data = cleanInput(def, body, false, user);
+    checkSite(db, data, existing);
     HOOKS[name]?.beforeSave?.(db, data, { isCreate: false, existing, user, body });
     const keys = Object.keys(data);
     if (keys.length) {
@@ -293,6 +303,65 @@ export function reveal(db, name, id, field, user) {
   if (!row) throw new HttpError(404, 'Not found');
   audit(db, user, 'reveal', name, Number(id), field);
   return { value: decrypt(row[field]) };
+}
+
+// A record's site must be one of its own customer's locations.
+function checkSite(db, data, existing) {
+  if (!('site_id' in data) && !('customer_id' in data)) return;
+  const siteId = 'site_id' in data ? data.site_id : existing?.site_id;
+  const customerId = 'customer_id' in data ? data.customer_id : existing?.customer_id;
+  if (!siteId) return;
+  const loc = db.prepare('SELECT customer_id FROM locations WHERE id = ?').get(siteId);
+  if (!loc) throw new HttpError(400, 'Location not found');
+  if (loc.customer_id !== customerId) {
+    if ('site_id' in data) throw new HttpError(400, "That location belongs to a different customer");
+    data.site_id = null; // customer changed: drop the old customer's site
+  }
+}
+
+// ---------------------------------------------------------------- scheduling conflicts
+const toMinutes = dt => { const d = new Date(dt.length === 16 ? dt + ':00' : dt); return d.getTime() / 60000; };
+const fmtWhen = (start, end) => {
+  const s = new Date(start), e = new Date(end * 60000);
+  const t = d => d.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
+  return `${s.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' })} ${t(s)}–${t(e)}`;
+};
+/** Returns the first job that overlaps this one for the same technician, or null. */
+export function findConflict(db, { id, technician_id, scheduled_start, duration_hours, status }) {
+  if (!technician_id || !scheduled_start || ['cancelled', 'completed'].includes(status)) return null;
+  const start = toMinutes(scheduled_start);
+  const end = start + Math.max(0.25, Number(duration_hours) || 1) * 60;
+  const day = scheduled_start.slice(0, 10);
+  const others = db.prepare(`SELECT sc.id, sc.number, sc.scheduled_start, sc.duration_hours, c.name AS customer, t.name AS tech
+    FROM service_calls sc JOIN customers c ON c.id = sc.customer_id JOIN technicians t ON t.id = sc.technician_id
+    WHERE sc.technician_id = ? AND sc.id <> ? AND sc.status NOT IN ('cancelled', 'completed') AND sc.scheduled_start IS NOT NULL
+      AND substr(sc.scheduled_start, 1, 10) BETWEEN date(?, '-1 day') AND date(?, '+1 day')`).all(technician_id, id ?? 0, day, day);
+  for (const o of others) {
+    const os = toMinutes(o.scheduled_start);
+    const oe = os + Math.max(0.25, Number(o.duration_hours) || 1) * 60;
+    if (start < oe && os < end) return { ...o, when: fmtWhen(o.scheduled_start, oe) };
+  }
+  return null;
+}
+
+// ---------------------------------------------------------------- customer stages
+/**
+ * Move a customer to a pipeline stage and log it. With forwardOnly, a customer is
+ * never moved backwards (e.g. an active customer booking a new install stays active).
+ */
+export function setStage(db, customerId, stage, { forwardOnly = false, user = null, reason = null } = {}) {
+  if (!STAGES.includes(stage)) throw new HttpError(400, 'Unknown stage');
+  const c = db.prepare('SELECT stage, status FROM customers WHERE id = ?').get(customerId);
+  if (!c || c.stage === stage) return false;
+  if (forwardOnly) {
+    const from = STAGES.indexOf(c.stage), to = STAGES.indexOf(stage);
+    if (c.stage === 'active' || (c.stage !== 'lost' && from >= to)) return false;
+  }
+  db.prepare(`UPDATE customers SET stage = ?, status = CASE WHEN ? = 'active' THEN 'active' WHEN ? = 'lost' AND status = 'prospect' THEN 'inactive' ELSE status END,
+    updated_at = datetime('now','localtime') WHERE id = ?`).run(stage, stage, stage, customerId);
+  db.prepare('INSERT INTO customer_stage_log (customer_id, from_stage, to_stage, user_name, reason) VALUES (?,?,?,?,?)')
+    .run(customerId, c.stage, stage, user?.name ?? null, reason);
+  return true;
 }
 
 // ---------------------------------------------------------------- stock
@@ -349,6 +418,31 @@ function applyMaintenanceDefaults(table, data, existing, body) {
 
 // ---------------------------------------------------------------- hooks
 const HOOKS = {
+  technicians: {
+    beforeSave(db, data, { isCreate }) {
+      if (isCreate) data.calendar_token = randomBytes(18).toString('base64url');
+    },
+  },
+  customers: {
+    beforeSave(db, data, { existing }) {
+      if (existing && data.parent_id && data.parent_id === existing.id) throw new HttpError(400, 'An account cannot be its own parent');
+      if (existing && data.parent_id) {
+        // No loops: walk up the parent chain.
+        let p = data.parent_id;
+        for (let i = 0; p && i < 20; i++) {
+          if (p === existing.id) throw new HttpError(400, 'That would make a loop of parent accounts');
+          p = db.prepare('SELECT parent_id FROM customers WHERE id = ?').get(p)?.parent_id;
+        }
+      }
+      if (data.stage === 'active') data.status = 'active';
+    },
+    afterSave(db, row, { existing, user }) {
+      if (!existing || existing.stage !== row.stage) {
+        db.prepare('INSERT INTO customer_stage_log (customer_id, from_stage, to_stage, user_name, reason) VALUES (?,?,?,?,?)')
+          .run(row.id, existing?.stage ?? null, row.stage, user?.name ?? null, existing ? 'changed by hand' : 'created');
+      }
+    },
+  },
   invoices: {
     beforeSave(db, data, { isCreate, existing }) {
       const s = getSettings(db);
@@ -393,7 +487,7 @@ const HOOKS = {
     afterDelete(db, row) { recalcInvoice(db, row.invoice_id); },
   },
   service_calls: {
-    beforeSave(db, data, { isCreate, existing }) {
+    beforeSave(db, data, { isCreate, existing, user, body }) {
       if (isCreate) {
         data.number = nextNumber(db, 'call_next_number');
         if (data.labor_rate == null) {
@@ -402,9 +496,32 @@ const HOOKS = {
         }
       }
       const merged = { ...existing, ...data };
+      // Double-booking check: only when the tech, time, length or status changes.
+      const touched = isCreate || ['technician_id', 'scheduled_start', 'duration_hours', 'status'].some(k => k in data && data[k] !== existing?.[k]);
+      if (touched && !isCreate) data.cal_sequence = (existing.cal_sequence || 0) + 1; // calendar apps need a new revision number
+      if (touched && !body?.allow_conflict) {
+        const clash = findConflict(db, { id: existing?.id, technician_id: merged.technician_id, scheduled_start: merged.scheduled_start, duration_hours: merged.duration_hours, status: merged.status });
+        if (clash) {
+          const canOverride = ['owner', 'admin'].includes(user?.role);
+          const e = new HttpError(409, `Schedule conflict: ${clash.tech} is already booked ${clash.when} for SC-${clash.number} (${clash.customer}).`
+            + (canOverride ? ' Choose another time or technician, or book anyway.' : ' Choose another time or technician.'));
+          e.code = 'conflict';
+          e.canOverride = canOverride;
+          throw e;
+        }
+      }
       if (merged.status === 'new' && merged.technician_id && merged.scheduled_start) data.status = 'scheduled';
       if (data.status === 'completed' && !existing?.completed_at) data.completed_at = nowLocal();
       if (data.status && data.status !== 'completed' && existing?.completed_at) data.completed_at = null;
+    },
+    afterSave(db, row, { existing, user }) {
+      // Keep the customer's pipeline stage in step with the work.
+      if (row.call_type === 'installation') {
+        if (row.status === 'completed' && existing?.status !== 'completed') setStage(db, row.customer_id, 'active', { forwardOnly: true, user, reason: `Installation SC-${row.number} completed` });
+        else if (row.scheduled_start && !['cancelled', 'completed'].includes(row.status)) setStage(db, row.customer_id, 'installation', { forwardOnly: true, user, reason: `Installation SC-${row.number} scheduled` });
+      } else if (row.call_type === 'estimate' && row.scheduled_start && row.status !== 'cancelled') {
+        setStage(db, row.customer_id, 'site survey', { forwardOnly: true, user, reason: `Site survey SC-${row.number} scheduled` });
+      }
     },
   },
   service_call_parts: {

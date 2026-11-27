@@ -268,7 +268,7 @@ export function receive(db, id, user, { record_expense = true, allowDuplicate = 
           date: inv.invoice_date || todayLocal(), category: 'Parts & equipment', vendor: inv.vendor || '',
           description: `${label} (${todo.length} line${todo.length === 1 ? '' : 's'})`, amount, payment_method: 'other',
           notes: `Supplier invoice #${inv.id}`,
-        }, user?.role ? user : { id: null, name: user?.name || 'auto-receive', role: 'admin' });
+        }, user?.role ? user : { id: null, name: user?.name || 'auto-receive', role: 'owner' });
         expenseId = exp.id;
       }
     }

@@ -1,4 +1,4 @@
-import { html, mount, $, $$, fmtTime, todayStr, addDays, openForm, toast, loading } from '../ui.js';
+import { html, mount, $, $$, fmtTime, todayStr, addDays, openForm, toast, loading, saveWithConflictCheck } from '../ui.js';
 import { R } from '../api.js';
 
 const OPEN = 'new,scheduled,in progress,on hold';
@@ -69,7 +69,7 @@ export async function render(view, _, query) {
         const time = c.scheduled_start?.slice(11, 16) || '08:00';
         const techId = cell.dataset.tech ? Number(cell.dataset.tech) : null;
         try {
-          await R.update('service_calls', id, { technician_id: techId, scheduled_start: `${cell.dataset.day}T${time}`, ...(c.status === 'new' && techId ? { status: 'scheduled' } : {}) });
+          await saveWithConflictCheck(d => R.update('service_calls', id, d), { technician_id: techId, scheduled_start: `${cell.dataset.day}T${time}`, ...(c.status === 'new' && techId ? { status: 'scheduled' } : {}) });
           toast(`SC-${c.number} moved`);
           load();
         } catch (err) { toast(err.message, 'error'); }

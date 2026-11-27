@@ -1,6 +1,6 @@
-import { RESOURCES } from '../schema.js';
+import { RESOURCES, STAGES, STAGE_INFO } from '../schema.js';
 import {
-  html, mount, $, $$, money, fmtDate, badge, typeBadge, relDays, dataTable, fieldColumns, openForm, renderValue,
+  html, raw, mount, $, $$, money, fmtDate, badge, typeBadge, stageBadge, relDays, dataTable, fieldColumns, openForm, renderValue,
   loading, toast, secretView, confirmDialog,
 } from '../ui.js';
 import { R, GET, POST } from '../api.js';
@@ -8,21 +8,25 @@ import { can, refresh } from '../app.js';
 import { completeMaintenance, scheduleFromMaintenance, maintenanceTable } from './maintenance.js';
 
 export async function list(view, _, query) {
-  const office = can.office();
-  let filter = { type: query.type || '', status: query.status ?? 'active', q: query.q || '' };
+  const office = can.billing();
+  const editor = can.customers();
+  let filter = { type: query.type || '', status: query.status ?? (query.stage ? '' : 'active'), stage: query.stage || '', q: query.q || '' };
   mount(view, html`
     <div class="page-head"><div><h1>Customers</h1><div class="sub">Residential and commercial accounts</div></div>
-      <div class="actions">${office ? html`<a class="btn" href="/api/export/customers">Export CSV</a><button class="btn primary" data-new>+ New customer</button>` : ''}</div></div>
+      <div class="actions">${editor ? html`<a class="btn" href="/api/export/customers">Export CSV</a><button class="btn primary" data-new>+ New customer</button>` : ''}</div></div>
     <div class="filters">
       <div class="seg" data-type>
         <button data-v="">All</button><button data-v="residential">Residential</button><button data-v="commercial">Commercial</button></div>
       <select data-status aria-label="Status"><option value="">Any status</option><option value="active">Active</option><option value="prospect">Prospects</option><option value="inactive">Inactive</option></select>
+      <select data-stage aria-label="Stage"><option value="">Any stage</option>${STAGES.map(st => html`<option value="${st}">${STAGE_INFO[st].label}</option>`)}</select>
       <input type="search" placeholder="Name, phone, email, address, account #" data-q aria-label="Search customers">
       <span class="muted small" data-count></span>
     </div>
     <div class="card"><div class="card-body flush" data-table></div></div>`);
   const statusSel = $('[data-status]', view);
   statusSel.value = filter.status;
+  $('[data-stage]', view).value = filter.stage;
+  $('[data-stage]', view).addEventListener('change', e => { filter.stage = e.target.value; load(); });
   $('[data-q]', view).value = filter.q;
   const load = async () => {
     $$('[data-type] button', view).forEach(b => b.classList.toggle('on', b.dataset.v === filter.type));
@@ -40,7 +44,7 @@ export async function list(view, _, query) {
           { label: 'Monthly', render: c => c.mrr ? money(c.mrr) : '—', cls: 'num' },
           { label: 'Balance', render: c => c.balance > 0 ? html`<b>${money(c.balance)}</b>` : '—', cls: 'num' },
         ] : []),
-        { label: 'Status', render: c => badge(c.status) },
+        { label: 'Stage', render: c => html`${stageBadge(c.stage)}${c.status !== 'active' ? html` ${badge(c.status)}` : ''}` },
       ],
     }));
   };
@@ -50,7 +54,7 @@ export async function list(view, _, query) {
   $('[data-q]', view).addEventListener('input', e => { clearTimeout(t); t = setTimeout(() => { filter.q = e.target.value; load(); }, 250); });
   $('[data-new]', view)?.addEventListener('click', () => newCustomer());
   await load();
-  if (query.new && office) newCustomer();
+  if (query.new && editor) newCustomer();
 }
 
 function newCustomer() {
@@ -65,13 +69,18 @@ const SYSTEM_TYPES = [
 
 export async function detail(view, [id], query) {
   loading(view);
-  const office = can.office();
+  const office = can.billing();
+  const editor = can.customers();
   const [c, contacts, cams, alarms, fires, exts, calls, maint] = await Promise.all([
     R.get('customers', id), R.list('contacts', { customer_id: id }),
     R.list('camera_systems', { customer_id: id }), R.list('alarm_systems', { customer_id: id }),
     R.list('fire_systems', { customer_id: id }), R.list('extinguishers', { customer_id: id }),
     R.list('service_calls', { customer_id: id }), GET('/api/maintenance', { customer_id: id, days: 60 }),
   ]);
+  const [locs, children, stageLog] = await Promise.all([
+    R.list('locations', { customer_id: id }), R.list('customers', { parent_id: id }), GET(`/api/customers/${id}/stage-log`),
+  ]);
+  const parent = c.parent_id ? await R.get('customers', c.parent_id).catch(() => null) : null;
   const billing = office ? await Promise.all([R.list('recurring_charges', { customer_id: id }), R.list('invoices', { customer_id: id }), R.list('payments', { customer_id: id })]) : null;
   const systems = { camera_systems: cams, alarm_systems: alarms, fire_systems: fires };
   const openCalls = calls.filter(x => !['completed', 'cancelled'].includes(x.status));
@@ -79,6 +88,7 @@ export async function detail(view, [id], query) {
   const tabs = [
     ['overview', 'Overview'],
     ['systems', 'Systems', cams.length + alarms.length + fires.length + exts.length],
+    ['locations', 'Locations', locs.length || null],
     ['calls', 'Service calls', openCalls.length || null],
     ...(office ? [['billing', 'Billing', billing[1].filter(i => i.balance > 0 && i.status !== 'draft').length || null]] : []),
     ['contacts', 'Contacts', contacts.length || null],
@@ -95,9 +105,13 @@ export async function detail(view, [id], query) {
     <div class="crumbs"><a href="#/customers">Customers</a> /</div>
     <div class="page-head"><div>
         <h1>${c.name} ${typeBadge(c.type)} ${c.status !== 'active' ? badge(c.status) : ''}</h1>
+        <div class="row" style="margin-top:8px">${editor ? html`<label class="small muted" for="stageSel">Stage</label>
+          <select id="stageSel" data-stage-sel style="width:auto;min-height:32px;padding:4px 8px">${STAGES.map(st => html`<option value="${st}" ${st === c.stage ? raw('selected') : ''}>${STAGE_INFO[st].label}</option>`)}</select>`
+          : stageBadge(c.stage)}
+          ${parent ? html`<span class="small muted">Part of <a href="#/customers/${parent.id}">${parent.name}</a></span>` : ''}</div>
         <div class="sub">${[c.contact_name, c.phone, c.account_number ? `Acct ${c.account_number}` : ''].filter(Boolean).join(' · ')}</div></div>
       <div class="actions">
-        ${office ? html`<button class="btn" data-edit>Edit</button>` : ''}
+        ${editor ? html`<button class="btn" data-edit>Edit</button>` : ''}
         <button class="btn" data-newcall>+ Service call</button>
         ${office ? html`<button class="btn primary" data-newinv>+ Invoice</button>` : ''}
       </div></div>
@@ -107,6 +121,10 @@ export async function detail(view, [id], query) {
   $$('[data-tab]', view).forEach(b => b.addEventListener('click', () => { location.hash = `#/customers/${id}?tab=${b.dataset.tab}`; }));
   $('[data-edit]', view)?.addEventListener('click', () => openForm('customers', { record: c, onSaved: reload, onDeleted: () => { location.hash = '#/customers'; } }));
   $('[data-newcall]', view).addEventListener('click', () => newCall({}));
+  $('[data-stage-sel]', view)?.addEventListener('change', async e => {
+    try { await R.update('customers', c.id, { stage: e.target.value }); toast(`Moved to ${STAGE_INFO[e.target.value].label}`); reload(); }
+    catch (err) { toast(err.message, 'error'); }
+  });
   $('[data-newinv]', view)?.addEventListener('click', () => openForm('invoices', { defaults: { customer_id: c.id }, hide: ['customer_id'], onSaved: i => { location.hash = `#/invoices/${i.id}`; } }));
   const pane = $('[data-pane]', view);
 
@@ -135,12 +153,40 @@ export async function detail(view, [id], query) {
         <div class="kpi"><div class="label">Systems on file</div><div class="value">${cams.length + alarms.length + fires.length}</div><div class="hint">${exts.length} fire extinguishers</div></div>
       </div>
       <div class="card span2"><div class="card-head"><h2>Upcoming maintenance (60 days)</h2></div><div class="card-body flush" data-maint></div></div>
+      <div class="card"><div class="card-head"><h2>Related accounts</h2>${editor ? html`<button class="btn sm" data-add-child>+ Add business</button>` : ''}</div><div class="card-body">
+        ${parent ? html`<div class="small muted">Parent / owner</div><div style="margin-bottom:10px"><a href="#/customers/${parent.id}">${parent.name}</a> ${typeBadge(parent.type)}</div>` : ''}
+        ${children.length ? html`<div class="small muted">Businesses & properties under this account</div>${children.map(k => html`<div style="padding:4px 0"><a href="#/customers/${k.id}">${k.name}</a> ${typeBadge(k.type)} ${stageBadge(k.stage)}</div>`)}`
+          : !parent ? html`<div class="muted small">None. Use “Add business” for other companies or properties owned by ${c.name}.</div>` : ''}</div></div>
+      <div class="card span2"><div class="card-head"><h2>Stage history</h2></div><div class="card-body flush">${dataTable({
+        rows: stageLog, empty: 'No stage changes yet.',
+        columns: [{ label: 'When', render: g => g.created_at }, { label: 'Stage', render: g => html`${g.from_stage ? html`${stageBadge(g.from_stage)} → ` : ''}${stageBadge(g.to_stage)}` },
+          { label: 'Why', render: g => g.reason || '—' }, { label: 'By', render: g => g.user_name || 'system' }] })}</div></div>
       <div class="card"><div class="card-head"><h2>Open calls</h2></div><div class="card-body flush">${dataTable({
         rows: openCalls, href: x => `#/calls/${x.id}`, empty: 'No open calls.',
         columns: [{ label: 'Call', render: x => html`<b>SC-${x.number}</b> ${x.title}<div class="small muted">${x.scheduled_start ? relDays(x.scheduled_start) : 'not scheduled'}</div>` }, { label: 'Status', render: x => badge(x.status) }],
       })}</div></div>
     </div>`);
     maintenanceTable($('[data-maint]', pane), maint, { showCustomer: false, onChange: reload });
+    $('[data-add-child]', pane)?.addEventListener('click', () => openForm('customers', { title: `New business under ${c.name}`,
+      defaults: { parent_id: c.id, type: 'commercial', phone: c.phone, email: c.email, contact_name: c.contact_name || c.name, stage: c.stage },
+      onSaved: k => { location.hash = `#/customers/${k.id}`; } }));
+  }
+
+  if (tab === 'locations') {
+    mount(pane, html`<div class="card"><div class="card-head"><div><h2>Locations</h2><div class="small muted">Each site can have its own systems, service calls and access details</div></div>
+        ${editor ? html`<button class="btn sm primary" data-addloc>+ Add location</button>` : ''}</div>
+      <div class="card-body flush">${dataTable({
+        rows: locs, empty: 'No extra locations. The customer’s service address is used.',
+        columns: [
+          { label: 'Location', render: l => html`<b>${l.name}</b>${l.active ? '' : html` <span class="badge">inactive</span>`}` },
+          { label: 'Address', render: l => html`${[l.address, l.city, l.state].filter(Boolean).join(', ') || '—'}${l.address ? html` <a class="small" target="_blank" rel="noopener" href="https://www.google.com/maps/search/?api=1&query=${encodeURIComponent([l.address, l.city, l.state, l.zip].filter(Boolean).join(' '))}">Map ↗</a>` : ''}` },
+          { label: 'Site contact', render: l => html`${l.site_contact || '—'}${l.phone ? html`<div class="small"><a href="tel:${l.phone}">${l.phone}</a></div>` : ''}` },
+          { label: 'Gate code', render: l => secretView('locations', l.id, 'gate_code', l.gate_code__set) },
+          { label: 'Systems', render: l => [...cams, ...alarms, ...fires].filter(x => x.site_id === l.id).length + ' systems · ' + exts.filter(x => x.site_id === l.id).length + ' ext.' },
+          ...(editor ? [{ label: '', cls: 'actions-cell', render: l => html`<button class="btn sm ghost" data-editloc="${l.id}">Edit</button>` }] : []),
+        ] })}</div></div>`);
+    $('[data-addloc]', pane)?.addEventListener('click', () => openForm('locations', { defaults: { customer_id: c.id, state: c.state }, hide: ['customer_id'], onSaved: reload }));
+    $$('[data-editloc]', pane).forEach(b => b.addEventListener('click', () => openForm('locations', { record: locs.find(l => l.id === Number(b.dataset.editloc)), hide: ['customer_id'], onSaved: reload, onDeleted: reload })));
   }
 
   if (tab === 'systems') {
@@ -249,10 +295,10 @@ export async function detail(view, [id], query) {
   }
 
   if (tab === 'contacts') {
-    mount(pane, html`<div class="card"><div class="card-head"><h2>Contacts</h2><button class="btn sm" data-addc ${office ? '' : 'disabled'}>+ Add contact</button></div>
+    mount(pane, html`<div class="card"><div class="card-head"><h2>Contacts</h2><button class="btn sm" data-addc ${editor ? '' : 'disabled'}>+ Add contact</button></div>
       <div class="card-body flush">${dataTable({
         rows: contacts, empty: 'No additional contacts.',
-        columns: [...fieldColumns('contacts'), ...(office ? [{ label: '', render: x => html`<button class="btn sm ghost" data-ec="${x.id}">Edit</button>`, cls: 'actions-cell' }] : [])],
+        columns: [...fieldColumns('contacts'), ...(editor ? [{ label: '', render: x => html`<button class="btn sm ghost" data-ec="${x.id}">Edit</button>`, cls: 'actions-cell' }] : [])],
       })}</div></div>`);
     $('[data-addc]', pane).addEventListener('click', () => openForm('contacts', { defaults: { customer_id: c.id }, hide: ['customer_id'], onSaved: reload }));
     $$('[data-ec]', pane).forEach(b => b.addEventListener('click', () => openForm('contacts', { record: contacts.find(x => x.id === Number(b.dataset.ec)), hide: ['customer_id'], onSaved: reload, onDeleted: reload })));
@@ -272,7 +318,7 @@ function systemCard(res, s) {
   const title = s.location || s.system_type || s.brand || def.singular;
   const sys = res === 'camera_systems' ? 'camera' : res === 'alarm_systems' ? 'alarm' : s.system_type === 'sprinkler' ? 'sprinkler' : 'fire alarm';
   return html`<div class="card" style="box-shadow:none"><div class="card-head"><div><h3>${title}</h3>
-      <div class="small muted">${[s.brand || s.panel_brand, s.model || s.panel_model, s.system_type && res === 'fire_systems' ? s.system_type : ''].filter(Boolean).join(' · ')}</div></div>
+      <div class="small muted">${[s.site_id_label ? '📍 ' + s.site_id_label.split(' — ')[0] : '', s.brand || s.panel_brand, s.model || s.panel_model, s.system_type && res === 'fire_systems' ? s.system_type : ''].filter(Boolean).join(' · ')}</div></div>
     <div class="actions"><button class="btn sm ghost" data-svc="${sys}" data-label="${title}">Service</button><button class="btn sm" data-edit-sys="${res}" data-id="${s.id}">Edit</button></div></div>
     <div class="card-body"><dl class="dl small">${shown.filter(f => f.name !== 'location').map(f => html`<dt>${f.label}</dt><dd>${f.type === 'date' && /next/.test(f.name) ? dueCell(s[f.name]) : renderValue(f, s, res)}</dd>`)}</dl>
     ${s.notes ? html`<div class="small" style="margin-top:10px;white-space:pre-wrap">${s.notes}</div>` : ''}</div></div>`;

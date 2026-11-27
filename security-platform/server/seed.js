@@ -10,7 +10,7 @@ if (db.prepare('SELECT COUNT(*) AS n FROM customers').get().n > 0) {
   console.error(`Database ${DB_PATH} already has customers — not seeding.`);
   process.exit(1);
 }
-const sys = { id: null, name: 'seed', role: 'admin' };
+const sys = { id: null, name: 'seed', role: 'owner' };
 const today = todayLocal();
 const day = n => addDays(today, n);
 const monday = (() => { const d = new Date(today + 'T12:00:00Z'); const wd = (d.getUTCDay() + 6) % 7; return addDays(today, -wd); })();
@@ -38,8 +38,10 @@ const v2 = C('vehicles', { unit_name: 'Van 2', year: 2019, make: 'Ram', model: '
 const v3 = C('vehicles', { unit_name: 'Truck 3', year: 2023, make: 'Chevy', model: 'Silverado 2500', plate: 'SEC-103', assigned_technician_id: sam.id, mileage: 15800, next_service_date: day(60), registration_expires: day(300), insurance_expires: day(140) });
 
 const ins = db.prepare("INSERT INTO users(name, email, password_hash, role, technician_id) VALUES (?,?,?,?,?)");
-ins.run('Demo Admin', 'admin@demo.local', hashPassword('demo1234'), 'admin', null);
-ins.run('Office Manager', 'office@demo.local', hashPassword('demo1234'), 'office', null);
+ins.run('Demo Owner', 'owner@demo.local', hashPassword('demo1234'), 'owner', null);
+ins.run('Office Admin', 'admin@demo.local', hashPassword('demo1234'), 'admin', null);
+ins.run('Sam Sales', 'sales@demo.local', hashPassword('demo1234'), 'sales', null);
+ins.run('Ann Accounting', 'accounting@demo.local', hashPassword('demo1234'), 'accounting', null);
 ins.run('Jen Park', 'jen@demo.local', hashPassword('demo1234'), 'technician', jen.id);
 
 // --- inventory
@@ -221,4 +223,4 @@ db.prepare("UPDATE purchase_invoices SET vendor = 'Anixter', invoice_number = '9
 await processInvoice(db, r2);
 
 console.log(`Demo data loaded into ${DB_PATH}`);
-console.log('Sign in with admin@demo.local / demo1234 (also office@demo.local, jen@demo.local)');
+console.log('Sign in with owner@demo.local / demo1234 (also admin@, sales@, accounting@, jen@demo.local)');

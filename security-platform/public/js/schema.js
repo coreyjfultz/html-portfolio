@@ -4,9 +4,41 @@
 // Field types: text, email, tel, textarea, number, money, date, datetime,
 // select, ref, checkbox, secret (encrypted at rest), color, location.
 
-export const ROLES = ['admin', 'office', 'technician'];
-const ALL = ['admin', 'office', 'technician'];
-const OFFICE = ['admin', 'office'];
+// ---------------------------------------------------------------- roles
+export const ROLES = ['owner', 'admin', 'sales', 'accounting', 'technician'];
+export const ROLE_INFO = {
+  owner: { label: 'Owner / Global admin', desc: 'Everything, including managing other admins, backups and integrations' },
+  admin: { label: 'Administrator', desc: 'Runs the business day to day: customers, scheduling, billing, inventory, team (but not owner accounts or backups)' },
+  sales: { label: 'Sales', desc: 'Leads, pipeline, proposals and agreements, site surveys and estimates; no invoices or financial reports' },
+  accounting: { label: 'Accounting', desc: 'Invoices, payments, expenses, receiving, reports and QuickBooks; read-only scheduling' },
+  technician: { label: 'Technician', desc: 'Their jobs, schedule, customer systems & passwords, photos, signatures, truck inventory; no billing' },
+};
+// Permission groups used throughout the server and the screens.
+export const G = {
+  all: ROLES,
+  staff: ['owner', 'admin', 'sales', 'accounting'],
+  owner: ['owner'],
+  manage: ['owner', 'admin'],
+  billing: ['owner', 'admin', 'accounting'],
+  sales: ['owner', 'admin', 'sales'],
+  customers: ['owner', 'admin', 'sales', 'accounting'],
+  salesOrBilling: ['owner', 'admin', 'sales', 'accounting'],
+};
+// Customer lifecycle stages (pipeline), in order.
+export const STAGES = ['lead', 'site survey', 'bid', 'accepted', 'installation', 'active', 'lost'];
+export const STAGE_INFO = {
+  lead: { label: 'Lead', desc: 'New inquiry' },
+  'site survey': { label: 'Site survey', desc: 'Visit scheduled or done' },
+  bid: { label: 'Bid sent', desc: 'Proposal out for signature' },
+  accepted: { label: 'Accepted', desc: 'Signed, ready to schedule' },
+  installation: { label: 'Installation', desc: 'Install scheduled / in progress' },
+  active: { label: 'Active customer', desc: 'Installed, monitored / serviced' },
+  lost: { label: 'Lost', desc: 'Declined or went elsewhere' },
+};
+export const PAYMENT_METHODS = { cash: 'Cash', check: 'Check', card: 'Credit card', ach: 'Bank ACH', other: 'Other' };
+
+const ALL = G.all;
+const OFFICE = G.billing;
 
 const today = () => new Date().toISOString().slice(0, 10);
 
@@ -15,11 +47,13 @@ const customerRef = { name: 'customer_id', label: 'Customer', type: 'ref', ref: 
 export const RESOURCES = {
   customers: {
     label: 'Customers', singular: 'Customer', labelExpr: 'name',
-    read: ALL, write: OFFICE, order: 'name COLLATE NOCASE',
+    read: ALL, write: G.customers, order: 'name COLLATE NOCASE',
     search: ['name', 'contact_name', 'email', 'phone', 'alt_phone', 'billing_address', 'service_address', 'account_number', 'city'],
     fields: [
       { name: 'type', label: 'Type', type: 'select', options: ['residential', 'commercial'], required: true, default: 'residential', list: true },
       { name: 'name', label: 'Name / Business name', type: 'text', required: true, list: true },
+      { name: 'stage', label: 'Stage', type: 'select', options: STAGES, default: 'lead', list: true },
+      { name: 'parent_id', label: 'Parent account / owner', type: 'ref', ref: 'customers', onDelete: 'set null', help: 'Link businesses or properties owned by the same person or company' },
       { name: 'contact_name', label: 'Primary contact', type: 'text', help: 'For commercial accounts' },
       { name: 'email', label: 'Email', type: 'email', list: true },
       { name: 'phone', label: 'Phone', type: 'tel', list: true },
@@ -34,7 +68,10 @@ export const RESOURCES = {
       { name: 'service_city', label: 'Service city', type: 'text' },
       { name: 'service_state', label: 'Service state', type: 'text' },
       { name: 'service_zip', label: 'Service ZIP', type: 'text' },
-      { name: 'preferred_payment', label: 'Preferred payment', type: 'select', options: ['check', 'card', 'ach', 'cash'], default: 'check' },
+      { name: 'preferred_payment', label: 'Preferred payment', type: 'select', options: ['check', 'card', 'ach', 'cash'], optionLabels: PAYMENT_METHODS, default: 'check' },
+      { name: 'notify_email', label: 'Email appointment updates', type: 'checkbox', default: 1 },
+      { name: 'notify_sms', label: 'Text appointment updates', type: 'checkbox', default: 1 },
+      { name: 'lead_source', label: 'Lead source', type: 'select', options: ['referral', 'website', 'google', 'facebook', 'yard sign', 'builder / contractor', 'repeat customer', 'portal sign-up', 'other'] },
       { name: 'tax_exempt', label: 'Tax exempt', type: 'checkbox' },
       { name: 'gate_code', label: 'Gate / door code', type: 'secret' },
       { name: 'access_notes', label: 'Site access notes (keys, pets, hours)', type: 'textarea', full: true },
@@ -42,9 +79,27 @@ export const RESOURCES = {
     ],
   },
 
+  locations: {
+    label: 'Locations', singular: 'Location', labelExpr: "name || CASE WHEN COALESCE(address,'') <> '' THEN ' — ' || address ELSE '' END",
+    read: ALL, write: G.customers, order: 'name COLLATE NOCASE', search: ['name', 'address', 'city', 'site_contact', 'phone'],
+    fields: [
+      { name: 'customer_id', label: 'Customer', type: 'ref', ref: 'customers', required: true, onDelete: 'cascade' },
+      { name: 'name', label: 'Location name', type: 'text', required: true, list: true, help: 'e.g. Main store, Warehouse, Lake house' },
+      { name: 'address', label: 'Address', type: 'text', list: true, full: true },
+      { name: 'city', label: 'City', type: 'text', list: true },
+      { name: 'state', label: 'State', type: 'text' },
+      { name: 'zip', label: 'ZIP', type: 'text' },
+      { name: 'site_contact', label: 'Site contact', type: 'text', list: true },
+      { name: 'phone', label: 'Site phone', type: 'tel', list: true },
+      { name: 'gate_code', label: 'Gate / door code', type: 'secret' },
+      { name: 'access_notes', label: 'Access notes', type: 'textarea', full: true },
+      { name: 'active', label: 'Active', type: 'checkbox', default: 1 },
+    ],
+  },
+
   contacts: {
     label: 'Contacts', singular: 'Contact', labelExpr: 'name',
-    read: ALL, write: OFFICE, order: 'is_primary DESC, name',
+    read: ALL, write: G.customers, order: 'is_primary DESC, name',
     search: ['name', 'email', 'phone'],
     fields: [
       customerRef,
@@ -60,7 +115,7 @@ export const RESOURCES = {
 
   recurring_charges: {
     label: 'Recurring charges', singular: 'Recurring charge', labelExpr: 'description',
-    read: OFFICE, write: OFFICE, order: 'id',
+    read: G.salesOrBilling, write: G.billing, order: 'id',
     fields: [
       customerRef,
       { name: 'description', label: 'Description', type: 'text', required: true, list: true, help: 'e.g. 24/7 alarm monitoring, Cloud video storage' },
@@ -75,7 +130,8 @@ export const RESOURCES = {
     read: ALL, write: ALL, order: 'id',
     fields: [
       customerRef,
-      { name: 'location', label: 'Location / building', type: 'text', list: true },
+      { name: 'site_id', label: 'Site', type: 'ref', ref: 'locations', dependsOn: 'customer_id', onDelete: 'set null', list: true },
+      { name: 'location', label: 'Area / building', type: 'text', list: true },
       { name: 'recorder_type', label: 'Recorder', type: 'select', options: ['NVR', 'DVR', 'Cloud', 'Hybrid'], default: 'NVR', list: true },
       { name: 'brand', label: 'Brand', type: 'text', list: true },
       { name: 'model', label: 'Model', type: 'text' },
@@ -105,7 +161,8 @@ export const RESOURCES = {
     read: ALL, write: ALL, order: 'id',
     fields: [
       customerRef,
-      { name: 'location', label: 'Location / building', type: 'text', list: true },
+      { name: 'site_id', label: 'Site', type: 'ref', ref: 'locations', dependsOn: 'customer_id', onDelete: 'set null', list: true },
+      { name: 'location', label: 'Area / building', type: 'text', list: true },
       { name: 'panel_brand', label: 'Panel brand', type: 'text', list: true },
       { name: 'panel_model', label: 'Panel model', type: 'text' },
       { name: 'monitoring_center', label: 'Monitoring center', type: 'text' },
@@ -128,8 +185,9 @@ export const RESOURCES = {
     read: ALL, write: ALL, order: 'id',
     fields: [
       customerRef,
+      { name: 'site_id', label: 'Site', type: 'ref', ref: 'locations', dependsOn: 'customer_id', onDelete: 'set null', list: true },
       { name: 'system_type', label: 'System type', type: 'select', options: ['fire alarm', 'sprinkler', 'kitchen hood suppression', 'clean agent suppression', 'fire pump', 'emergency lighting', 'other'], default: 'fire alarm', list: true },
-      { name: 'location', label: 'Location / building', type: 'text', list: true },
+      { name: 'location', label: 'Area / building', type: 'text', list: true },
       { name: 'panel_brand', label: 'Panel / equipment brand', type: 'text' },
       { name: 'panel_model', label: 'Model', type: 'text' },
       { name: 'monitoring_account', label: 'Monitoring account #', type: 'text' },
@@ -149,7 +207,8 @@ export const RESOURCES = {
     read: ALL, write: ALL, order: 'location',
     fields: [
       customerRef,
-      { name: 'location', label: 'Location (e.g. Kitchen by exit)', type: 'text', list: true },
+      { name: 'site_id', label: 'Site', type: 'ref', ref: 'locations', dependsOn: 'customer_id', onDelete: 'set null', list: true },
+      { name: 'location', label: 'Spot (e.g. Kitchen by exit)', type: 'text', list: true },
       { name: 'ext_type', label: 'Type', type: 'select', options: ['ABC dry chemical', 'BC dry chemical', 'CO2', 'Class K (wet chemical)', 'Water', 'Clean agent', 'Class D'], default: 'ABC dry chemical', list: true },
       { name: 'size', label: 'Size', type: 'text', list: true, help: 'e.g. 5 lb, 10 lb' },
       { name: 'serial', label: 'Serial #', type: 'text' },
@@ -167,7 +226,7 @@ export const RESOURCES = {
 
   technicians: {
     label: 'Technicians', singular: 'Technician', labelExpr: 'name',
-    read: ALL, write: OFFICE, order: 'active DESC, name',
+    read: ALL, write: G.manage, order: 'active DESC, name',
     search: ['name', 'phone', 'email', 'skills'],
     fields: [
       { name: 'name', label: 'Name', type: 'text', required: true, list: true },
@@ -175,6 +234,7 @@ export const RESOURCES = {
       { name: 'email', label: 'Email', type: 'email', list: true },
       { name: 'skills', label: 'Skills / certifications', type: 'text', list: true, help: 'e.g. NICET II, cameras, access control' },
       { name: 'color', label: 'Calendar color', type: 'color', default: '#2563eb' },
+      { name: 'calendar_token', label: 'Calendar feed key', type: 'text', readonly: true, hidden: true },
       { name: 'hourly_cost', label: 'Hourly cost to company', type: 'money', help: 'Wage + taxes/benefits. Used for profit estimates.' },
       { name: 'bill_rate', label: 'Default billing rate / hr', type: 'money' },
       { name: 'active', label: 'Active', type: 'checkbox', default: 1, list: true },
@@ -184,7 +244,7 @@ export const RESOURCES = {
 
   vehicles: {
     label: 'Vehicles', singular: 'Vehicle', labelExpr: 'unit_name',
-    read: ALL, write: OFFICE, order: 'unit_name',
+    read: ALL, write: G.manage, order: 'unit_name',
     search: ['unit_name', 'make', 'model', 'vin', 'plate'],
     fields: [
       { name: 'unit_name', label: 'Unit # / name', type: 'text', required: true, list: true },
@@ -206,7 +266,7 @@ export const RESOURCES = {
 
   inventory_items: {
     label: 'Inventory items', singular: 'Inventory item', labelExpr: "name || CASE WHEN COALESCE(sku,'') <> '' THEN ' (' || sku || ')' ELSE '' END",
-    read: ALL, write: OFFICE, order: 'category, name',
+    read: ALL, write: G.billing, order: 'category, name',
     search: ['sku', 'name', 'manufacturer', 'category'],
     fields: [
       { name: 'sku', label: 'SKU / part #', type: 'text', list: true },
@@ -225,7 +285,7 @@ export const RESOURCES = {
   // Supplier invoices / packing slips that arrive by email or are scanned in.
   purchase_invoices: {
     label: 'Supplier invoices', singular: 'Supplier invoice', labelExpr: "COALESCE(NULLIF(vendor,''), 'Supplier') || ' #' || COALESCE(invoice_number, id)",
-    read: ['admin', 'office'], write: ['admin', 'office'], order: 'id DESC', dateField: 'invoice_date',
+    read: G.billing, write: G.billing, order: 'id DESC', dateField: 'invoice_date',
     search: ['vendor', 'invoice_number', 'from_email', 'subject', 'file_name'],
     fields: [
       { name: 'vendor', label: 'Vendor / distributor', type: 'text', list: true },
@@ -252,7 +312,7 @@ export const RESOURCES = {
 
   purchase_invoice_lines: {
     label: 'Invoice lines', singular: 'Invoice line', labelExpr: 'description',
-    read: ['admin', 'office'], write: ['admin', 'office'], order: 'id',
+    read: G.billing, write: G.billing, order: 'id',
     fields: [
       { name: 'purchase_invoice_id', label: 'Supplier invoice', type: 'ref', ref: 'purchase_invoices', required: true, onDelete: 'cascade' },
       { name: 'line_sku', label: 'Part #', type: 'text', list: true },
@@ -271,11 +331,12 @@ export const RESOURCES = {
     fields: [
       { name: 'number', label: 'Call #', type: 'text', readonly: true, list: true },
       customerRef,
+      { name: 'site_id', label: 'Site', type: 'ref', ref: 'locations', dependsOn: 'customer_id', onDelete: 'set null', list: true },
       { name: 'title', label: 'Summary', type: 'text', required: true, list: true, full: true },
       { name: 'call_type', label: 'Call type', type: 'select', options: ['service', 'installation', 'maintenance', 'inspection', 'estimate', 'warranty'], default: 'service', list: true },
       { name: 'system_type', label: 'System', type: 'select', options: ['camera', 'alarm', 'fire alarm', 'sprinkler', 'extinguisher', 'access control', 'other'], default: 'alarm' },
       { name: 'priority', label: 'Priority', type: 'select', options: ['low', 'normal', 'high', 'emergency'], default: 'normal', list: true },
-      { name: 'status', label: 'Status', type: 'select', options: ['new', 'scheduled', 'in progress', 'on hold', 'completed', 'cancelled'], default: 'new', list: true },
+      { name: 'status', label: 'Status', type: 'select', options: ['new', 'scheduled', 'en route', 'in progress', 'on hold', 'completed', 'cancelled'], default: 'new', list: true },
       { name: 'technician_id', label: 'Technician', type: 'ref', ref: 'technicians', list: true, onDelete: 'set null' },
       { name: 'scheduled_start', label: 'Scheduled for', type: 'datetime', list: true },
       { name: 'duration_hours', label: 'Est. duration (hours)', type: 'number', default: 1 },
@@ -286,6 +347,7 @@ export const RESOURCES = {
       { name: 'resolution', label: 'Work performed / resolution', type: 'textarea', full: true },
       { name: 'completed_at', label: 'Completed', type: 'datetime', readonly: true },
       { name: 'invoice_id', label: 'Invoice', type: 'ref', ref: 'invoices', readonly: true, onDelete: 'set null' },
+      { name: 'cal_sequence', label: 'Calendar revision', type: 'number', readonly: true, hidden: true },
     ],
   },
 
@@ -344,7 +406,7 @@ export const RESOURCES = {
       { name: 'customer_id', label: 'Customer', type: 'ref', ref: 'customers', readonly: true, list: true, onDelete: 'restrict' },
       { name: 'date', label: 'Date', type: 'date', default: today, required: true, list: true },
       { name: 'amount', label: 'Amount', type: 'money', required: true, list: true },
-      { name: 'method', label: 'Method', type: 'select', options: ['check', 'card', 'ach', 'cash', 'other'], default: 'check', list: true },
+      { name: 'method', label: 'Method', type: 'select', options: ['cash', 'check', 'card', 'ach', 'other'], optionLabels: PAYMENT_METHODS, default: 'check', list: true },
       { name: 'reference', label: 'Check # / reference', type: 'text', list: true },
       { name: 'notes', label: 'Notes', type: 'textarea', full: true },
     ],

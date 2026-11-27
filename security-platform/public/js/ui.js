@@ -1,4 +1,4 @@
-import { RESOURCES, fieldDefault } from './schema.js';
+import { RESOURCES, fieldDefault, STAGE_INFO } from './schema.js';
 import { R, api } from './api.js';
 
 // ---------------------------------------------------------------- safe HTML
@@ -50,7 +50,11 @@ const BADGE = {
   sent: 'info', scheduled: 'info', 'in progress': 'primary', partial: 'warn',
   new: 'primary', 'on hold': 'warn', prospect: 'warn', 'needs service': 'warn', draft: '', high: 'warn',
   overdue: 'bad', emergency: 'bad', void: 'bad', cancelled: '', inactive: '', 'out of service': 'bad', removed: '', low: '', normal: '',
+  'en route': 'primary', signed: 'good', accepted: 'good', declined: 'bad', expired: '', viewed: 'info',
 };
+const STAGE_CLS = { lead: 'stage-lead', 'site survey': 'stage-survey', bid: 'stage-bid', accepted: 'stage-accepted', installation: 'stage-install', active: 'good', lost: '' };
+export const stageBadge = s => s ? html`<span class="badge ${STAGE_CLS[s] || ''}">${STAGE_INFO[s]?.label || s}</span>` : '';
+const optLabel = (f, o) => f.optionLabels?.[o] || (o ? o[0].toUpperCase() + o.slice(1) : o);
 export const badge = (v, cls) => v ? html`<span class="badge ${cls ?? BADGE[v] ?? ''}">${v}</span>` : '';
 export const typeBadge = t => t ? html`<span class="badge ${t === 'commercial' ? 'type-com' : 'type-res'}">${t === 'commercial' ? 'Commercial' : 'Residential'}</span>` : '';
 
@@ -67,8 +71,9 @@ export function renderValue(f, row, resource) {
     case 'secret': return resource ? secretView(resource, row.id, f.name, row[`${f.name}__set`]) : (row[`${f.name}__set`] ? '••••••' : '—');
     case 'select':
       if (f.name === 'type' && (v === 'commercial' || v === 'residential')) return typeBadge(v);
+      if (f.name === 'stage') return stageBadge(v);
       if (['status', 'priority'].includes(f.name)) return badge(v);
-      return v ?? '—';
+      return v ? optLabel(f, v) : '—';
     case 'email': return v ? html`<a href="mailto:${v}">${v}</a>` : '—';
     case 'tel': return v ? html`<a href="tel:${v}">${v}</a>` : '—';
     default: return v || '—';
@@ -146,7 +151,7 @@ const optionCache = new Map();
 export function invalidateOptions(resource) { optionCache.delete(resource); }
 async function refOptions(ref) {
   if (!optionCache.has(ref)) {
-    const q = ref === 'technicians' ? { active: 1 } : ref === 'customers' ? { status__not: 'inactive' } : ref === 'inventory_items' ? { active: 1 } : {};
+    const q = ['technicians', 'inventory_items', 'locations'].includes(ref) ? { active: 1 } : ref === 'customers' ? { status__not: 'inactive' } : {};
     optionCache.set(ref, R.list(ref, q).catch(e => { optionCache.delete(ref); throw e; }));
   }
   return optionCache.get(ref);
@@ -172,17 +177,17 @@ async function fieldHtml(f, value, record) {
     case 'select':
       input = html`<select id="${id}" name="${f.name}" ${f.required ? raw('required') : ''}>
         ${f.required ? '' : html`<option value="">—</option>`}
-        ${f.options.map(o => html`<option value="${o}" ${o === value ? raw('selected') : ''}>${o[0].toUpperCase() + o.slice(1)}</option>`)}</select>`;
+        ${f.options.map(o => html`<option value="${o}" ${o === value ? raw('selected') : ''}>${f.name === 'stage' ? STAGE_INFO[o]?.label : optLabel(f, o)}</option>`)}</select>`;
       break;
     case 'ref': {
       const opts = await refOptions(f.ref);
-      const labelKey = { customers: 'name', technicians: 'name', vehicles: 'unit_name', inventory_items: 'name', invoices: 'number', service_calls: 'title' }[f.ref];
+      const labelKey = { customers: 'name', technicians: 'name', vehicles: 'unit_name', inventory_items: 'name', invoices: 'number', service_calls: 'title', locations: 'name', expenses: 'description' }[f.ref];
       const fmt = o => f.ref === 'invoices' ? `#${o.number} — ${o.customer_id_label} (${money(o.total)})` : f.ref === 'service_calls' ? `SC-${o.number} ${o.title}` : f.ref === 'inventory_items' ? `${o.name}${o.sku ? ` (${o.sku})` : ''}` : o[labelKey];
       const has = opts.some(o => o.id === value);
       input = html`<select id="${id}" name="${f.name}" ${f.required ? raw('required') : ''}>
         <option value="">${f.required ? 'Select…' : '— none —'}</option>
         ${!has && value != null ? html`<option value="${value}" selected>${record?.[`${f.name}_label`] ?? `#${value}`}</option>` : ''}
-        ${opts.map(o => html`<option value="${o.id}" ${o.id === value ? raw('selected') : ''}>${fmt(o)}</option>`)}</select>`;
+        ${opts.map(o => html`<option value="${o.id}" ${o.id === value ? raw('selected') : ''} ${f.dependsOn ? raw(`data-parent="${o[f.dependsOn]}"`) : ''}>${fmt(o)}</option>`)}</select>`;
       break;
     }
     case 'location': {
@@ -255,6 +260,21 @@ export async function openForm(resource, opts = {}) {
   el.querySelectorAll('[data-toggle-pw]').forEach(b => b.addEventListener('click', () => {
     const i = el.querySelector('#' + b.dataset.togglePw); i.type = i.type === 'password' ? 'text' : 'password';
   }));
+  // Dependent dropdowns (e.g. Site only lists the chosen customer's locations).
+  for (const f of fields.filter(x => x.dependsOn && form.elements[x.name])) {
+    const sel = form.elements[f.name];
+    const parentEl = form.elements[f.dependsOn];
+    const parentVal = () => String(parentEl ? parentEl.value : values[f.dependsOn] ?? '');
+    const sync = () => {
+      const pv = parentVal();
+      let visible = 0;
+      [...sel.options].forEach(o => { if (!o.value) return; const show = o.dataset.parent === pv; o.hidden = !show; o.disabled = !show; if (show) visible++; });
+      if (sel.selectedOptions[0]?.disabled) sel.value = '';
+      sel.closest('.field').classList.toggle('hidden', !visible);
+    };
+    parentEl?.addEventListener('change', sync);
+    sync();
+  }
   opts.onMount?.(el, form);
   return new Promise(resolve => {
     const save = async () => {
@@ -266,7 +286,12 @@ export async function openForm(resource, opts = {}) {
       const btn = el.querySelector('[data-save]');
       btn.disabled = true;
       try {
-        const row = isEdit ? await R.update(resource, record.id, data) : await R.create(resource, data);
+        const send = d => isEdit ? R.update(resource, record.id, d) : R.create(resource, d);
+        const row = await send(data).catch(async e => {
+          if (e.code !== 'conflict' || !e.canOverride) throw e;
+          if (!(await confirmDialog(e.message, { okLabel: 'Book anyway', danger: true }))) throw e;
+          return send({ ...data, allow_conflict: true });
+        });
         invalidateOptions(resource);
         close();
         toast(`${def.singular} ${isEdit ? 'saved' : 'created'}`);
@@ -316,6 +341,16 @@ export function promptForm({ title, fields, submitLabel = 'Save', onSubmit, intr
   form.addEventListener('submit', e => { e.preventDefault(); go(); });
   form.addEventListener('keydown', e => { if (e.key === 'Enter' && e.target.tagName === 'INPUT') { e.preventDefault(); go(); } });
   return { el, close };
+}
+
+/** Save a service-call change; on a double-booking, let managers choose to book anyway. */
+export async function saveWithConflictCheck(fn, data) {
+  try { return await fn(data); }
+  catch (e) {
+    if (e.code !== 'conflict') throw e;
+    if (!e.canOverride || !(await confirmDialog(e.message, { okLabel: 'Book anyway', danger: true }))) throw e;
+    return fn({ ...data, allow_conflict: true });
+  }
 }
 
 export function loading(view) { mount(view, html`<div class="empty">Loading…</div>`); }

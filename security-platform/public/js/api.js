@@ -9,7 +9,7 @@ export async function api(method, url, body) {
   }
   const data = await res.json().catch(() => ({}));
   if (res.status === 401 && !url.startsWith('/api/auth/')) window.dispatchEvent(new Event('auth-lost'));
-  if (!res.ok) throw new Error(data.error || `Request failed (${res.status})`);
+  if (!res.ok) throw Object.assign(new Error(data.error || `Request failed (${res.status})`), { status: res.status, code: data.code, canOverride: data.canOverride });
   return data;
 }
 

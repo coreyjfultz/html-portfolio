@@ -127,7 +127,7 @@ export function createServer(db) {
     } catch (e) {
       const status = e.status || 500;
       if (status === 500) console.error(e);
-      if (!res.headersSent) sendJson(res, status, { error: status === 500 ? 'Something went wrong on the server' : e.message });
+      if (!res.headersSent) sendJson(res, status, { error: status === 500 ? 'Something went wrong on the server' : e.message, ...(e.code ? { code: e.code, canOverride: !!e.canOverride } : {}) });
     }
   });
 }

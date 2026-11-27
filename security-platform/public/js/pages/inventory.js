@@ -6,7 +6,7 @@ import { RESOURCES } from '../schema.js';
 const CATS = RESOURCES.inventory_items.fields.find(f => f.name === 'category').options;
 
 export async function list(view, _, query) {
-  const office = can.office();
+  const office = can.billing();
   const [items, stock, vehicles] = await Promise.all([R.list('inventory_items', { active: 1 }), GET('/api/stock'), R.list('vehicles', { status__not: 'sold' })]);
   const f = { cat: query.cat || '', q: '', low: false };
   const qty = new Map(stock.map(s => [`${s.item_id}|${s.location_id}`, s.qty]));
@@ -112,7 +112,7 @@ export async function countStock(item, onDone, locationId = 0) {
 
 export async function detail(view, [id]) {
   loading(view);
-  const office = can.office();
+  const office = can.billing();
   const [item, stock, moves, items] = await Promise.all([R.get('inventory_items', id), GET('/api/stock'), GET('/api/stock/movements', { item_id: id }), R.list('inventory_items', { active: 1 })]);
   const here = stock.filter(s => s.item_id === Number(id));
   mount(view, html`

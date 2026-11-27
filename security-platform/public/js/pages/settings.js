@@ -1,5 +1,6 @@
 import { html, raw, mount, $, $$, dataTable, promptForm, toast, badge, loading, confirmDialog } from '../ui.js';
 import { GET, PUT, POST, R } from '../api.js';
+import { ROLES, ROLE_INFO } from '../schema.js';
 import { state, refresh } from '../app.js';
 
 const SETTINGS = [
@@ -13,7 +14,7 @@ const SETTINGS = [
 export async function render(view, _, query) {
   const tab = query.tab || 'company';
   mount(view, html`<div class="page-head"><div><h1>Settings</h1><div class="sub">Company, users and data</div></div></div>
-    <div class="tabs">${[['company', 'Company & billing'], ['receiving', 'Receiving'], ['users', 'Users & logins'], ['audit', 'Activity log'], ['data', 'Backup & data']].map(([k, l]) => html`<button class="${k === tab ? 'on' : ''}" data-tab="${k}">${l}</button>`)}</div>
+    <div class="tabs">${[['company', 'Company & billing'], ['calendars', 'Calendars'], ['receiving', 'Receiving'], ['users', 'Users & logins'], ['audit', 'Activity log'], ['data', 'Backup & data']].map(([k, l]) => html`<button class="${k === tab ? 'on' : ''}" data-tab="${k}">${l}</button>`)}</div>
     <div data-pane></div>`);
   $$('[data-tab]', view).forEach(b => b.addEventListener('click', () => { location.hash = `#/settings?tab=${b.dataset.tab}`; }));
   const pane = $('[data-pane]', view);
@@ -31,6 +32,33 @@ export async function render(view, _, query) {
       toast('Settings saved');
       $('.sidebar .brand span').textContent = state.settings.company_name;
     });
+  }
+
+  if (tab === 'calendars') {
+    const [f, s2] = await Promise.all([GET('/api/calendar/feeds'), GET('/api/settings')]);
+    mount(pane, html`<div class="grid g2">
+      <div class="card"><div class="card-head"><h2>Time zone</h2></div><div class="card-body"><form class="stack" data-tz style="gap:12px">
+        <div class="field"><label for="tz">Company time zone (used for Outlook/Google calendars)</label>
+          <select id="tz" name="timezone">${['America/New_York', 'America/Chicago', 'America/Denver', 'America/Phoenix', 'America/Los_Angeles', 'America/Anchorage', 'Pacific/Honolulu'].map(z => html`<option ${z === s2.timezone ? raw('selected') : ''}>${z}</option>`)}</select></div>
+        <div class="field"><label for="pu">Public web address (optional)</label><input id="pu" type="text" name="public_url" placeholder="https://app.yourcompany.com" value="${s2.public_url}">
+          <span class="help">Used in calendar links, texts and emails. Leave blank to use the address you're on now.</span></div>
+        <div><button class="btn primary">Save</button></div></form></div></div>
+      <div class="card"><div class="card-head"><h2>How it works</h2></div><div class="card-body small">
+        <p>• Every technician gets an <b>email invite</b> when a job is booked, moved or cancelled, so it lands in their Outlook or Gmail calendar right away.</p>
+        <p>• Anyone can also <b>subscribe</b> to a live calendar feed (below, or the “Sync to Outlook / Google” button on the Calendar page).</p>
+        <p class="muted">Feeds are read-only: make changes in SecureOps and they flow out to the calendars.</p></div></div>
+      <div class="card" style="grid-column:1/-1"><div class="card-head"><h2>Calendar feeds</h2></div><div class="card-body flush">${dataTable({
+        rows: [...(f.central ? [{ id: 'central', name: 'Central — all technicians', url: f.central }] : []), ...f.technicians],
+        columns: [{ label: 'Calendar', render: r => html`${r.color ? html`<span class="dot" style="background:${r.color}"></span> ` : ''}<b>${r.name}</b>` },
+          { label: 'Link', render: r => html`<span class="mono small" style="word-break:break-all">${r.url}</span>` },
+          { label: '', cls: 'actions-cell', render: r => html`<button class="btn sm" data-copy="${r.url}">Copy</button> <button class="btn sm ghost danger" data-reset="${r.id}">Reset link</button>` }],
+      })}</div></div></div>`);
+    $('[data-tz]', pane).addEventListener('submit', async e => { e.preventDefault(); await PUT('/api/settings', { timezone: e.target.timezone.value, public_url: e.target.public_url.value.trim() }); toast('Saved'); });
+    $$('[data-copy]', pane).forEach(b => b.addEventListener('click', () => navigator.clipboard?.writeText(b.dataset.copy).then(() => toast('Copied'))));
+    $$('[data-reset]', pane).forEach(b => b.addEventListener('click', async () => {
+      if (!(await confirmDialog('Make a new link? The old link stops working, so anyone subscribed must subscribe again.', { okLabel: 'Reset link', danger: true }))) return;
+      await POST(`/api/calendar/reset/${b.dataset.reset}`); toast('New link created'); refresh();
+    }));
   }
 
   if (tab === 'receiving') {
@@ -69,14 +97,14 @@ export async function render(view, _, query) {
   if (tab === 'users') {
     const [users, techs] = await Promise.all([GET('/api/users'), R.list('technicians')]);
     const techOpts = [{ value: '', label: '— not a technician —' }, ...techs.map(t => ({ value: t.id, label: t.name }))];
-    const roleOpts = [{ value: 'technician', label: 'Technician — field work, schedule, systems, inventory (no billing)' }, { value: 'office', label: 'Office — everything except users/settings' }, { value: 'admin', label: 'Admin — full access' }];
+    const roleOpts = ROLES.filter(r => r !== 'owner' || state.user.role === 'owner').map(r => ({ value: r, label: `${ROLE_INFO[r].label} — ${ROLE_INFO[r].desc}` }));
     mount(pane, html`<div class="card"><div class="card-head"><div><h2>Users</h2><div class="small muted">Everyone who can sign in. Link technicians to their technician profile so "My Day" shows their jobs.</div></div>
         <button class="btn primary sm" data-new>+ Add user</button></div>
       <div class="card-body flush">${dataTable({
         rows: users,
         columns: [
           { label: 'Name', render: u => html`<b>${u.name}</b><div class="small muted">${u.email}</div>` },
-          { label: 'Role', render: u => badge(u.role, u.role === 'admin' ? 'primary' : '') },
+          { label: 'Role', render: u => badge(ROLE_INFO[u.role]?.label || u.role, u.role === 'owner' ? 'primary' : u.role === 'admin' ? 'info' : '') },
           { label: 'Technician profile', render: u => u.technician_name || '—' },
           { label: 'Last sign-in', render: u => u.last_login || 'never' },
           { label: 'Status', render: u => u.active ? badge('active') : badge('inactive') },
@@ -126,7 +154,7 @@ export async function render(view, _, query) {
         <p>Download a complete copy of the database. Do this regularly (weekly at least) and keep copies off-site.</p>
         <p class="note small">Stored camera passwords and alarm codes are encrypted with the server's secret key (<span class="mono">data/secret.key</span> or the <span class="mono">APP_SECRET</span> setting).
           Back that key up separately and keep it safe — a backup can't decrypt those passwords without it.</p>
-        <a class="btn primary" href="/api/admin/backup">Download backup</a></div></div>
+        ${state.user.role === 'owner' ? html`<a class="btn primary" href="/api/admin/backup">Download backup</a>` : html`<p class="muted">Only an owner can download backups.</p>`}</div></div>
       <div class="card"><div class="card-head"><h2>Export to spreadsheet</h2></div><div class="card-body">
         <p>CSV files open in Excel or Google Sheets. Passwords are never exported.</p>
         <div class="row">${['customers', 'contacts', 'invoices', 'payments', 'expenses', 'service_calls', 'inventory_items', 'camera_systems', 'fire_systems', 'extinguishers', 'vehicles'].map(r =>

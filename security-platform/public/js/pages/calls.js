@@ -14,7 +14,7 @@ export async function list(view, _, query) {
   };
   mount(view, html`
     <div class="page-head"><div><h1>Service calls</h1><div class="sub">Work orders, installs, inspections and repairs</div></div>
-      <div class="actions">${can.office() ? html`<a class="btn" href="/api/export/service_calls">Export CSV</a>` : ''}<button class="btn primary" data-new>+ New service call</button></div></div>
+      <div class="actions">${can.staff() ? html`<a class="btn" href="/api/export/service_calls">Export CSV</a>` : ''}<button class="btn primary" data-new>+ New service call</button></div></div>
     <div class="filters">
       <div class="seg" data-group>
         ${state.user.technician_id ? html`<button data-v="mine">My calls</button>` : ''}
@@ -22,7 +22,7 @@ export async function list(view, _, query) {
       <select data-priority aria-label="Priority"><option value="">Any priority</option>${['emergency', 'high', 'normal', 'low'].map(p => html`<option value="${p}">${p}</option>`)}</select>
       <select data-tech aria-label="Technician"><option value="">All technicians</option>${techs.map(t => html`<option value="${t.id}">${t.name}</option>`)}</select>
       <input type="search" placeholder="Call #, summary…" data-q aria-label="Search calls">
-      <label class="row small ${can.office() ? '' : 'hidden'}"><input type="checkbox" data-uninv> Not invoiced</label>
+      <label class="row small ${can.billing() ? '' : 'hidden'}"><input type="checkbox" data-uninv> Not invoiced</label>
     </div>
     <div class="card"><div class="card-body flush" data-table></div></div>`);
   $('[data-priority]', view).value = f.priority;
@@ -75,7 +75,7 @@ export function callsTable(rows, empty = 'No service calls match.') {
 
 export async function detail(view, [id]) {
   loading(view);
-  const office = can.office();
+  const office = can.billing();
   const c = await R.get('service_calls', id);
   const [cust, parts] = await Promise.all([R.get('customers', c.customer_id), R.list('service_call_parts', { service_call_id: id })]);
   const reload = () => refresh();

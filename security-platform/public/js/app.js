@@ -1,10 +1,17 @@
 import { html, mount, $, $$, toast, initials, esc, installGlobalHandlers } from './ui.js';
 import { api, GET, POST } from './api.js';
+import { G, ROLE_INFO } from './schema.js';
 
 export const state = { user: null, settings: {}, company: '' };
 export const can = {
-  office: () => ['admin', 'office'].includes(state.user?.role),
-  admin: () => state.user?.role === 'admin',
+  // Permission groups (same as the server's, from schema.js).
+  manage: () => G.manage.includes(state.user?.role),
+  billing: () => G.billing.includes(state.user?.role),
+  sales: () => G.sales.includes(state.user?.role),
+  customers: () => G.customers.includes(state.user?.role),
+  staff: () => G.staff.includes(state.user?.role),
+  owner: () => state.user?.role === 'owner',
+  tech: () => state.user?.role === 'technician',
 };
 
 const NAV = [
@@ -13,22 +20,24 @@ const NAV = [
   { href: '#/myday', label: 'My Day', ico: '☀', roles: ['technician'] },
   { section: 'Customers' },
   { href: '#/customers', label: 'Customers', ico: '👥' },
+  { href: '#/pipeline', label: 'Pipeline', ico: '📊', roles: G.staff },
   { href: '#/maintenance', label: 'Maintenance Due', ico: '⏰' },
   { section: 'Field work' },
   { href: '#/calls', label: 'Service Calls', ico: '🔧' },
-  { href: '#/schedule', label: 'Schedule', ico: '📅' },
+  { href: '#/calendar', label: 'Calendar', ico: '🗓' },
+  { href: '#/schedule', label: 'Dispatch board', ico: '📅' },
   { href: '#/technicians', label: 'Technicians', ico: '👷' },
-  { section: 'Billing', roles: ['admin', 'office'] },
-  { href: '#/invoices', label: 'Invoices', ico: '🧾', roles: ['admin', 'office'] },
-  { href: '#/payments', label: 'Payments', ico: '💵', roles: ['admin', 'office'] },
-  { href: '#/expenses', label: 'Expenses', ico: '💳', roles: ['admin', 'office'] },
+  { section: 'Billing', roles: G.billing },
+  { href: '#/invoices', label: 'Invoices', ico: '🧾', roles: G.billing },
+  { href: '#/payments', label: 'Payments', ico: '💵', roles: G.billing },
+  { href: '#/expenses', label: 'Expenses', ico: '💳', roles: G.billing },
   { section: 'Operations' },
   { href: '#/inventory', label: 'Inventory', ico: '📦' },
-  { href: '#/receiving', label: 'Receiving', ico: '📥', roles: ['admin', 'office'] },
+  { href: '#/receiving', label: 'Receiving', ico: '📥', roles: G.billing },
   { href: '#/vehicles', label: 'Vehicles', ico: '🚚' },
-  { section: 'Insights', roles: ['admin', 'office'] },
-  { href: '#/reports', label: 'Reports', ico: '📈', roles: ['admin', 'office'] },
-  { href: '#/settings', label: 'Settings', ico: '⚙', roles: ['admin'] },
+  { section: 'Insights', roles: G.billing },
+  { href: '#/reports', label: 'Reports', ico: '📈', roles: G.billing },
+  { href: '#/settings', label: 'Settings', ico: '⚙', roles: G.manage },
 ];
 
 // path pattern -> [module, export]
@@ -36,10 +45,12 @@ const ROUTES = [
   [/^$/, 'dashboard'],
   [/^myday$/, 'myday'],
   [/^customers$/, 'customers', 'list'],
+  [/^pipeline$/, 'pipeline'],
   [/^customers\/(\d+)$/, 'customers', 'detail'],
   [/^calls$/, 'calls', 'list'],
   [/^calls\/(\d+)$/, 'calls', 'detail'],
   [/^schedule$/, 'schedule'],
+  [/^calendar$/, 'calendar'],
   [/^maintenance$/, 'maintenance'],
   [/^invoices$/, 'invoices', 'list'],
   [/^invoices\/(\d+)$/, 'invoices', 'detail'],
@@ -139,7 +150,7 @@ function renderShell() {
           <div class="search-results hidden" data-results></div></div>
         <div class="user-menu">
           <a href="#/account" class="row" style="color:inherit" title="My account">
-            <span class="uname small">${state.user.name}<br><span class="muted">${role}</span></span><span class="avatar">${initials(state.user.name)}</span></a>
+            <span class="uname small">${state.user.name}<br><span class="muted">${ROLE_INFO[role]?.label || role}</span></span><span class="avatar">${initials(state.user.name)}</span></a>
           <button class="btn ghost sm" data-logout title="Sign out">Sign out</button>
         </div>
       </header>

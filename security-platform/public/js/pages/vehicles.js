@@ -6,7 +6,7 @@ import { transferStock, countStock, movesTable } from './inventory.js';
 const due = d => d ? html`<span style="${d < new Date().toISOString().slice(0, 10) ? 'color:var(--bad);font-weight:600' : ''}">${fmtDate(d)}</span><div class="small muted">${relDays(d)}</div>` : '—';
 
 export async function list(view) {
-  const office = can.office();
+  const office = can.manage();
   const rows = await R.list('vehicles');
   mount(view, html`
     <div class="page-head"><div><h1>Vehicles</h1><div class="sub">Fleet, assignments, renewals and on-board inventory</div></div>
@@ -28,7 +28,7 @@ export async function list(view) {
 
 export async function detail(view, [id]) {
   loading(view);
-  const office = can.office();
+  const office = can.manage();
   const [v, stock, moves, items, expenses] = await Promise.all([
     R.get('vehicles', id), GET('/api/stock', { location_id: id }), GET('/api/stock/movements', { location_id: id }),
     R.list('inventory_items', { active: 1 }), office ? R.list('expenses', { vehicle_id: id }) : Promise.resolve([]),

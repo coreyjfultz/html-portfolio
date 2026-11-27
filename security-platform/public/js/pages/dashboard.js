@@ -8,7 +8,7 @@ export async function render(view) {
   const res = d.customers.find(c => c.type === 'residential')?.n || 0;
   const com = d.customers.find(c => c.type === 'commercial')?.n || 0;
   const overdueMaint = d.maintenance.filter(m => m.overdue);
-  const office = can.office();
+  const office = can.billing();
   const hour = new Date().getHours();
 
   mount(view, html`
@@ -17,7 +17,7 @@ export async function render(view) {
       <div class="sub">${new Date().toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' })}</div></div>
       <div class="actions">
         <a class="btn" href="#/calls?new=1">+ Service call</a>
-        ${office ? html`<a class="btn" href="#/customers?new=1">+ Customer</a>` : ''}
+        ${can.customers() ? html`<a class="btn" href="#/customers?new=1">+ Customer</a>` : ''}
         ${office && !d.monthlyBilled ? html`<a class="btn primary" href="#/invoices?billing=1">Run monthly billing</a>` : ''}
       </div></div>
 
