@@ -405,6 +405,13 @@ function enforceCompletionRules(db, call, existing, user, body, data) {
   if (s.require_signature === '1' && !call.signature_waived && !sigExempt.includes(call.call_type) && !existing?.signed_by) {
     missing.push('the customer’s signature (or have an owner/admin approve “Customer won’t be on site”)');
   }
+  if (existing && s.require_serials === '1') {
+    const eq = db.prepare("SELECT id, description, serial_number, (SELECT COUNT(*) FROM equipment_photos p WHERE p.equipment_id = e.id) AS photos FROM installed_equipment e WHERE service_call_id = ? AND status = 'installed'").all(existing.id);
+    const noSerial = eq.filter(e => !e.serial_number).length;
+    const noPhoto = s.require_serial_photos === '1' ? eq.filter(e => !e.photos).length : 0;
+    if (noSerial) missing.push(`serial numbers for ${noSerial} installed item${noSerial === 1 ? '' : 's'}`);
+    if (noPhoto) missing.push(`a label / warranty photo for ${noPhoto} installed item${noPhoto === 1 ? '' : 's'}`);
+  }
   if (s.require_parts === '1' && call.call_type !== 'estimate') {
     const parts = existing ? db.prepare('SELECT COUNT(*) AS n FROM service_call_parts WHERE service_call_id = ?').get(existing.id).n : 0;
     if (!parts && !body?.no_parts_used) missing.push('the parts used (or tick “No parts used”)');
@@ -708,9 +715,19 @@ const HOOKS = {
     afterSave(db, row, { user }) {
       // Field usage may go negative: never block a tech from closing out a job.
       adjustStock(db, { itemId: row.item_id, locationId: row.location_id, delta: -row.qty, kind: 'used on job', serviceCallId: row.service_call_id, userId: user?.id, allowNegative: true });
+      const item = db.prepare('SELECT name, sku, serialized, warranty_months FROM inventory_items WHERE id = ?').get(row.item_id);
+      if (item?.serialized) {
+        const call = db.prepare('SELECT customer_id, site_id FROM service_calls WHERE id = ?').get(row.service_call_id);
+        const n = Math.min(Math.max(Math.round(row.qty), 0), 200);
+        for (let i = 0; i < n; i++) {
+          const e = create(db, 'installed_equipment', { customer_id: call.customer_id, site_id: call.site_id, item_id: row.item_id, description: item.name, model: item.sku, warranty_months: item.warranty_months, status: 'installed' }, { role: 'owner', name: user?.name });
+          db.prepare('UPDATE installed_equipment SET service_call_id = ?, part_id = ? WHERE id = ?').run(row.service_call_id, row.id, e.id);
+        }
+      }
     },
     afterDelete(db, row, { user }) {
       adjustStock(db, { itemId: row.item_id, locationId: row.location_id, delta: row.qty, kind: 'returned from job', serviceCallId: row.service_call_id, userId: user?.id, allowNegative: true });
+      db.prepare('DELETE FROM installed_equipment WHERE part_id = ?').run(row.id);
     },
   },
   purchase_invoices: {
@@ -719,6 +736,19 @@ const HOOKS = {
     },
     afterDelete(db, row) {
       if (row.file_key) fs.rmSync(path.join(DATA_DIR, 'invoices', path.basename(row.file_key)), { force: true });
+    },
+  },
+  installed_equipment: {
+    beforeSave(db, d, o) {
+      const x = { ...o.existing, ...d };
+      if (('install_date' in d || 'warranty_months' in d) && !('warranty_expires' in o.body)) {
+        d.warranty_expires = x.install_date && Number(x.warranty_months) > 0 ? addMonths(x.install_date, Number(x.warranty_months)) : null;
+      }
+      if (d.serial_number) {
+        d.serial_number = String(d.serial_number).trim().toUpperCase();
+        const dup = db.prepare("SELECT e.id, c.name FROM installed_equipment e JOIN customers c ON c.id = e.customer_id WHERE e.serial_number = ? AND e.id <> ? AND COALESCE(e.item_id, 0) = COALESCE(?, 0) AND e.status = 'installed'").get(d.serial_number, o.existing?.id || 0, x.item_id ?? null);
+        if (dup) throw new HttpError(409, `Serial ${d.serial_number} is already recorded as installed at ${dup.name}. Check the number, or mark that one replaced/removed first.`);
+      }
     },
   },
   camera_systems: { beforeSave: (db, d, o) => applyMaintenanceDefaults('camera_systems', d, o.existing, o.body) },

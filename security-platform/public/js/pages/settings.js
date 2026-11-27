@@ -192,6 +192,10 @@ export async function render(view, _, query) {
         ['require_photos', 'Require at least one “before” and one “after” photo', 'check'],
         ['photo_exempt_types', 'Job types that don’t need photos (comma-separated)', 'text', 'e.g. estimate, warranty'],
         ['require_parts', 'Require the parts used to be recorded, or “No parts used” ticked', 'check'],
+        ['require_signature', 'Require the customer’s signature (owners/admins can pre-approve jobs where nobody will be on site)', 'check'],
+        ['signature_exempt_types', 'Job types that don’t need a signature (comma-separated)', 'text', 'e.g. estimate'],
+        ['require_serials', 'Require serial numbers for serial-tracked equipment used on the job', 'check'],
+        ['require_serial_photos', '…and a photo of each one’s label / warranty info', 'check'],
       ], note: 'Owners and administrators can still complete a job without them by giving a reason, which is saved on the job.' },
       { title: 'Truck stock', fields: [
         ['truck_count_day', 'Weekly truck count day', 'select', ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'].map((d, i) => [String(i), d])],

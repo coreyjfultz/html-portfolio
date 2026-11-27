@@ -330,6 +330,20 @@ db.prepare("UPDATE service_calls SET signature_waived = 1, signature_waived_by =
   ins.run(v1.id, null, 'Mike Alvarez', mike.id, 48190, JSON.stringify(bad), '[]', 2, 'issues', `${day(-1)} 07:05:00`);
 }
 
+// Serial-tracked equipment and what's installed at the Beckers'.
+{
+  db.prepare("UPDATE inventory_items SET serialized = 1, warranty_months = CASE WHEN sku LIKE 'IPC%' THEN 36 WHEN sku LIKE 'NVR%' THEN 36 WHEN sku LIKE 'HDD%' THEN 36 ELSE 24 END WHERE sku IN ('IPC-4K-T','IPC-5MP-B','NVR-8P','NVR-16P','HDD-4TB','ALM-PNL-64')").run();
+  const becker = custs[0];
+  const installed = addMonths(today, -14);
+  for (const [item, desc, sn, where, warranty] of [
+    [items.nvr8.id, '8-channel PoE NVR', 'NVR8-2241-77XK', 'Basement utility shelf', 36],
+    [items.cam4k.id, '4K turret IP camera', 'T4K-88123401', 'Front porch', 36],
+    [items.cam4k.id, '4K turret IP camera', 'T4K-88123402', 'Driveway (garage corner)', 36],
+    [items.cam4k.id, '4K turret IP camera', 'T4K-88123419', 'Back patio', 36],
+    [items.panel.id, 'Wireless alarm panel w/ touchscreen', 'IQ4-0098812', 'Kitchen wall', 24],
+  ]) C('installed_equipment', { customer_id: becker.id, item_id: item, description: desc, serial_number: sn, location: where, install_date: installed, warranty_months: warranty, status: 'installed' });
+}
+
 // Map points around Springfield, OH for customers/sites, and live truck positions.
 {
   let i = 0;

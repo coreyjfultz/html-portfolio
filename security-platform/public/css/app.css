@@ -671,3 +671,7 @@ table.t tr.click:hover td { background: #f8faff; }
 .tire-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; }
 .tire-grid label { display: grid; gap: 4px; }
 @media (max-width: 520px) { .tire-grid { grid-template-columns: 1fr 1fr; } }
+
+.eq-grid { display: grid; grid-template-columns: minmax(140px, 1fr) minmax(140px, 1fr) auto auto; gap: 8px; align-items: center; }
+.ir-item.todo-row { border-color: var(--warn); }
+@media (max-width: 640px) { .eq-grid { grid-template-columns: 1fr 1fr; } }

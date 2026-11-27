@@ -506,4 +506,39 @@ test('vehicle checklist: every item answered, problems need a note (and photos f
   assert.equal(board.find(v => v.vehicle_id === ids.truck2).due, true);
 });
 
+test('serialized equipment used on a job needs serial numbers and a label photo; it lands on the customer’s equipment list with warranty dates', async () => {
+  await owner.put('/api/settings', { require_signature: '0', require_serials: '1', require_serial_photos: '1' });
+  const JPG = Buffer.from([0xff, 0xd8, 0xff, 0xe0, ...Buffer.alloc(200)]).toString('base64');
+  const cam = (await owner.post('/api/r/inventory_items', { name: '4K bullet camera', sku: 'CAM-4KB', serialized: 1, warranty_months: 36, unit_cost: 80, unit_price: 199 })).data;
+  await owner.post('/api/stock/receive', { item_id: cam.id, qty: 5, location_id: ids.truck });
+  const job = (await owner.post('/api/r/service_calls', { customer_id: ids.cust, title: 'Add two cameras', technician_id: ids.tech, scheduled_start: `${today()}T23:50`, duration_hours: 0.1, allow_conflict: true })).data;
+  assert.equal((await tech.post('/api/r/service_call_parts', { service_call_id: job.id, item_id: cam.id, qty: 2 })).status, 200);
+  let eq = (await tech.get(`/api/r/installed_equipment?service_call_id=${job.id}`)).data;
+  assert.equal(eq.length, 2, 'one line per unit');
+  assert.equal(eq[0].customer_id, ids.cust);
+  assert.equal(eq[0].description, '4K bullet camera');
+  let r = await tech.put(`/api/r/service_calls/${job.id}`, { status: 'completed' });
+  assert.match(r.data.error, /serial numbers for 2 installed items.*label \/ warranty photo for 2/);
+  const a = (await tech.put(`/api/r/installed_equipment/${eq[0].id}`, { serial_number: 'abc123', location: 'Front door' })).data;
+  assert.equal(a.serial_number, 'ABC123');
+  assert.equal(a.warranty_expires, (() => { const d = new Date(a.install_date + 'T12:00:00Z'); d.setUTCMonth(d.getUTCMonth() + 36); return d.toISOString().slice(0, 10); })());
+  assert.equal((await tech.put(`/api/r/installed_equipment/${eq[1].id}`, { serial_number: 'ABC123' })).status, 409, 'same serial twice is caught');
+  await tech.put(`/api/r/installed_equipment/${eq[1].id}`, { serial_number: 'ABC124', location: 'Back door' });
+  r = await tech.put(`/api/r/service_calls/${job.id}`, { status: 'completed' });
+  assert.match(r.data.error, /label \/ warranty photo for 2/);
+  for (const e of eq) assert.equal((await tech.post(`/api/equipment/${e.id}/photos`, { data: JPG, caption: 'Label' })).status, 200);
+  assert.equal((await tech.get(`/api/equipment/${eq[0].id}/photos`)).data.length, 1);
+  r = await tech.put(`/api/r/service_calls/${job.id}`, { status: 'completed', no_parts_used: false });
+  assert.equal(r.status, 200);
+  // Searchable by serial
+  const found = (await owner.get('/api/search?q=ABC124')).data;
+  assert.ok((found.results || found).some(x => x.kind === 'Equipment'));
+  // Removing the part from a job removes its unfilled equipment lines
+  const job2 = (await owner.post('/api/r/service_calls', { customer_id: ids.cust, title: 'Oops' })).data;
+  const part = (await owner.post('/api/r/service_call_parts', { service_call_id: job2.id, item_id: cam.id, qty: 1, location_id: ids.truck })).data;
+  assert.equal((await owner.get(`/api/r/installed_equipment?service_call_id=${job2.id}`)).data.length, 1);
+  await owner.del(`/api/r/service_call_parts/${part.id}`);
+  assert.equal((await owner.get(`/api/r/installed_equipment?service_call_id=${job2.id}`)).data.length, 0);
+});
+
 export { owner, tech, ids, db, client, today, notifyIdle };

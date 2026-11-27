@@ -140,6 +140,7 @@ export async function detail(view, [id]) {
             { label: '', cls: 'actions-cell', render: p => html`<button class="btn sm ghost danger" data-rmpart="${p.id}" title="Remove and return to stock">Remove</button>` },
           ] })}</div></div>
       ${['inspection', 'maintenance'].includes(c.call_type) || /fire|sprinkler|extinguisher|suppression/.test(c.system_type || '') ? html`<div class="card span2" data-inspections-card></div>` : ''}
+      <div class="card span2" data-equipment-card></div>
       <div class="card span2" data-materials-card></div>
       <div class="card" data-photos-card></div>
       <div class="card hidden" data-mon-card></div>
@@ -174,6 +175,7 @@ export async function detail(view, [id]) {
   $('[data-sign]', view)?.addEventListener('click', () => completeDialog(c, cust, { signOnly: true, onDone: reload }));
   drawPhotos($('[data-photos-card]', view), c);
   import('./truckstock.js').then(m => m.materialsCard($('[data-materials-card]', view), c));
+  import('./equipment.js').then(m => m.jobEquipmentCard($('[data-equipment-card]', view), c));
   if ($('[data-inspections-card]', view)) import('./inspections.js').then(m => m.reportsCard($('[data-inspections-card]', view), { customer_id: c.customer_id, service_call_id: c.id, site_id: c.site_id, title: 'Inspection reports for this job' }));
   drawMonitoring($('[data-mon-card]', view), c, reload);
   $('[data-complete]', view)?.addEventListener('click', () => completeDialog(c, cust, { office, partsCount: parts.length, onDone: reload }));
@@ -229,6 +231,9 @@ async function drawPhotos(card, c) {
 // ------------------------------------------------------------------ completion + signature
 async function completeDialog(c, cust, { signOnly = false, office = false, partsCount = 0, onDone } = {}) {
   const photos = signOnly ? [] : await GET(`/api/service_calls/${c.id}/photos`).catch(() => []);
+  const equipment = signOnly ? [] : await R.list('installed_equipment', { service_call_id: c.id }).catch(() => []);
+  const eqPhotos = await Promise.all(equipment.map(e => GET(`/api/equipment/${e.id}/photos`).then(p => p.length).catch(() => 0)));
+  const eqDone = equipment.filter((e, i) => e.serial_number && eqPhotos[i]).length;
   const nPhotos = kind => photos.filter(p => p.kind === kind).length;
   const check = (ok, label) => html`<li class="${ok ? 'ok' : 'todo'}"><span class="mark">${ok ? '✓' : '!'}</span> ${label}</li>`;
   const { el, close } = openModal({
@@ -238,6 +243,7 @@ async function completeDialog(c, cust, { signOnly = false, office = false, parts
           ${check(nPhotos('before') > 0, `“Before” photos (${nPhotos('before')})`)}
           ${check(nPhotos('after') > 0, `“After” photos (${nPhotos('after')})`)}
           ${check(partsCount > 0, partsCount ? `Parts recorded (${partsCount})` : 'Parts recorded')}
+          ${equipment.length ? check(eqDone === equipment.length, `Serial numbers & label photos (${eqDone} of ${equipment.length})`) : ''}
         </ul>
         ${partsCount ? '' : html`<label class="row small" style="margin:-4px 0 12px"><input type="checkbox" data-noparts> No parts or equipment were used on this job</label>`}
         <div class="field hidden" data-override style="margin-bottom:12px"><label for="cd_override">Override reason (recorded on the job)</label><input id="cd_override" type="text" placeholder="e.g. Customer would not allow photos inside"></div>

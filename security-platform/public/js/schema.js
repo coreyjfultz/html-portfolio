@@ -313,6 +313,8 @@ export const RESOURCES = {
       { name: 'unit_cost', label: 'Unit cost', type: 'money', list: true },
       { name: 'unit_price', label: 'Sell price', type: 'money', list: true },
       { name: 'reorder_level', label: 'Reorder when total below', type: 'number', default: 0 },
+      { name: 'serialized', label: 'Track serial numbers (cameras, recorders, panels…)', type: 'checkbox', help: 'Each one used on a job needs its serial # and a photo of the label / warranty info.' },
+      { name: 'warranty_months', label: 'Manufacturer warranty (months)', type: 'number' },
       { name: 'truck_min', label: 'Standard truck stock (per vehicle)', type: 'number', default: 0, help: 'Every truck should carry at least this many. 0 = not standard truck stock.' },
       { name: 'truck_max', label: 'Most to keep on a truck', type: 'number', help: 'Keeps extras low: more than this gets flagged to go back to the warehouse. Blank = standard + 1.' },
       { name: 'vendor_skus', label: 'Distributor part #s', type: 'text', full: true, help: 'Other part numbers this item appears under on supplier invoices, comma-separated. Learned automatically when you match an invoice line.' },
@@ -564,6 +566,29 @@ export const RESOURCES = {
       { name: 'signed_by', label: 'Signed off by', type: 'text', readonly: true },
       { name: 'signed_at', label: 'Signed', type: 'datetime', readonly: true },
       { name: 'signature_key', label: 'Signature image', type: 'text', readonly: true, hidden: true },
+    ],
+  },
+
+  // Equipment installed at a customer: serial numbers, where it is, warranty, photos of labels.
+  installed_equipment: {
+    label: 'Installed equipment', singular: 'Equipment', labelExpr: "COALESCE(NULLIF(description,''), 'Equipment') || CASE WHEN COALESCE(serial_number,'') <> '' THEN ' S/N ' || serial_number ELSE '' END",
+    read: ALL, write: ALL, del: G.manage, order: 'install_date DESC, id DESC', search: ['description', 'serial_number', 'mac_address', 'location', 'model'],
+    fields: [
+      customerRef,
+      { name: 'site_id', label: 'Site', type: 'ref', ref: 'locations', dependsOn: 'customer_id', onDelete: 'set null', list: true },
+      { name: 'item_id', label: 'Inventory item', type: 'ref', ref: 'inventory_items', onDelete: 'set null' },
+      { name: 'description', label: 'Equipment', type: 'text', required: true, list: true },
+      { name: 'model', label: 'Model', type: 'text' },
+      { name: 'serial_number', label: 'Serial #', type: 'text', list: true },
+      { name: 'mac_address', label: 'MAC address', type: 'text' },
+      { name: 'location', label: 'Installed where', type: 'text', list: true, help: 'e.g. Front porch, Rack in IT closet' },
+      { name: 'install_date', label: 'Installed', type: 'date', default: today, list: true },
+      { name: 'warranty_months', label: 'Warranty (months)', type: 'number' },
+      { name: 'warranty_expires', label: 'Warranty ends', type: 'date', list: true },
+      { name: 'status', label: 'Status', type: 'select', options: ['installed', 'replaced', 'removed', 'sent for RMA'], default: 'installed', list: true },
+      { name: 'service_call_id', label: 'Installed on job', type: 'ref', ref: 'service_calls', onDelete: 'set null', readonly: true },
+      { name: 'part_id', label: 'Job part line', type: 'number', hidden: true, readonly: true },
+      { name: 'notes', label: 'Notes', type: 'textarea', full: true },
     ],
   },
 

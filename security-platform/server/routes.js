@@ -281,6 +281,7 @@ export function buildRoutes() {
     if (BILLING.includes(user.role)) {
       push('Invoice', list(db, 'invoices', { q, limit: 5 }), i => ({ id: i.id, title: `Invoice #${i.number}`, sub: `${i.customer_id_label} · $${i.total}`, href: `#/invoices/${i.id}` }));
     }
+    push('Equipment', list(db, 'installed_equipment', { q, limit: 5 }, user), e => ({ id: e.id, title: `${e.description}${e.serial_number ? ` · S/N ${e.serial_number}` : ''}`, sub: `${e.customer_id_label}${e.location ? ` · ${e.location}` : ''}${e.warranty_expires ? ` · warranty to ${e.warranty_expires}` : ''}`, href: `#/customers/${e.customer_id}?tab=equipment` }));
     push('Item', list(db, 'inventory_items', { q, limit: 5 }), i => ({ id: i.id, title: i.name, sub: `${i.sku || ''} · ${i.total_qty} on hand`, href: `#/inventory/${i.id}` }));
     push('Vehicle', list(db, 'vehicles', { q, limit: 3 }), v => ({ id: v.id, title: v.unit_name, sub: [v.year, v.make, v.model].filter(Boolean).join(' '), href: `#/vehicles/${v.id}` }));
     push('Technician', list(db, 'technicians', { q, limit: 3 }), t => ({ id: t.id, title: t.name, sub: t.phone || '', href: `#/technicians` }));
@@ -549,6 +550,40 @@ ${s.company_name}` }));
       .run(call.id, kind, key, String(body.caption || '').slice(0, 300) || null, user.id, user.name);
     audit(db, user, 'add photo', 'service_calls', call.id, kind);
     return { id: Number(info.lastInsertRowid) };
+  });
+
+  // ---- installed equipment: label / serial / warranty photos
+  const equipmentFor = (db, id, user) => {
+    const e = db.prepare('SELECT * FROM installed_equipment WHERE id = ?').get(Number(id));
+    if (!e) throw new HttpError(404, 'Equipment not found');
+    assertCustomerVisible(db, user, e.customer_id);
+    return e;
+  };
+  r('GET', '/api/equipment/:id/photos', ALL, ({ db, params, user }) => {
+    const e = equipmentFor(db, params.id, user);
+    return db.prepare('SELECT id, caption, user_name, created_at FROM equipment_photos WHERE equipment_id = ? ORDER BY id').all(e.id);
+  });
+  r('POST', '/api/equipment/:id/photos', ALL, ({ db, params, body, user }) => {
+    const e = equipmentFor(db, params.id, user);
+    const key = saveImage('photos', decodeImage(body.data, { maxBytes: 8 * 1024 * 1024 }));
+    const id = Number(db.prepare('INSERT INTO equipment_photos (equipment_id, file_key, caption, user_name) VALUES (?,?,?,?)').run(e.id, key, String(body.caption || '').slice(0, 200) || null, user.name).lastInsertRowid);
+    audit(db, user, 'equipment photo', 'customers', e.customer_id, e.serial_number || e.description);
+    return { id };
+  });
+  r('GET', '/api/equipment-photos/:id', ALL, ({ db, params, res, user }) => {
+    const p = db.prepare('SELECT file_key, equipment_id FROM equipment_photos WHERE id = ?').get(Number(params.id));
+    if (!p) throw new HttpError(404, 'Not found');
+    equipmentFor(db, p.equipment_id, user);
+    sendImage(res, 'photos', p.file_key);
+    return undefined;
+  });
+  r('DELETE', '/api/equipment-photos/:id', ALL, ({ db, params, user }) => {
+    const p = db.prepare('SELECT file_key, equipment_id FROM equipment_photos WHERE id = ?').get(Number(params.id));
+    if (!p) throw new HttpError(404, 'Not found');
+    equipmentFor(db, p.equipment_id, user);
+    db.prepare('DELETE FROM equipment_photos WHERE id = ?').run(Number(params.id));
+    removeImage('photos', p.file_key);
+    return { ok: true };
   });
 
   r('GET', '/api/photos/:id', ALL, ({ db, params, res, user }) => {

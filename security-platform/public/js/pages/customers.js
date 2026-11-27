@@ -88,6 +88,7 @@ export async function detail(view, [id], query) {
   const tabs = [
     ['overview', 'Overview'],
     ['systems', 'Systems', cams.length + alarms.length + fires.length + exts.length],
+    ['equipment', 'Equipment'],
     ['locations', 'Locations', locs.length || null],
     ['monitoring', 'Monitoring'],
     ...(can.staff() ? [['proposals', 'Proposals']] : []),
@@ -262,6 +263,8 @@ export async function detail(view, [id], query) {
       reload();
     });
   }
+
+  if (tab === 'equipment') import('./equipment.js').then(m => m.customerEquipmentTab(pane, c));
 
   if (tab === 'calls') {
     mount(pane, html`<div class="card"><div class="card-head"><h2>Service history</h2><button class="btn sm" data-nc>+ Service call</button></div>
