@@ -265,6 +265,8 @@ async function systems(view) {
     ${d.fire.map(f => html`<div class="card p-job"><div class="card-body"><b>🔥 ${f.system_type} — ${f.location || ''}</b><div class="small">Next inspection: ${due(f.next_inspection)}</div></div></div>`)}
     ${d.extinguishers.n ? html`<div class="card p-job"><div class="card-body"><b>🧯 ${d.extinguishers.n} fire extinguisher${d.extinguishers.n > 1 ? 's' : ''}</b><div class="small">Next annual inspection: ${due(d.extinguishers.next_annual)}</div></div></div>` : ''}
     ${!d.alarms.length && !d.cameras.length && !d.fire.length && !d.extinguishers.n ? html`<div class="empty">No systems on file yet.</div>` : ''}
+    ${d.reports?.length ? html`<h2 style="margin:18px 0 8px;font-size:17px">Inspection reports</h2>${d.reports.map(r => html`<a class="card p-job" href="${r.link}" target="_blank" rel="noopener" style="display:block;color:inherit;text-decoration:none"><div class="card-body">
+      <b>📋 ${r.type}</b><div class="small muted">FIR-${r.number} · ${fmtDate(r.date)}</div><div class="small">${r.result}</div></div></a>`)}` : ''}
     <p class="small muted">For your security, passwords and codes are not shown here. Call us if you need them.</p>`);
 }
 

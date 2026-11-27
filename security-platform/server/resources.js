@@ -543,6 +543,30 @@ function applyMaintenanceDefaults(table, data, existing, body) {
   }
 }
 
+/**
+ * Extinguisher service dates (NFPA 10 rules of thumb; confirm with the current edition and your AHJ):
+ *  - stored-pressure dry chemical: 6-year maintenance, counted from the last 6-year, the last hydro, or manufacture
+ *  - hydro test: from the last hydro, else from manufacture (5 or 12 years by type)
+ *  - disposable (non-rechargeable): no 6-year or hydro; replace 12 years after manufacture
+ * Dates typed in by hand are kept.
+ */
+export function extinguisherDates(d, existing, body = {}) {
+  const x = { ...existing, ...d };
+  const given = k => k in body && body[k] !== existing?.[k];
+  const yearsFrom = (date, y) => (date ? addMonths(date, y * 12) : null);
+  const disposable = x.pressure_type === 'disposable';
+  const dryChem = /dry chemical/i.test(x.ext_type || '');
+  if (!given('next_6yr')) {
+    d.next_6yr = !disposable && dryChem && x.pressure_type !== 'cartridge operated'
+      ? yearsFrom([x.last_6yr, x.last_hydro, x.manufacture_date].filter(Boolean).sort().pop(), 6) : null;
+  }
+  if (!given('next_hydro')) {
+    if (disposable) d.next_hydro = null;
+    else if (!x.last_hydro && x.manufacture_date) d.next_hydro = yearsFrom(x.manufacture_date, Number(x.hydro_interval_years) || 12);
+  }
+  if (!given('replace_by')) d.replace_by = disposable && x.manufacture_date ? yearsFrom(x.manufacture_date, 12) : null;
+}
+
 // ---------------------------------------------------------------- hooks
 const HOOKS = {
   technicians: {
@@ -692,6 +716,7 @@ const HOOKS = {
         d.hydro_interval_years = /CO2|Water|Class K/.test(d.ext_type || '') ? 5 : 12;
       }
       applyMaintenanceDefaults('extinguishers', d, o.existing, o.body);
+      extinguisherDates(d, o.existing, o.body);
     },
   },
 };

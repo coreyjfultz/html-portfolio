@@ -84,3 +84,55 @@ export function renderInvoice(d, { logoUrl, signatureUrl, editable = false } = {
     ${d.company.footer ? html`<footer class="doc-terms"><div class="doc-terms-body" style="columns:1">${d.company.footer}</div></footer>` : ''}
   </article>`;
 }
+
+// ---------------------------------------------------------------- fire inspection report
+const RCLS = { pass: 'pass', fail: 'fail', na: 'na' };
+const RTXT = { pass: 'Pass', fail: 'Fail', na: 'N/A', replaced: 'Replaced', removed: 'Removed', missing: 'Missing' };
+/** Printable inspection report, shared by the staff app and the customer / fire-marshal link. */
+export function renderInspectionReport(d, { signatureUrl, logoUrl } = {}) {
+  const addr = x => x ? [x.address || x.service_address || x.billing_address, [x.city, x.state].filter(Boolean).join(', ') + (x.zip ? ' ' + x.zip : '')].filter(v => v && v.trim()) : [];
+  const sections = [...new Set(d.items.map(i => i.section))];
+  const resultCls = { pass: 'pass', deficiencies: 'warn', fail: 'fail' }[d.result] || '';
+  return html`<article class="doc ir">
+    <header class="doc-head">
+      <div class="doc-brand">${logoUrl ? html`<img class="doc-logo" src="${logoUrl}" alt="">` : ''}
+        <div><div class="doc-company">${d.company.name}</div>
+          <div class="doc-muted">${[d.company.phone, d.company.email].filter(Boolean).join(' · ')}</div>
+          ${d.company.license ? html`<div class="doc-muted">License ${d.company.license}</div>` : ''}</div></div>
+      <div class="doc-meta"><div class="doc-kind">Inspection report</div><div>No. FIR-${d.number}</div><div>${fmtDate(d.inspection_date)}</div></div>
+    </header>
+    <h1 class="doc-title">${d.type_label}${d.standard ? html` <span class="ir-std">${d.standard}</span>` : ''}</h1>
+    <section class="doc-parties">
+      <div><div class="doc-label">Property</div><b>${d.customer.name}</b>${d.site ? html`<div>${d.site.name}</div>` : ''}${addr(d.site || d.customer).map(l => html`<div>${l}</div>`)}</div>
+      <div><div class="doc-label">System</div>${d.system ? html`<b>${d.system.location || d.system.system_type}</b><div>${[d.system.panel_brand, d.system.panel_model].filter(Boolean).join(' ')}</div>` : html`<b>${d.type_label}</b>`}
+        <div>${d.frequency[0].toUpperCase() + d.frequency.slice(1)} inspection</div></div>
+      <div><div class="doc-label">Inspector</div><b>${d.inspector_name || '—'}</b>${d.inspector_license ? html`<div>License / cert. ${d.inspector_license}</div>` : ''}
+        ${d.ahj ? html`<div class="doc-muted" style="margin-top:6px">AHJ: ${d.ahj}</div>` : ''}</div>
+    </section>
+    ${d.result ? html`<div class="ir-result ${resultCls}"><span>Result</span><b>${d.result_label}</b>${d.deficiency_list.length ? html`<span>${d.deficiency_list.length} deficienc${d.deficiency_list.length === 1 ? 'y' : 'ies'}</span>` : ''}</div>` : html`<div class="ir-result"><span>Status</span><b>Draft — not completed</b></div>`}
+    ${d.deficiency_list.length ? html`<section class="ir-sec"><div class="doc-label">Deficiencies</div>
+      <ol class="ir-defs">${d.deficiency_list.map(x => html`<li><b>${x.what}</b>${x.where ? html` <span class="doc-muted">(${x.where})</span>` : ''}${x.note ? html`<div>${x.note}</div>` : ''}</li>`)}</ol></section>` : ''}
+    ${sections.map(sec => html`<section class="ir-sec"><div class="doc-label">${sec}</div>
+      <table class="doc-table ir-table"><tbody>${d.items.filter(i => i.section === sec).map(i => {
+        const a = d.checklist[i.id] || {};
+        return html`<tr><td>${i.text}${a.note ? html`<div class="doc-muted">${a.note}</div>` : ''}</td>
+          <td class="r ir-cell">${i.kind === 'value' ? (a.r === 'na' ? 'N/A' : a.v || '—') : a.r ? html`<span class="ir-r ${RCLS[a.r]}">${RTXT[a.r]}</span>` : '—'}</td></tr>`;
+      })}</tbody></table></section>`)}
+    ${d.devices.length ? html`<section class="ir-sec"><div class="doc-label">Devices tested (${d.devices.length}) — ${d.devices.filter(x => x.result === 'pass').length} passed, ${d.devices.filter(x => x.result === 'fail').length} failed</div>
+      <table class="doc-table ir-table"><thead><tr><th>Device</th><th>Location</th><th>Address</th><th class="r">Result</th></tr></thead>
+      <tbody>${d.devices.map(x => html`<tr><td>${x.type}</td><td>${x.location}${x.note ? html`<div class="doc-muted">${x.note}</div>` : ''}</td><td>${x.address || ''}</td>
+        <td class="r">${x.result ? html`<span class="ir-r ${RCLS[x.result]}">${RTXT[x.result]}</span>` : '—'}</td></tr>`)}</tbody></table></section>` : ''}
+    ${d.units.length ? html`<section class="ir-sec"><div class="doc-label">Extinguishers (${d.units.length})</div>
+      <table class="doc-table ir-table"><thead><tr><th>Unit</th><th>Location</th><th>Service</th><th class="r">Result</th></tr></thead>
+      <tbody>${d.units.map(u => html`<tr><td>${u.label}${u.result === 'replaced' && u.new_serial ? html`<div class="doc-muted">New S/N ${u.new_serial}</div>` : ''}</td><td>${u.location}${u.note ? html`<div class="doc-muted">${u.note}</div>` : ''}</td>
+        <td>${(u.services || []).join(', ')}</td><td class="r">${u.result ? html`<span class="ir-r ${u.result === 'pass' ? 'pass' : ['fail', 'missing'].includes(u.result) ? 'fail' : 'na'}">${RTXT[u.result]}</span>` : '—'}</td></tr>`)}</tbody></table></section>` : ''}
+    ${d.recommendations ? html`<section class="ir-sec"><div class="doc-label">Recommendations</div><div style="white-space:pre-wrap">${d.recommendations}</div></section>` : ''}
+    ${d.notes ? html`<section class="ir-sec"><div class="doc-label">Notes</div><div style="white-space:pre-wrap">${d.notes}</div></section>` : ''}
+    <section class="doc-signed ir-sign">
+      <div><div class="doc-label">Inspected by</div><b>${d.inspector_name || ''}</b>${d.completed_at ? html`<div class="doc-muted">Completed ${new Date(d.completed_at).toLocaleString('en-US', { dateStyle: 'medium', timeStyle: 'short' })}</div>` : ''}</div>
+      <div><div class="doc-label">Customer representative</div>${d.signed_by ? html`<div class="doc-sigline">${signatureUrl ? html`<img src="${signatureUrl}" alt="Signature of ${d.signed_by}">` : ''}</div><b>${d.signed_by}</b>`
+        : html`<div class="doc-muted">Not signed on site</div>`}</div>
+    </section>
+    <p class="doc-muted ir-foot">This report reflects the condition of the systems listed at the time of inspection. Deficiencies should be corrected promptly; impairments must be reported to the AHJ and monitoring company as required.</p>
+  </article>`;
+}

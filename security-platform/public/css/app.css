@@ -636,3 +636,34 @@ table.t tr.click:hover td { background: #f8faff; }
 .leaflet-container { font-family: Inter, system-ui, sans-serif; background: var(--surface-2); }
 @media (max-width: 900px) { .map-layout { grid-template-columns: 1fr; } .map-card { position: static; } .livemap { height: 60vh; } }
 @media (min-width: 900px) { .tabs { flex-wrap: wrap; } }
+
+/* Fire inspection report document */
+.ir-std { font-size: 13px; font-weight: 600; color: #6b7280; margin-left: 6px; }
+.ir-result { display: flex; gap: 14px; align-items: baseline; padding: 12px 16px; border-radius: 8px; background: #f3f4f6; margin: 6px 0 18px; flex-wrap: wrap; }
+.ir-result span { font-size: 12px; text-transform: uppercase; letter-spacing: .08em; color: #6b7280; }
+.ir-result b { font-size: 18px; }
+.ir-result.pass { background: #ecfdf5; } .ir-result.pass b { color: #047857; }
+.ir-result.warn { background: #fffbeb; } .ir-result.warn b { color: #b45309; }
+.ir-result.fail { background: #fef2f2; } .ir-result.fail b { color: #b91c1c; }
+.ir-sec { margin-top: 18px; break-inside: avoid-page; }
+.ir-table td, .ir-table th { padding: 6px 8px; vertical-align: top; }
+.ir-cell { white-space: nowrap; }
+.ir-r { display: inline-block; min-width: 46px; text-align: center; font-weight: 700; font-size: 12px; padding: 2px 8px; border-radius: 4px; }
+.ir-r.pass { background: #dcfce7; color: #166534; } .ir-r.fail { background: #fee2e2; color: #991b1b; } .ir-r.na { background: #f3f4f6; color: #4b5563; }
+.ir-defs { margin: 6px 0 0; padding-left: 20px; } .ir-defs li { margin-bottom: 6px; }
+.ir-sign { display: grid; grid-template-columns: 1fr 1fr; gap: 24px; }
+.ir-foot { margin-top: 24px; font-size: 11px; }
+@media (max-width: 640px) { .ir-sign { grid-template-columns: 1fr; } }
+
+/* Inspection form */
+.ir-item, .ir-dev, .ir-unit { padding: 10px 12px; border: 1px solid var(--border); border-radius: 10px; display: grid; gap: 8px; }
+.ir-item.failed, .ir-dev.failed, .ir-unit.failed { border-color: var(--bad); background: var(--bad-soft); }
+.ir-q { font-weight: 550; }
+.ir-dev { grid-template-columns: 150px minmax(120px, 1fr) 110px auto auto; align-items: center; }
+.ir-dev .ir-note { grid-column: 1 / -1; }
+.ir-form .seg label.pass:has(input:checked) { border-color: var(--good); background: var(--good-soft); color: var(--good); }
+.ir-form .seg label.fail:has(input:checked), .ir-form .seg label.missing:has(input:checked) { border-color: var(--bad); background: var(--bad-soft); color: var(--bad); }
+.ir-form .seg label input { position: absolute; opacity: 0; pointer-events: none; }
+.ir-form .seg label { position: relative; min-width: 56px; justify-content: center; padding: 8px 12px; }
+.ir-form .seg { flex-wrap: wrap; }
+@media (max-width: 760px) { .ir-dev { grid-template-columns: 1fr 1fr; } .ir-dev .seg { grid-column: 1 / -1; } .ir-dev .ir-addr { grid-column: auto; } }

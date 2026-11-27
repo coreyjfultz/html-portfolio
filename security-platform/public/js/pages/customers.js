@@ -222,18 +222,28 @@ export async function detail(view, [id], query) {
           <button class="btn sm" data-add="${res}">+ Add</button></div>
         <div class="card-body">${systems[res].length ? html`<div class="grid g2">${systems[res].map(s => systemCard(res, s))}</div>` : html`<div class="muted">None on file.</div>`}</div></div>`)}
       <div class="card"><div class="card-head"><h2 class="row" style="gap:8px">${icon('fire-extinguisher')} Fire extinguishers <span class="muted small">(${exts.length})</span></h2>
-          <div class="actions">${exts.length ? html`<button class="btn sm" data-inspect-all>Mark selected inspected today</button>` : ''}<button class="btn sm" data-add="extinguishers">+ Add</button></div></div>
+          <div class="actions">${exts.length ? html`<button class="btn sm primary" data-inspect-ext>Inspect extinguishers</button><button class="btn sm" data-inspect-all>Mark selected inspected today</button>` : ''}<button class="btn sm" data-add="extinguishers">+ Add</button></div></div>
         <div class="card-body flush">${exts.length ? html`<div class="table-wrap"><table class="t responsive"><thead><tr>
-            <th><input type="checkbox" data-all aria-label="Select all"></th><th>Location</th><th>Type</th><th>Size</th><th>Status</th><th>Next annual</th><th>Next hydro</th><th>Serial</th><th></th></tr></thead>
+            <th><input type="checkbox" data-all aria-label="Select all"></th><th>Tag</th><th>Location</th><th>Type</th><th>Size</th><th>Status</th><th>Next annual</th><th>Next 6-yr</th><th>Next hydro</th><th></th></tr></thead>
           <tbody>${exts.map(x => html`<tr>
             <td data-label="Select"><input type="checkbox" data-ext="${x.id}" aria-label="Select"></td>
-            <td data-label="Location">${x.location || '—'}</td><td data-label="Type">${x.ext_type}</td><td data-label="Size">${x.size || '—'}</td>
+            <td data-label="Tag" class="mono">${x.tag_number || ''}</td>
+            <td data-label="Location">${x.location || '—'}${x.floor ? html`<div class="small muted">${x.floor}</div>` : ''}</td><td data-label="Type">${x.ext_type}${x.pressure_type === 'disposable' ? html`<div class="small muted">disposable</div>` : ''}</td><td data-label="Size">${x.size || '—'}</td>
             <td data-label="Status">${badge(x.status)}</td>
-            <td data-label="Next annual">${dueCell(x.next_annual)}</td><td data-label="Next hydro">${dueCell(x.next_hydro)}</td>
-            <td data-label="Serial" class="small">${x.serial || ''}</td>
-            <td class="actions-cell"><button class="btn sm ghost" data-edit-sys="extinguishers" data-id="${x.id}">Edit</button></td></tr>`)}</tbody></table></div>`
+            <td data-label="Next annual">${dueCell(x.next_annual)}</td><td data-label="Next 6-yr">${x.replace_by ? html`replace ${dueCell(x.replace_by)}` : dueCell(x.next_6yr)}</td><td data-label="Next hydro">${dueCell(x.next_hydro)}</td>
+            <td class="actions-cell"><button class="btn sm ghost" data-ext-hist="${x.id}">History</button><button class="btn sm ghost" data-edit-sys="extinguishers" data-id="${x.id}">Edit</button></td></tr>`)}</tbody></table></div>`
           : html`<div class="empty">No extinguishers on file.</div>`}</div></div>
+      <div class="card" data-reports></div>
       </div>`);
+    import('./inspections.js').then(m => {
+      m.reportsCard($('[data-reports]', pane), { customer_id: c.id });
+      $$('[data-inspect]', pane).forEach(b => b.addEventListener('click', () => m.startDialog({ customer_id: c.id, fire_system_id: b.dataset.inspect })));
+      $('[data-inspect-ext]', pane)?.addEventListener('click', async () => {
+        const r = await POST('/api/inspections', { customer_id: c.id, report_type: 'extinguishers' });
+        location.hash = `#/inspections/${r.id}`;
+      });
+      $$('[data-ext-hist]', pane).forEach(b => b.addEventListener('click', () => m.extinguisherHistory(exts.find(x => x.id === Number(b.dataset.extHist)))));
+    });
     if (maint.length) maintenanceTable($('[data-maint]', pane), maint, { showCustomer: false, onChange: reload });
     const all = { ...systems, extinguishers: exts };
     $$('[data-add]', pane).forEach(b => b.addEventListener('click', () => openForm(b.dataset.add, { defaults: { customer_id: c.id }, hide: ['customer_id'], onSaved: reload })));
@@ -346,7 +356,7 @@ function systemCard(res, s) {
   const sys = res === 'camera_systems' ? 'camera' : res === 'alarm_systems' ? 'alarm' : s.system_type === 'sprinkler' ? 'sprinkler' : 'fire alarm';
   return html`<div class="card" style="box-shadow:none"><div class="card-head"><div><h3>${title}</h3>
       <div class="small muted">${[s.site_id_label ? '📍 ' + s.site_id_label.split(' — ')[0] : '', s.brand || s.panel_brand, s.model || s.panel_model, s.system_type && res === 'fire_systems' ? s.system_type : ''].filter(Boolean).join(' · ')}</div></div>
-    <div class="actions"><button class="btn sm ghost" data-svc="${sys}" data-label="${title}">Service</button><button class="btn sm" data-edit-sys="${res}" data-id="${s.id}">Edit</button></div></div>
+    <div class="actions">${res === 'fire_systems' ? html`<button class="btn sm" data-inspect="${s.id}">Inspect</button>` : ''}<button class="btn sm ghost" data-svc="${sys}" data-label="${title}">Service</button><button class="btn sm" data-edit-sys="${res}" data-id="${s.id}">Edit</button></div></div>
     <div class="card-body"><dl class="dl small">${shown.filter(f => f.name !== 'location').map(f => html`<dt>${f.label}</dt><dd>${f.type === 'date' && /next/.test(f.name) ? dueCell(s[f.name]) : renderValue(f, s, res)}</dd>`)}</dl>
     ${s.notes ? html`<div class="small" style="margin-top:10px;white-space:pre-wrap">${s.notes}</div>` : ''}</div></div>`;
 }

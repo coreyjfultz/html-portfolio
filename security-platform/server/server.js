@@ -65,6 +65,7 @@ function serveStatic(req, res, pathname) {
   let file = path.normalize(path.join(PUBLIC, decodeURIComponent(pathname)));
   if (!file.startsWith(PUBLIC)) { res.writeHead(403); return res.end(); }
   if (/^\/sign\/[A-Za-z0-9_-]+$/.test(pathname)) file = path.join(PUBLIC, 'sign.html');
+  else if (/^\/report\/[A-Za-z0-9_-]+$/.test(pathname)) file = path.join(PUBLIC, 'report.html');
   else if (/^\/portal(\/.*)?$/.test(pathname) && !path.extname(pathname)) file = path.join(PUBLIC, 'portal.html');
   else if (pathname === '/' || !fs.existsSync(file) || fs.statSync(file).isDirectory()) {
     if (path.extname(pathname)) { res.writeHead(404); return res.end('Not found'); }

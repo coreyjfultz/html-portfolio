@@ -40,6 +40,7 @@ export const DEFAULT_SETTINGS = {
   notify_on_schedule: '1', notify_on_way: '1', notify_tech_invites: '1',
   proposal_next_number: '1001',
   require_photos: '1', require_parts: '1', photo_exempt_types: 'estimate',
+  inspection_next_number: '1001', inspector_license: '',
   truck_count_day: '5', truck_count_reminders: '1', inventory_manager_id: '', readiness_required: '1', readiness_spares: '1',
   alert_email: '1', alert_sms: '0', alert_phone: '',
   office_address: '', office_lat: '', office_lng: '', office_radius_m: '300', clock_alert: '1', clock_alert_out: '0', clock_allow_jobsite: '1',
@@ -250,6 +251,37 @@ function migrate(db) {
     );
     CREATE INDEX IF NOT EXISTS idx_phone_calls_customer ON phone_calls(customer_id, created_at);
     CREATE INDEX IF NOT EXISTS idx_phone_calls_sid ON phone_calls(call_sid);
+    -- Everything that happened to one extinguisher: inspections, recharges, hydro tests, replacement.
+    CREATE TABLE IF NOT EXISTS extinguisher_events (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      extinguisher_id INTEGER NOT NULL REFERENCES extinguishers(id) ON DELETE CASCADE,
+      event_date TEXT NOT NULL, kind TEXT NOT NULL, result TEXT, services TEXT, note TEXT,
+      report_id INTEGER, user_name TEXT,
+      created_at TEXT NOT NULL DEFAULT (datetime('now','localtime'))
+    );
+    CREATE INDEX IF NOT EXISTS idx_ext_events ON extinguisher_events(extinguisher_id, event_date);
+    -- Fire inspection reports (fire alarm, sprinkler, kitchen hood, extinguishers, emergency lighting…).
+    CREATE TABLE IF NOT EXISTS inspection_reports (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      number INTEGER, token TEXT UNIQUE,
+      customer_id INTEGER NOT NULL REFERENCES customers(id) ON DELETE CASCADE,
+      site_id INTEGER REFERENCES locations(id) ON DELETE SET NULL,
+      service_call_id INTEGER REFERENCES service_calls(id) ON DELETE SET NULL,
+      fire_system_id INTEGER REFERENCES fire_systems(id) ON DELETE SET NULL,
+      report_type TEXT NOT NULL, frequency TEXT NOT NULL DEFAULT 'annual',
+      status TEXT NOT NULL DEFAULT 'draft', result TEXT,
+      inspection_date TEXT NOT NULL, inspector_name TEXT, inspector_license TEXT, technician_id INTEGER,
+      ahj TEXT, ahj_email TEXT, contact_name TEXT, contact_email TEXT,
+      checklist TEXT NOT NULL DEFAULT '{}', devices TEXT NOT NULL DEFAULT '[]', units TEXT NOT NULL DEFAULT '[]', custom_items TEXT NOT NULL DEFAULT '[]',
+      notes TEXT, recommendations TEXT,
+      signed_by TEXT, signed_at TEXT, signature_key TEXT,
+      completed_at TEXT, completed_by TEXT, followup_call_id INTEGER,
+      sent_at TEXT, sent_to TEXT, reopened_reason TEXT,
+      created_by TEXT,
+      created_at TEXT NOT NULL DEFAULT (datetime('now','localtime')),
+      updated_at TEXT
+    );
+    CREATE INDEX IF NOT EXISTS idx_inspections_customer ON inspection_reports(customer_id, inspection_date);
     -- Latest GPS position per vehicle, from the tracking provider.
     CREATE TABLE IF NOT EXISTS vehicle_positions (
       vehicle_id INTEGER PRIMARY KEY REFERENCES vehicles(id) ON DELETE CASCADE,

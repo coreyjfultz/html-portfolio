@@ -6,6 +6,8 @@ import { hashPassword } from './security.js';
 import { ingest, processInvoice } from './receiving.js';
 import { sendForSignature } from './proposals.js';
 import { submitCount, countSheet } from './truckstock.js';
+import { createReport, completeReport } from './inspections.js';
+import { allItems } from '../public/js/inspections.js';
 import { logEvent, putOnTest } from './monitoring.js';
 
 const db = openDb();
@@ -270,6 +272,47 @@ for (const [name, tag, category, v, cost, status] of [
   db.prepare("UPDATE truck_counts SET created_at = datetime('now','localtime','-3 days')").run();
   const install = db.prepare("SELECT id FROM service_calls WHERE call_type = 'installation' AND status IN ('scheduled','new') ORDER BY scheduled_start LIMIT 1").get();
   if (install) for (const [k, q] of [['cam4k', 4], ['nvr8', 1], ['hdd4', 1], ['cat6', 1]]) C('job_materials', { service_call_id: install.id, item_id: items[k].id, qty: q });
+}
+
+// Fire: extinguisher tags & ratings, a clean-agent system, and inspection reports.
+{
+  db.prepare("UPDATE extinguishers SET tag_number = 'T' || (4100 + id), brand = 'Amerex', mount = CASE WHEN location LIKE '%Kitchen%' THEN 'bracket' ELSE 'wall hook' END, rating = CASE size WHEN '5 lb' THEN '3-A:40-B:C' WHEN '10 lb' THEN '4-A:80-B:C' WHEN '20 lb' THEN '10-A:120-B:C' WHEN '15 lb' THEN '10-B:C' ELSE NULL END").run();
+  db.prepare("UPDATE extinguishers SET manufacture_date = COALESCE(manufacture_date, date(last_hydro, '-2 months')) WHERE manufacture_date IS NULL AND last_hydro IS NOT NULL").run();
+  for (const e of db.prepare('SELECT id FROM extinguishers').all()) update(db, 'extinguishers', e.id, { notes: null }, sys); // let the date rules fill in 6-year / hydro
+  const miller = custs.find(c => c.name === 'Miller Manufacturing');
+  if (miller) C('fire_systems', { customer_id: miller.id, system_type: 'clean agent suppression', location: 'Server room', panel_brand: 'Kidde', panel_model: 'ARIES NetLink', ahj: 'Clark County FD', last_inspection: addMonths(day(20), -6) });
+  const mikeUser = { id: db.prepare("SELECT id FROM users WHERE email = 'mike@demo.local'").get()?.id, name: 'Mike Alvarez', role: 'owner', technician_id: mike.id };
+  db.prepare("UPDATE settings SET value = 'NICET II #118-442' WHERE key = 'inspector_license'").run();
+  const passAll = (id, tweak = {}) => {
+    const r = db.prepare('SELECT * FROM inspection_reports WHERE id = ?').get(id);
+    const items = allItems(r.report_type, []);
+    const checklist = Object.fromEntries(items.map(i => [i.id, i.kind === 'value' ? { v: { battery_date: '04/2024', battery_voltage: '27.1 V', station_operator: 'Op. 42, conf. 88213', static_psi: '78 psi', main_drain: '78 / 61 psi', cyl_date: '2019', agent_type: 'FM-200' }[i.id] || 'OK' } : { r: 'pass' }]));
+    Object.assign(checklist, tweak);
+    db.prepare('UPDATE inspection_reports SET checklist = ? WHERE id = ?').run(JSON.stringify(checklist), id);
+  };
+  const dental = custs.find(c => c.name === 'Springfield Family Dental');
+  const dentalFa = dental && db.prepare("SELECT * FROM fire_systems WHERE customer_id = ? AND system_type = 'fire alarm'").get(dental.id);
+  if (dentalFa) {
+    const id = createReport(db, { customer_id: dental.id, fire_system_id: dentalFa.id, inspection_date: dentalFa.last_inspection }, mikeUser);
+    const devices = [['Smoke detector', 'Reception', '1-001'], ['Smoke detector', 'Hallway A', '1-002'], ['Smoke detector', 'Operatory 1', '1-003'], ['Smoke detector', 'Operatory 2', '1-004'], ['Smoke detector', 'Operatory 3', '1-005'],
+      ['Heat detector', 'Break room', '1-006'], ['Duct detector', 'RTU-1', '1-007'], ['Pull station', 'Front exit', '1-008'], ['Pull station', 'Rear exit', '1-009'], ['Horn/strobe', 'Reception', 'NAC 1'], ['Horn/strobe', 'Hallway A', 'NAC 1'], ['Strobe', 'Restroom', 'NAC 2']]
+      .map(([type, location, address]) => ({ type, location, address, result: location === 'Operatory 3' ? 'fail' : 'pass', note: location === 'Operatory 3' ? 'Dirty — did not alarm with test smoke; replace head' : '' }));
+    db.prepare('UPDATE inspection_reports SET devices = ?, ahj_email = ? WHERE id = ?').run(JSON.stringify(devices), 'fireprevention@springfield-oh.example', id);
+    passAll(id);
+    completeReport(db, db.prepare('SELECT * FROM inspection_reports WHERE id = ?').get(id), { signed_by: 'Karen Lee', create_followup: false }, mikeUser, 'seed');
+    db.prepare("UPDATE inspection_reports SET status = 'sent', completed_at = inspection_date || 'T15:20', sent_at = inspection_date || 'T16:05', sent_to = 'office@sfdental.example, fireprevention@springfield-oh.example', recommendations = 'Replace the smoke detector in Operatory 3. Plan on replacing panel batteries at the next annual (installed 04/2024).' WHERE id = ?").run(id);
+  }
+  const rosie = custs.find(c => c.name === "Rosie's Diner");
+  const hood = rosie && db.prepare("SELECT * FROM fire_systems WHERE customer_id = ? AND system_type = 'kitchen hood suppression'").get(rosie.id);
+  if (hood) {
+    const id = createReport(db, { customer_id: rosie.id, fire_system_id: hood.id, inspection_date: hood.last_inspection }, mikeUser);
+    passAll(id, { grease: { r: 'fail', note: 'Heavy grease in the duct above the fryers — recommend cleaning within 30 days' } });
+    completeReport(db, db.prepare('SELECT * FROM inspection_reports WHERE id = ?').get(id), { signed_by: 'Rosie Kim', create_followup: false }, mikeUser, 'seed');
+    db.prepare("UPDATE inspection_reports SET completed_at = inspection_date || 'T10:40' WHERE id = ?").run(id);
+    // An extinguisher walk-through in progress today
+    const job = C('service_calls', { customer_id: rosie.id, title: 'Annual extinguisher inspection', call_type: 'inspection', system_type: 'extinguisher', technician_id: mike.id, scheduled_start: `${today}T07:00`, duration_hours: 1, allow_conflict: true, notify: false });
+    createReport(db, { customer_id: rosie.id, report_type: 'extinguishers', service_call_id: job.id }, mikeUser);
+  }
 }
 
 // Map points around Springfield, OH for customers/sites, and live truck positions.

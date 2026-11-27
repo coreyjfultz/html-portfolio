@@ -2,6 +2,7 @@
 // email verification, invites, and the customer's own invoices, payments,
 // service history, requests and agreements. Every query is limited to the
 // accounts the signed-in customer owns.
+import { REPORT_TYPES, RESULTS } from '../public/js/inspections.js';
 import { isHttps } from './net.js';
 import crypto from 'node:crypto';
 import { getSettings, tx } from './db.js';
@@ -339,6 +340,8 @@ export function registerPortalRoutes(r) {
       alarms: q('alarm_systems', 'location, panel_brand, monitoring_account, next_test'),
       fire: q('fire_systems', 'location, system_type, next_inspection'),
       extinguishers: db.prepare("SELECT COUNT(*) AS n, MIN(next_annual) AS next_annual FROM extinguishers WHERE customer_id = ? AND status NOT IN ('removed')").get(id),
+      reports: db.prepare("SELECT number, report_type, inspection_date, result, token FROM inspection_reports WHERE customer_id = ? AND status <> 'draft' ORDER BY inspection_date DESC LIMIT 30").all(id)
+        .map(r => ({ number: r.number, type: REPORT_TYPES[r.report_type]?.label || r.report_type, date: r.inspection_date, result: RESULTS[r.result] || r.result, link: `/report/${r.token}` })),
     };
   });
 
