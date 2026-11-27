@@ -105,7 +105,7 @@ export async function detail(view, [id]) {
     <div class="grid g3">
       <div class="card span2"><div class="card-head"><h2>Job details</h2></div><div class="card-body"><dl class="dl">
         <dt>Customer</dt><dd><a href="#/customers/${cust.id}">${cust.name}</a> ${typeBadge(cust.type)}</dd>
-        <dt>Phone</dt><dd>${cust.phone ? html`<a href="tel:${cust.phone}">${cust.phone}</a>` : '—'}</dd>
+        <dt>Phone</dt><dd>${cust.phone ? html`<a href="tel:${cust.phone}" data-dial data-customer="${cust.id}" data-call="${c.id}">${cust.phone}</a>` : '—'}</dd>
         <dt>Address</dt><dd>${addr || '—'} ${addr ? html`<a class="small" target="_blank" rel="noopener" href="https://www.google.com/maps/dir/?api=1&destination=${encodeURIComponent(addr)}">Directions ↗</a>` : ''}</dd>
         ${cust.access_notes ? html`<dt>Site access</dt><dd style="white-space:pre-wrap">${cust.access_notes}</dd>` : ''}
         <dt>Technician</dt><dd>${c.technician_id_label ? html`<span class="dot" style="background:${c.technician_color}"></span> ${c.technician_id_label}` : html`<span class="muted">Unassigned</span>`}</dd>

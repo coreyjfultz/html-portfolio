@@ -16,7 +16,7 @@ const SETTINGS = [
 export async function render(view, _, query) {
   const tab = query.tab || 'company';
   mount(view, html`<div class="page-head"><div><h1>Settings</h1><div class="sub">Company, users and data</div></div></div>
-    <div class="tabs">${[['company', 'Company & billing'], ['payments', 'Payments'], ['notifications', 'Texts & email'], ['calendars', 'Calendars'], ['receiving', 'Receiving'], ['field', 'Field rules'], ['users', 'Users & logins'], ['audit', 'Activity log'], ['data', 'Backup & data']].map(([k, l]) => html`<button class="${k === tab ? 'on' : ''}" data-tab="${k}">${l}</button>`)}</div>
+    <div class="tabs">${[['company', 'Company & billing'], ['payments', 'Payments'], ['notifications', 'Texts & email'], ['calendars', 'Calendars'], ['receiving', 'Receiving'], ['field', 'Field rules'], ['phone', 'Phone & on-call'], ['users', 'Users & logins'], ['audit', 'Activity log'], ['data', 'Backup & data']].map(([k, l]) => html`<button class="${k === tab ? 'on' : ''}" data-tab="${k}">${l}</button>`)}</div>
     <div data-pane></div>`);
   $$('[data-tab]', view).forEach(b => b.addEventListener('click', () => { location.hash = `#/settings?tab=${b.dataset.tab}`; }));
   const pane = $('[data-pane]', view);
@@ -182,6 +182,8 @@ export async function render(view, _, query) {
     });
   }
 
+  if (tab === 'phone') await (await import('./phone.js')).settingsPane(pane, { settingsCards, wireSettingsCards });
+
   if (tab === 'field') {
     const [s, users] = await Promise.all([GET('/api/settings'), GET('/api/users')]);
     mount(pane, settingsCards(s, [
@@ -317,7 +319,7 @@ export async function account(view) {
 // Small helper for settings tabs that are just a few switches and fields.
 export function settingsCards(s, cards) {
   const field = ([k, label, type, opts]) => {
-    if (type === 'check') return html`<label class="row"><input type="checkbox" name="${k}" ${s[k] === '1' ? raw('checked') : ''}> <span>${label}</span></label>`;
+    if (type === 'check') return html`<label class="check-row"><input type="checkbox" name="${k}" ${s[k] === '1' ? raw('checked') : ''}> <span>${label}</span></label>`;
     if (type === 'select') return html`<div class="field"><label for="st_${k}">${label}</label><select id="st_${k}" name="${k}">${opts.map(([v, l]) => html`<option value="${v}" ${String(s[k] ?? '') === v ? raw('selected') : ''}>${l}</option>`)}</select></div>`;
     if (type === 'secret') return html`<div class="field"><label for="st_${k}">${label}</label><input id="st_${k}" name="${k}" type="password" autocomplete="off" placeholder="${s[k] ? '•••••••• (saved — leave blank to keep)' : ''}"></div>`;
     return html`<div class="field"><label for="st_${k}">${label}</label><input id="st_${k}" name="${k}" type="${type || 'text'}" value="${s[k] ?? ''}" ${type === 'number' ? raw('step="any"') : ''} placeholder="${typeof opts === 'string' ? opts : ''}" autocomplete="off"></div>`;

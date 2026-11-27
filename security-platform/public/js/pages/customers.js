@@ -37,7 +37,7 @@ export async function list(view, _, query) {
       columns: [
         { label: 'Name', render: c => html`<b>${c.name}</b>${c.contact_name ? html`<div class="small muted">${c.contact_name}</div>` : ''}` },
         { label: 'Type', render: c => typeBadge(c.type) },
-        { label: 'Phone', render: c => c.phone ? html`<a href="tel:${c.phone}">${c.phone}</a>` : '—' },
+        { label: 'Phone', render: c => c.phone ? html`<a href="tel:${c.phone}" data-dial data-customer="${c.id}">${c.phone}</a>` : '—' },
         { label: 'Email', render: c => c.email ? html`<a href="mailto:${c.email}">${c.email}</a>` : '—' },
         { label: 'City', render: c => c.service_city || c.city || '—' },
         ...(office ? [
@@ -111,7 +111,7 @@ export async function detail(view, [id], query) {
           <select id="stageSel" data-stage-sel style="width:auto;min-height:32px;padding:4px 8px">${STAGES.map(st => html`<option value="${st}" ${st === c.stage ? raw('selected') : ''}>${STAGE_INFO[st].label}</option>`)}</select>`
           : stageBadge(c.stage)}
           ${parent ? html`<span class="small muted">Part of <a href="#/customers/${parent.id}">${parent.name}</a></span>` : ''}</div>
-        <div class="sub">${[c.contact_name, c.phone, c.account_number ? `Acct ${c.account_number}` : ''].filter(Boolean).join(' · ')}</div></div>
+        <div class="sub">${[c.contact_name, c.account_number ? `Acct ${c.account_number}` : ''].filter(Boolean).join(' · ')}${c.phone ? html`${c.contact_name || c.account_number ? ' · ' : ''}<a href="tel:${c.phone}" data-dial data-customer="${c.id}">📞 ${c.phone}</a>` : ''}</div></div>
       <div class="actions">
         ${editor ? html`<button class="btn" data-edit>Edit</button>` : ''}
         <button class="btn" data-newcall>+ Service call</button>
@@ -205,7 +205,7 @@ export async function detail(view, [id], query) {
         columns: [
           { label: 'Location', render: l => html`<b>${l.name}</b>${l.active ? '' : html` <span class="badge">inactive</span>`}` },
           { label: 'Address', render: l => html`${[l.address, l.city, l.state].filter(Boolean).join(', ') || '—'}${l.address ? html` <a class="small" target="_blank" rel="noopener" href="https://www.google.com/maps/search/?api=1&query=${encodeURIComponent([l.address, l.city, l.state, l.zip].filter(Boolean).join(' '))}">Map ↗</a>` : ''}` },
-          { label: 'Site contact', render: l => html`${l.site_contact || '—'}${l.phone ? html`<div class="small"><a href="tel:${l.phone}">${l.phone}</a></div>` : ''}` },
+          { label: 'Site contact', render: l => html`${l.site_contact || '—'}${l.phone ? html`<div class="small"><a href="tel:${l.phone}" data-dial data-customer="${l.customer_id}">${l.phone}</a></div>` : ''}` },
           { label: 'Gate code', render: l => secretView('locations', l.id, 'gate_code', l.gate_code__set) },
           { label: 'Systems', render: l => [...cams, ...alarms, ...fires].filter(x => x.site_id === l.id).length + ' systems · ' + exts.filter(x => x.site_id === l.id).length + ' ext.' },
           ...(editor ? [{ label: '', cls: 'actions-cell', render: l => html`<button class="btn sm ghost" data-editloc="${l.id}">Edit</button>` }] : []),

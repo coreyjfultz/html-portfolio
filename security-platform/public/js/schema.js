@@ -241,10 +241,25 @@ export const RESOURCES = {
       { name: 'skills', label: 'Skills / certifications', type: 'text', list: true, help: 'e.g. NICET II, cameras, access control' },
       { name: 'color', label: 'Calendar color', type: 'color', default: '#2563eb' },
       { name: 'calendar_token', label: 'Calendar feed key', type: 'text', readonly: true, hidden: true },
+      { name: 'twilio_number', label: 'Direct business number (optional)', type: 'tel', help: 'A Twilio number just for this tech. Calls to it ring their phone, and calls they make from the app show it. Leave blank to use the shared company number.' },
       { name: 'hourly_cost', label: 'Hourly cost to company', type: 'money', help: 'Wage + taxes/benefits. Used for profit estimates.' },
       { name: 'bill_rate', label: 'Default billing rate / hr', type: 'money' },
       { name: 'active', label: 'Active', type: 'checkbox', default: 1, list: true },
       { name: 'notes', label: 'Notes', type: 'textarea', full: true },
+    ],
+  },
+
+  // On-call rotation: who answers after-hours calls. Shows on the tech's calendar.
+  on_call_shifts: {
+    label: 'On-call shifts', singular: 'On-call shift', labelExpr: "'On call'",
+    read: ALL, write: G.manage, order: 'starts_at', dateField: 'starts_at',
+    fields: [
+      { name: 'technician_id', label: 'On call', type: 'ref', ref: 'technicians', required: true, onDelete: 'cascade', list: true },
+      { name: 'backup_technician_id', label: 'Backup', type: 'ref', ref: 'technicians', onDelete: 'set null', list: true },
+      { name: 'starts_at', label: 'Starts', type: 'datetime', required: true, list: true },
+      { name: 'ends_at', label: 'Ends', type: 'datetime', required: true, list: true },
+      { name: 'notes', label: 'Notes', type: 'text', full: true },
+      { name: 'cal_sequence', label: 'Calendar revision', type: 'number', default: 0, hidden: true },
     ],
   },
 

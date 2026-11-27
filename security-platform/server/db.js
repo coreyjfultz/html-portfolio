@@ -43,6 +43,10 @@ export const DEFAULT_SETTINGS = {
   truck_count_day: '5', truck_count_reminders: '1', inventory_manager_id: '', readiness_required: '1', readiness_spares: '1',
   alert_email: '1', alert_sms: '0', alert_phone: '',
   office_address: '', office_lat: '', office_lng: '', office_radius_m: '300', clock_alert: '1', clock_alert_out: '0', clock_allow_jobsite: '1',
+  voice_enabled: '0', voice_number: '', voice_token: '', office_phone: '', office_days: '1,2,3,4,5', office_open: '08:00', office_close: '17:00',
+  voice_greeting: 'Thank you for calling {company}.', voice_after_hours: 'Our office is closed. Please hold while we connect you to the technician on call.',
+  voice_voicemail: 'Sorry, we could not reach anyone right now. Please leave your name, number and address after the tone and we will call you right back.',
+  voice_whisper: '1', voice_grant_hours: '24', oncall_notify: '1',
   stripe_secret: '', stripe_webhook_secret: '', stripe_ach: '1',
   qbo_client_id: '', qbo_client_secret: '', qbo_environment: 'sandbox', qbo_realm_id: '', qbo_company_name: '',
   qbo_access: '', qbo_refresh: '', qbo_access_expires: '', qbo_item_id: '', qbo_tax_item_id: '', qbo_auto_sync: '1', qbo_last_sync: '',
@@ -69,7 +73,7 @@ export const SECRET_SETTINGS = new Set(['smtp_pass', 'twilio_token', 'stripe_sec
 // Managed by the system only: never sent to the browser, never set through the settings form.
 export const INTERNAL_SETTINGS = new Set(['qbo_access', 'qbo_refresh', 'qbo_access_expires', 'qbo_realm_id', 'qbo_company_name', 'qbo_last_sync', 'invoice_next_number_lock']);
 // Settings that are never sent to non-admin users or editable through PUT /api/settings.
-export const PRIVATE_SETTINGS = new Set(['inbound_token', 'calendar_token', 'smtp_pass', 'twilio_token', 'stripe_secret', 'stripe_webhook_secret']);
+export const PRIVATE_SETTINGS = new Set(['voice_token', 'inbound_token', 'calendar_token', 'smtp_pass', 'twilio_token', 'stripe_secret', 'stripe_webhook_secret']);
 
 function columnSql(f) {
   let sql = `"${f.name}" ${SQL_TYPES[f.type] || 'TEXT'}`;
@@ -230,6 +234,19 @@ function migrate(db) {
       created_at TEXT NOT NULL DEFAULT (datetime('now','localtime'))
     );
     CREATE INDEX IF NOT EXISTS idx_time_user ON time_entries(user_id, clock_in);
+    -- Calls through the company phone number (Twilio): inbound routing and click-to-call.
+    CREATE TABLE IF NOT EXISTS phone_calls (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      direction TEXT NOT NULL, call_sid TEXT, from_number TEXT, to_number TEXT,
+      customer_id INTEGER REFERENCES customers(id) ON DELETE SET NULL,
+      service_call_id INTEGER, user_id INTEGER, technician_id INTEGER,
+      route TEXT, routed_to TEXT, answered_by TEXT, status TEXT, duration INTEGER,
+      voicemail_url TEXT, voicemail_seconds INTEGER, dial_number TEXT,
+      created_at TEXT NOT NULL DEFAULT (datetime('now','localtime')),
+      updated_at TEXT
+    );
+    CREATE INDEX IF NOT EXISTS idx_phone_calls_customer ON phone_calls(customer_id, created_at);
+    CREATE INDEX IF NOT EXISTS idx_phone_calls_sid ON phone_calls(call_sid);
     CREATE TABLE IF NOT EXISTS monitoring_events (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       account_id INTEGER NOT NULL REFERENCES monitoring_accounts(id) ON DELETE CASCADE,
@@ -284,6 +301,7 @@ function migrate(db) {
   }
 
   if (!db.prepare('PRAGMA table_info(qbo_map)').all().some(c => c.name === 'dirty')) db.exec('ALTER TABLE qbo_map ADD COLUMN dirty INTEGER NOT NULL DEFAULT 0');
+  if (!db.prepare('PRAGMA table_info(users)').all().some(c => c.name === 'phone')) db.exec('ALTER TABLE users ADD COLUMN phone TEXT');
 
   // Customers that existed before stages were added get a stage from their status.
   db.exec(`UPDATE customers SET stage = CASE status WHEN 'prospect' THEN 'lead' WHEN 'inactive' THEN 'lost' ELSE 'active' END WHERE stage IS NULL`);
@@ -293,6 +311,7 @@ function migrate(db) {
   // Secret for the inbound-email webhook URL.
   db.prepare("UPDATE settings SET value = ? WHERE key = 'inbound_token' AND (value IS NULL OR value = '')").run(randomBytes(24).toString('base64url'));
   db.prepare("UPDATE settings SET value = ? WHERE key = 'calendar_token' AND (value IS NULL OR value = '')").run(randomBytes(18).toString('base64url'));
+  db.prepare("UPDATE settings SET value = ? WHERE key = 'voice_token' AND (value IS NULL OR value = '')").run(randomBytes(18).toString('base64url'));
   for (const t of db.prepare('SELECT id FROM technicians WHERE calendar_token IS NULL').all()) {
     db.prepare('UPDATE technicians SET calendar_token = ? WHERE id = ?').run(randomBytes(18).toString('base64url'), t.id);
   }

@@ -272,6 +272,18 @@ for (const [name, tag, category, v, cost, status] of [
   if (install) for (const [k, q] of [['cam4k', 4], ['nvr8', 1], ['hdd4', 1], ['cat6', 1]]) C('job_materials', { service_call_id: install.id, item_id: items[k].id, qty: q });
 }
 
+// On-call rotation (started 3 days ago) and a few calls in the log.
+{
+  const start = day(-3);
+  [[mike, jen], [jen, sam], [sam, mike], [mike, jen], [jen, sam], [sam, mike]].forEach(([t, bk], i) =>
+    db.prepare('INSERT INTO on_call_shifts (technician_id, backup_technician_id, starts_at, ends_at, cal_sequence) VALUES (?,?,?,?,0)').run(t.id, bk.id, `${addDays(start, i * 7)}T08:00`, `${addDays(start, (i + 1) * 7)}T08:00`));
+  const pc = db.prepare(`INSERT INTO phone_calls (direction, from_number, to_number, customer_id, user_id, technician_id, route, routed_to, answered_by, status, duration, voicemail_url, voicemail_seconds, created_at)
+    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)`);
+  pc.run('inbound', '+15550301', '+15555550100', custs[0]?.id ?? null, null, mike.id, 'on call', 'Mike Alvarez', 'Mike Alvarez', 'answered', 312, null, null, `${day(-1)} 22:14:00`);
+  pc.run('inbound', '+15550399', '+15555550100', null, null, null, 'on call', 'Mike Alvarez → Jen Park', null, 'voicemail', 41, 'https://api.twilio.com/demo-recording', 33, `${day(-2)} 06:02:00`);
+  pc.run('outbound', '+15555550100', '+15550302', custs[1]?.id ?? null, null, jen.id, 'click to call', 'Jen Park', null, 'completed', 95, null, null, `${today} 09:41:00`);
+}
+
 });
 
 // Time clock: office location, two weeks of punches, and one clock-in away from the office today.

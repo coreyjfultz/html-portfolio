@@ -21,6 +21,8 @@ export async function render(view) {
     R.list('inventory_items', { active: 1 }),
   ]);
   const truck = vehicles[0];
+  const oncall = await GET('/api/oncall/now').catch(() => ({}));
+  const myShift = [oncall.current, oncall.next].find(s => s && (s.technician_id === techId || s.backup_technician_id === techId));
   const [stock, lastCount] = truck ? await Promise.all([GET('/api/stock', { location_id: truck.id }), GET(`/api/vehicles/${truck.id}/truck-stock`).then(d => d.counts[0])]) : [[], null];
   const countDue = truck && (!lastCount || (Date.now() - new Date(lastCount.created_at.replace(' ', 'T'))) / 86400e3 >= 7);
   calls.sort((a, b) => (a.scheduled_start || '').localeCompare(b.scheduled_start || ''));
@@ -31,6 +33,7 @@ export async function render(view) {
       <div class="actions"><button class="btn" data-sync>Add to my phone calendar</button><a class="btn" href="#/calendar">My calendar</a><a class="btn" href="#/calls?new=1">+ Service call</a></div></div>
     <div class="stack">
       <div class="card"><div class="card-body" data-clock></div></div>
+      ${myShift ? html`<div class="banner ${myShift === oncall.current ? 'warn' : ''}">📟 ${myShift === oncall.current ? 'You’re' : 'Next up: you’re'} ${myShift.technician_id === techId ? 'on call' : 'the on-call backup'} ${myShift === oncall.current ? `until ${fmtDateTime(myShift.ends_at)}` : `from ${fmtDateTime(myShift.starts_at)}`}. <a href="#/phone">Schedule</a></div>` : ''}
       <div class="card hidden" data-ready></div>
       ${countDue ? html`<div class="banner warn row" style="justify-content:space-between">🧮 Weekly truck count is due for ${truck.unit_name}${lastCount ? '' : ' (never counted)'}. <button class="btn sm primary" data-count>Count my truck</button></div>` : ''}
       ${calls.length ? calls.map(c => html`<a class="card" href="#/calls/${c.id}" style="display:block;color:inherit;text-decoration:none;border-left:5px solid ${c.priority === 'emergency' ? 'var(--bad)' : c.technician_color || 'var(--primary)'}">

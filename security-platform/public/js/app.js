@@ -1,6 +1,7 @@
 import { html, mount, $, $$, toast, initials, esc, installGlobalHandlers, icon } from './ui.js';
 import { api, GET, POST } from './api.js';
 import { G, ROLE_INFO } from './schema.js';
+import { installDialer } from './dial.js';
 
 export const state = { user: null, settings: {}, company: '' };
 export const can = {
@@ -30,6 +31,7 @@ const NAV = [
   { href: '#/calendar', label: 'Calendar', ico: 'calendar-days' },
   { href: '#/schedule', label: 'Dispatch board', ico: 'calendar-range' },
   { href: '#/technicians', label: 'Technicians', ico: 'hard-hat' },
+  { href: '#/phone', label: 'On-call & phone', ico: 'phone-call' },
   { section: 'Billing', roles: G.billing },
   { href: '#/invoices', label: 'Invoices', ico: 'receipt', roles: G.billing },
   { href: '#/payments', label: 'Payments', ico: 'banknote', roles: G.billing },
@@ -77,6 +79,7 @@ const ROUTES = [
   [/^vehicles$/, 'vehicles', 'list'],
   [/^vehicles\/(\d+)$/, 'vehicles', 'detail'],
   [/^technicians$/, 'technicians'],
+  [/^phone$/, 'phone'],
   [/^reports$/, 'reports'],
   [/^accounting$/, 'accounting'],
   [/^settings$/, 'settings'],
@@ -87,6 +90,7 @@ const root = document.getElementById('root');
 
 async function boot() {
   installGlobalHandlers();
+  installDialer();
   window.addEventListener('auth-lost', () => { if (state.user) { state.user = null; toast('Your session ended. Please sign in again.', 'error'); boot(); } });
   try {
     const s = await GET('/api/auth/state');

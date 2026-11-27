@@ -14,6 +14,7 @@ const { createServer } = await import('../server/server.js');
 const { notifyIdle } = await import('../server/notify.js');
 
 let server, base, db;
+export const getBase = () => base;
 before(async () => {
   db = openDb(':memory:');
   server = createServer(db);
@@ -260,6 +261,126 @@ test('time clock: in/out with location; away from the office alerts the owner; j
   assert.match(text, /Employee,Role,Date,Clock in/);
   assert.match(text, /Forgot to clock out/);
   assert.equal((await tech.get('/api/timeclock/timesheet')).status, 403);
+});
+
+test('on-call rotation: shifts can’t overlap, land on the tech’s calendar feed, and invites go out', async () => {
+  const start = (() => { const d = new Date(Date.now() - 2 * 86400e3); const p = n => String(n).padStart(2, '0'); return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`; })();
+  assert.equal((await tech.post('/api/oncall/rotation', { technician_ids: [ids.tech], start })).status, 403);
+  const r = await owner.post('/api/oncall/rotation', { technician_ids: [ids.tech, ids.tech2], start, handoff: '08:00', days: 7, shifts: 4 });
+  assert.equal(r.data.created, 4);
+  const shifts = (await owner.get('/api/r/on_call_shifts')).data;
+  assert.equal(shifts[0].technician_id, ids.tech);
+  assert.equal(shifts[0].backup_technician_id, ids.tech2);
+  assert.equal(shifts[1].technician_id, ids.tech2);
+  const overlap = await owner.post('/api/r/on_call_shifts', { technician_id: ids.tech2, starts_at: `${start}T12:00`, ends_at: `${start}T18:00` });
+  assert.equal(overlap.status, 409);
+  const now = (await tech.get('/api/oncall/now')).data;
+  assert.equal(now.current.tech_name, 'Tess');
+  assert.equal(now.current.tech_phone, undefined, 'phone numbers are not exposed');
+  await notifyIdle();
+  const invite = db.prepare("SELECT * FROM notifications WHERE related_type = 'on_call' AND channel = 'email' AND to_addr = 'tess@example.com'").get();
+  assert.match(invite.subject, /You're on call/);
+  assert.ok(db.prepare("SELECT 1 FROM notifications WHERE related_type = 'on_call' AND channel = 'sms'").get(), 'tech gets a text too');
+  const token = db.prepare('SELECT calendar_token FROM technicians WHERE id = ?').get(ids.tech).calendar_token;
+  const ics = await (await fetch(`${base}/api/cal/tech-${token}.ics`)).text();
+  assert.match(ics, /SUMMARY:On call — Field Co/);
+  assert.match(ics, /SUMMARY:On-call backup — Field Co/);
+  ids.shift = shifts[0].id;
+});
+
+test('company phone: after-hours calls ring the on-call tech (press 1), then the backup, then voicemail; signatures are checked', async () => {
+  const { twilioSignature } = await import('../server/phone.js');
+  const twilioCalls = [];
+  const http = await import('node:http');
+  const fake = http.createServer((req, res) => { let b = ''; req.on('data', c => b += c); req.on('end', () => { twilioCalls.push({ url: req.url, body: Object.fromEntries(new URLSearchParams(b)) }); res.writeHead(201, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ sid: 'CA' + twilioCalls.length })); }); });
+  await new Promise(r => fake.listen(0, '127.0.0.1', r));
+  process.env.TWILIO_API_BASE = `http://127.0.0.1:${fake.address().port}`;
+  try {
+    // Office closed all week so the on-call path runs regardless of when the test runs.
+    await owner.put('/api/settings', { twilio_sid: 'AC123', twilio_token: 'tok_abc', twilio_from: '+15555550100', voice_enabled: '1', public_url: base, office_days: '', office_phone: '555-555-0199' });
+    const setup = (await owner.get('/api/phone/setup')).data;
+    assert.equal(setup.ok, true);
+    const hookBase = setup.incoming_url.replace(/\/incoming$/, '');
+    const twilio = async (path, params, { sign = true } = {}) => {
+      const url = `${hookBase}${path}`;
+      const res = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded', ...(sign ? { 'X-Twilio-Signature': twilioSignature('tok_abc', url, params) } : {}) }, body: new URLSearchParams(params) });
+      return { status: res.status, xml: await res.text() };
+    };
+    assert.equal((await twilio('/incoming', { CallSid: 'CA9', From: '+15553010001', To: '+15555550100' }, { sign: false })).status, 403, 'unsigned requests are refused');
+    const bad = await fetch(`${hookBase}/incoming`, { method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded', 'X-Twilio-Signature': 'nope' }, body: 'From=1' });
+    assert.equal(bad.status, 403);
+
+    // Harbor Dental calls after hours
+    let r = await twilio('/incoming', { CallSid: 'CA100', From: '+15553010001', To: '+15555550100' });
+    assert.equal(r.status, 200);
+    assert.match(r.xml, /Our office is closed/);
+    assert.match(r.xml, /<Number url="[^"]*whisper\?call=\d+&amp;tech=\d+">\+15552010001<\/Number>/, 'rings Tess (on call)');
+    const callId = Number(r.xml.match(/call=(\d+)/)[1]);
+    const row = () => db.prepare('SELECT * FROM phone_calls WHERE id = ?').get(callId);
+    assert.equal(row().customer_id, ids.cust, 'caller recognised');
+    // Whisper asks the tech to press 1
+    r = await twilio(`/whisper?call=${callId}&tech=${ids.tech}`, {});
+    assert.match(r.xml, /After hours call from Harbor Dental\. Press 1 to accept/);
+    // Tess doesn't answer → Bo (backup)
+    r = await twilio(`/dial-result?call=${callId}&step=0`, { DialCallStatus: 'no-answer' });
+    assert.match(r.xml, /\+15552010002/);
+    // Voicemail picks up on Bo's phone but nobody pressed 1 → still not answered → voicemail
+    r = await twilio(`/dial-result?call=${callId}&step=1`, { DialCallStatus: 'completed' });
+    assert.match(r.xml, /<Record /);
+    r = await twilio(`/voicemail?call=${callId}`, { RecordingUrl: 'https://api.twilio.com/rec/RE1', RecordingDuration: '22' });
+    assert.equal(row().status, 'voicemail');
+    assert.ok((await owner.get('/api/alerts')).data.find(a => a.kind === 'voicemail' && /Harbor Dental/.test(a.title)));
+
+    // Second call: Tess presses 1 → answered and she gets access to the customer for a day
+    r = await twilio('/incoming', { CallSid: 'CA101', From: '+15553010001', To: '+15555550100' });
+    const id2 = Number(r.xml.match(/call=(\d+)/)[1]);
+    db.prepare('DELETE FROM tech_access_grants').run();
+    db.prepare("UPDATE service_calls SET technician_id = ? WHERE customer_id = ?").run(ids.tech2, ids.cust);
+    assert.equal((await tech.get(`/api/r/customers/${ids.cust}`)).status, 404, 'not on Tess’s schedule now');
+    r = await twilio(`/accept?call=${id2}&tech=${ids.tech}`, { Digits: '1' });
+    assert.match(r.xml, /Connecting/);
+    r = await twilio(`/dial-result?call=${id2}&step=0`, { DialCallStatus: 'completed' });
+    assert.match(r.xml, /<Hangup\/>/);
+    assert.equal(db.prepare('SELECT answered_by FROM phone_calls WHERE id = ?').get(id2).answered_by, 'Tess');
+    assert.equal((await tech.get(`/api/r/customers/${ids.cust}`)).status, 200, 'answering grants access');
+    db.prepare("UPDATE service_calls SET technician_id = ? WHERE customer_id = ?").run(ids.tech, ids.cust);
+
+    // Office hours → office line
+    await owner.put('/api/settings', { office_days: '0,1,2,3,4,5,6', office_open: '00:00', office_close: '23:59' });
+    r = await twilio('/incoming', { CallSid: 'CA102', From: '+15559998888', To: '+15555550100' });
+    assert.match(r.xml, /<Number>\+15555550199<\/Number>/);
+    assert.doesNotMatch(r.xml, /Our office is closed/);
+
+    // Per-tech number rings that tech directly, any time
+    await owner.put(`/api/r/technicians/${ids.tech2}`, { twilio_number: '555-555-0177' });
+    r = await twilio('/incoming', { CallSid: 'CA103', From: '+15559998888', To: '+15555550177' });
+    assert.match(r.xml, /\+15552010002/);
+
+    // Click-to-call: rings the tech's phone, then bridges to the customer with the company number
+    r = await tech.post('/api/phone/call', { customer_id: ids.cust, phone: '555-999-0000' });
+    assert.equal(r.status, 403, 'techs can only dial numbers on file');
+    r = await tech.post('/api/phone/call', { customer_id: ids.cust });
+    assert.equal(r.status, 200);
+    const out = twilioCalls.at(-1);
+    assert.match(out.url, /\/Accounts\/AC123\/Calls\.json$/);
+    assert.equal(out.body.To, '+15552010001', 'rings Tess first');
+    assert.equal(out.body.From, '+15555550100');
+    const bridge = await twilio(new URL(out.body.Url).pathname.replace(/.*\/voice\/[^/]+/, '') + new URL(out.body.Url).search, {});
+    assert.match(bridge.xml, /Connecting you to Harbor Dental/);
+    assert.match(bridge.xml, /<Dial callerId="\+15555550100"[^>]*>\+15553010001<\/Dial>/);
+    // Office user without a phone is asked for one
+    r = await owner.post('/api/phone/call', { phone: '555-999-0000' });
+    assert.equal(r.data.code, 'need_phone');
+    await owner.put('/api/phone/my-number', { phone: '555-123-4567' });
+    assert.equal((await owner.post('/api/phone/call', { phone: '555-999-0000' })).status, 200, 'office can dial any number');
+    const log = (await tech.get('/api/phone/calls')).data;
+    assert.ok(log.some(c => c.direction === 'outbound' && c.user_id));
+    assert.ok(!log.some(c => c.to_number === '+15559990000'), 'techs only see their own calls');
+  } finally {
+    delete process.env.TWILIO_API_BASE;
+    await owner.put('/api/settings', { voice_enabled: '0', office_days: '1,2,3,4,5', office_open: '08:00', office_close: '17:00' });
+    fake.close();
+  }
 });
 
 export { owner, tech, ids, db, client, today, notifyIdle };

@@ -38,6 +38,7 @@ function readBody(req, limit = 1_000_000) {
     req.on('end', () => {
       if (!chunks.length) return resolve({});
       req.rawBody = Buffer.concat(chunks).toString('utf8'); // needed to verify webhook signatures
+      if (/application\/x-www-form-urlencoded/.test(req.headers['content-type'] || '')) return resolve(Object.fromEntries(new URLSearchParams(req.rawBody)));
       try { resolve(JSON.parse(req.rawBody)); } catch { reject(new HttpError(400, 'Invalid JSON')); }
     });
     req.on('error', reject);
@@ -145,6 +146,8 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
   import('./monitoring.js').then(m => setInterval(() => m.expireTests(db).catch(e => console.error('expireTests', e)), 60e3).unref());
   // Weekly truck count reminders / overdue flags.
   import('./truckstock.js').then(m => setInterval(() => { try { m.truckCountReminders(db); } catch (e) { console.error('truck counts', e); } }, 3600e3).unref());
+  // On-call shift reminders.
+  import('./phone.js').then(m => setInterval(() => { try { m.onCallReminders(db); } catch (e) { console.error('on-call', e); } }, 3600e3).unref());
   const port = Number(process.env.PORT) || 3000;
   const host = process.env.HOST || '0.0.0.0';
   createServer(db).listen(port, host, () => console.log(`SecureOps running at http://localhost:${port}`));

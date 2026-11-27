@@ -139,7 +139,7 @@ table.t td.actions-cell { text-align: right; white-space: nowrap; }
 
 /* ---------- forms */
 input, select, textarea, button { font: inherit; color: inherit; }
-input[type=text], input[type=email], input[type=tel], input[type=number], input[type=date], input[type=datetime-local],
+input[type=text], input[type=email], input[type=tel], input[type=number], input[type=date], input[type=datetime-local], input[type=time],
 input[type=password], input[type=search], input[type=month], select, textarea {
   width: 100%; padding: 8px 10px; border: 1px solid var(--border-strong); border-radius: 7px; background: var(--surface); min-height: 38px;
 }
@@ -535,7 +535,7 @@ a.kpi:hover { box-shadow: var(--shadow-lg); }
 .btn.ghost { box-shadow: none; }
 .btn.sm { min-height: 30px; padding: 4px 10px; border-radius: 7px; font-size: 12.5px; }
 .btn:focus-visible { outline: 3px solid color-mix(in srgb, var(--primary) 35%, transparent); outline-offset: 1px; }
-input[type=text], input[type=email], input[type=tel], input[type=number], input[type=date], input[type=datetime-local],
+input[type=text], input[type=email], input[type=tel], input[type=number], input[type=date], input[type=datetime-local], input[type=time],
 input[type=password], input[type=search], input[type=month], select, textarea { border-radius: 9px; border-color: var(--border-strong); min-height: 38px; box-shadow: 0 1px 2px rgba(16,24,40,.04); }
 input:focus, select:focus, textarea:focus { outline: 0; border-color: var(--primary); box-shadow: 0 0 0 3px color-mix(in srgb, var(--primary) 18%, transparent); }
 .seg { border-radius: 9px; border-color: var(--border-strong); background: var(--surface); }
@@ -618,3 +618,6 @@ table.t tr.click:hover td { background: #f8faff; }
 .clock-card.on .clock-state::before { content: ''; display: inline-block; width: 9px; height: 9px; border-radius: 50%; background: var(--good); margin-right: 8px; box-shadow: 0 0 0 3px var(--good-soft); }
 .clock-card.big .clock-state { font-size: 18px; }
 .btn.lg { padding: 12px 22px; font-size: 16px; }
+
+.check-row { display: flex; gap: 8px; align-items: flex-start; cursor: pointer; }
+.check-row input { flex: none; margin-top: 3px; }

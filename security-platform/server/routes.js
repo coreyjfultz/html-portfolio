@@ -15,6 +15,7 @@ import { sendForSignature, duplicate, publicView, byToken, markViewed, sign, dec
 import { registerPortalRoutes, invite as portalInvite } from './portal.js';
 import { registerTruckStockRoutes } from './truckstock.js';
 import { registerTimeClockRoutes } from './timeclock.js';
+import { registerPhoneRoutes, onCallFeedEvents } from './phone.js';
 import { openAlerts, resolveAlert } from './alerts.js';
 import { putOnTest, clearTest, markConfirmed, logEvent, ingestSignals, stationInfo, CONNECTORS } from './monitoring.js';
 import { stripeConfig, checkoutForInvoice, checkoutForSetup, listMethods, removeMethod, setDefaultMethod, chargeSaved, payLink, handleWebhook } from './payments.js';
@@ -383,6 +384,9 @@ export function buildRoutes() {
   // ------------------------------------------------------------ time clock
   registerTimeClockRoutes(r);
 
+  // ------------------------------------------------------------ on-call rotation & company phone (Twilio)
+  registerPhoneRoutes(r, { create });
+
   // ------------------------------------------------------------ alerts for the owner / office
   r('GET', '/api/alerts', G.staff, ({ db, user }) => openAlerts(db, user.role));
   r('POST', '/api/alerts/:id/resolve', G.staff, ({ db, params, user }) => { resolveAlert(db, params.id, user); return { ok: true }; });
@@ -645,7 +649,7 @@ ${s.company_name}` }));
     const from = addDays(todayLocal(), -60), to = addDays(todayLocal(), 365);
     const calls = list(db, 'service_calls', { from, to, scheduled_start__null: '0', ...(tech ? { technician_id: tech.id } : {}), limit: 5000 }, null)
       .filter(c => c.scheduled_start && c.status !== 'cancelled');
-    const ics = buildCalendar(calls.map(c => callToEvent(c, { tz: s.timezone, baseUrl: baseUrl(db, req), withTech: !tech })),
+    const ics = buildCalendar([...calls.map(c => callToEvent(c, { tz: s.timezone, baseUrl: baseUrl(db, req), withTech: !tech })), ...onCallFeedEvents(db, tech?.id || null)],
       { name: tech ? `${s.company_name} — ${tech.name}` : `${s.company_name} — all technicians` });
     res.writeHead(200, { 'Content-Type': 'text/calendar; charset=utf-8', 'Cache-Control': 'no-cache', 'Content-Disposition': `inline; filename="${m[1]}.ics"` });
     res.end(ics);
