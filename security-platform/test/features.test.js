@@ -610,4 +610,88 @@ test('QuickBooks Online: connect, sync customers/invoices/payments once, update 
   }
 });
 
+test('alarm monitoring: stations, auto account numbers, zones, call list, test mode, station signal feed', async () => {
+  const st = (await owner.post('/api/r/monitoring_stations', { name: 'CMS', operator_phone: '800-555-0199', account_prefix: 'C1-', next_account_number: 42, account_digits: 4 })).data;
+  const site = (await owner.post('/api/r/locations', { customer_id: ids.cafe, name: 'Riverside main', address: '1 River Rd' })).data;
+  const acct = (await owner.post('/api/r/monitoring_accounts', { customer_id: ids.cafe, site_id: site.id, station_id: st.id, service_type: 'burglary + fire', passcode: 'bluebird' })).data;
+  assert.equal(acct.account_number, 'C1-0042', 'next number assigned from the station');
+  assert.equal(acct.passcode, null, 'passcode is encrypted and hidden');
+  assert.equal(acct.site_id_label.split(' — ')[0], 'Riverside main');
+  assert.equal((await owner.get(`/api/r/monitoring_stations/${st.id}`)).data.next_account_number, 43);
+  assert.equal((await owner.post('/api/r/monitoring_accounts', { customer_id: ids.cafe, station_id: st.id, account_number: 'c1-0042' })).status, 409, 'no duplicate numbers at a station');
+
+  // Zones: add, block a clash, remove (kept as history), reuse the number
+  const z1 = (await owner.post('/api/r/monitoring_zones', { account_id: acct.id, zone_number: 1, description: 'Front door', zone_type: 'entry/exit' })).data;
+  assert.equal(z1.added_on, new Date().toISOString().slice(0, 10).slice(0, 4) + z1.added_on.slice(4));
+  assert.equal((await owner.post('/api/r/monitoring_zones', { account_id: acct.id, zone_number: 1, description: 'Dup' })).status, 409);
+  await owner.put(`/api/r/monitoring_zones/${z1.id}`, { active: false });
+  const removed = (await owner.get(`/api/r/monitoring_zones/${z1.id}`)).data;
+  assert.ok(removed.removed_on);
+  assert.equal((await owner.post('/api/r/monitoring_zones', { account_id: acct.id, zone_number: 1, description: 'Front door (new contact)', zone_type: 'entry/exit' })).status, 200);
+  await owner.post('/api/r/monitoring_zones', { account_id: acct.id, zone_number: 3, description: 'Kitchen smoke', zone_type: 'smoke' });
+  await owner.post('/api/r/monitoring_contacts', { account_id: acct.id, sequence: 1, name: 'Dana Lee', phone: '555-0101', has_key: 1 });
+
+  // Test mode: must go through "Put on test"; technicians can do it
+  assert.equal((await owner.put(`/api/r/monitoring_accounts/${acct.id}`, { status: 'on test' })).status, 400);
+  await owner.put(`/api/r/monitoring_accounts/${acct.id}`, { status: 'active' });
+  const tech = client();
+  await tech.post('/api/auth/login', { email: 'tess-login@example.com', password: 'password123' });
+  const t = await tech.post(`/api/monitoring/${acct.id}/test`, { minutes: 120, reason: 'Replacing kitchen smoke' });
+  assert.equal(t.status, 200, JSON.stringify(t.data));
+  assert.equal(t.data.account.status, 'on test');
+  assert.equal(t.data.station_confirmed, false, 'manual station: not confirmed automatically');
+  assert.equal(t.data.station.operator_phone, '800-555-0199', 'UI gets the number to call');
+  assert.equal((await tech.post(`/api/monitoring/${acct.id}/test`, { minutes: 5 })).status, 400, 'minimum test period');
+
+  // Station signal feed
+  const feed = (await owner.get(`/api/monitoring-stations/${st.id}/feed`)).data.url;
+  const push = b => fetch(feed.replace(/^https?:\/\/[^/]+/, base), { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(b) }).then(r => r.json());
+  const r1 = await push({ events: [
+    { account: 'C1-0042', time: '2031-05-01T02:10:00', code: 'E111', zone: 3, id: 'ev-1' },
+    { account: 'C1-0042', time: '2031-05-01T02:14:00', code: 'R111', zone: 3, disposition: 'Tech on site, test', id: 'ev-2' },
+    { account: 'C1-0042', time: '2031-05-01T07:00:00', code: 'OP', description: 'Opened by user 2', id: 'ev-3' },
+    { account: 'NOPE-1', code: 'BA', id: 'ev-4' },
+  ] });
+  assert.deepEqual(r1, { added: 3, duplicates: 0, unknown_accounts: ['NOPE-1'] });
+  assert.equal((await push({ account: 'C1-0042', code: 'E111', zone: 3, id: 'ev-1' })).duplicates, 1, 'resends are ignored');
+  assert.equal((await fetch(`${base}/api/inbound/monitoring/wrong-token-abcdefghijklmnopqrstuv`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' })).status, 404);
+  const events = (await owner.get(`/api/monitoring/${acct.id}/events`)).data;
+  const fire = events.find(e => e.code === 'E111');
+  assert.equal(fire.event_type, 'alarm');
+  assert.equal(fire.zone_description, 'Kitchen smoke', 'zone name filled in from the zone list');
+  assert.equal(fire.on_test, 1, 'flagged because the account was on test');
+  assert.equal(events.find(e => e.code === 'R111').event_type, 'restore');
+  assert.equal(events.find(e => e.code === 'OP').event_type, 'open/close');
+  assert.ok(events.some(e => /Zone 1 “Front door” \(entry\/exit\) removed/.test(e.description)), 'sensor changes are in the activity log');
+  assert.ok(events.some(e => /Placed on test/.test(e.description)));
+
+  // Test ends on its own
+  const { expireTests } = await import('../server/monitoring.js');
+  db.prepare("UPDATE monitoring_accounts SET test_until = '2000-01-01T00:00' WHERE id = ?").run(acct.id);
+  assert.equal(await expireTests(db), 1);
+  assert.equal((await owner.get(`/api/r/monitoring_accounts/${acct.id}`)).data.status, 'active');
+
+  // Customer portal: activity and zones, never passcodes or internal notes
+  const cafe = client();
+  await owner.put(`/api/portal-users/${(await owner.get(`/api/customers/${ids.cafe}/portal-users`)).data[0].id}`, { active: true });
+  await cafe.post('/api/portal/login', { email: 'owner@riverside.example', password: 'cafe-password-1' });
+  const mon = (await cafe.get('/api/portal/monitoring')).data;
+  assert.equal(mon[0].account_number, 'C1-0042');
+  assert.ok(mon[0].events.some(e => e.code === 'E111'));
+  assert.ok(!mon[0].events.some(e => e.event_type === 'system'), 'internal changes are not shown to customers');
+  assert.ok(!JSON.stringify(mon).includes('bluebird'));
+  assert.deepEqual(mon[0].zones.map(z => z.zone_number), [1, 3]);
+});
+
+test('alarm monitoring: import existing alarm systems into monitoring accounts', async () => {
+  const cust = (await owner.post('/api/r/customers', { name: 'Legacy Alarm Co', type: 'residential', portal_invite: 0 })).data;
+  await owner.post('/api/r/alarm_systems', { customer_id: cust.id, monitoring_center: 'Central Station A', monitoring_account: 'A-777', communicator: 'cellular' });
+  const r = (await owner.post('/api/monitoring/import-alarm-systems')).data;
+  assert.ok(r.created >= 1);
+  const acct = (await owner.get(`/api/r/monitoring_accounts?customer_id=${cust.id}`)).data[0];
+  assert.equal(acct.account_number, 'A-777');
+  assert.equal(acct.station_id_label, 'Central Station A');
+  assert.equal((await owner.post('/api/monitoring/import-alarm-systems')).data.created, 0, 'running it again adds nothing');
+});
+
 export { owner, ids, db, base };

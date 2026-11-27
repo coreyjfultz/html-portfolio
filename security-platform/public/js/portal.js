@@ -106,12 +106,12 @@ function shell(page, arg) {
   mount(root, html`<header class="p-top">${brand()}
       <div class="row">${S.accounts.length > 1 ? html`<select data-acct aria-label="Account" style="width:auto;min-height:34px">${S.accounts.map(a => html`<option value="${a.id}" ${a.id === S.account ? 'selected' : ''}>${a.name}</option>`)}</select>` : ''}
         <button class="btn ghost sm p-out" data-out>Sign out</button></div></header>
-    <nav class="p-nav">${NAV.map(([k, l, i]) => html`<a href="#/${k === 'home' ? '' : k}" class="${(page === k || (k === 'more' && ['agreements', 'systems', 'profile', 'equipment'].includes(page))) ? 'on' : ''}">${icon(i)}${l}</a>`)}</nav>
+    <nav class="p-nav">${NAV.map(([k, l, i]) => html`<a href="#/${k === 'home' ? '' : k}" class="${(page === k || (k === 'more' && ['agreements', 'systems', 'profile', 'equipment', 'alarm'].includes(page))) ? 'on' : ''}">${icon(i)}${l}</a>`)}</nav>
     <main class="p-main" id="pview"><div class="empty">Loading…</div></main>`);
   $('[data-out]').addEventListener('click', logout);
   $('[data-acct]')?.addEventListener('change', e => { S.account = Number(e.target.value); try { localStorage.setItem('portal_account', S.account); } catch {} route(); });
   const view = $('#pview');
-  const pages = { home, invoices: arg ? () => invoice(view, arg) : invoices, service, 'request': requestService, 'payment-methods': paymentMethods, more, agreements, systems, profile, equipment };
+  const pages = { alarm, invoices: arg ? () => invoice(view, arg) : invoices, service, 'request': requestService, 'payment-methods': paymentMethods, more, agreements, systems, profile, equipment };
   (pages[page] || home)(view).catch(e => mount(view, html`<div class="card"><div class="empty">${e.message}</div></div>`));
 }
 
@@ -228,6 +228,7 @@ async function paymentMethods(view) {
 async function more(view) {
   mount(view, html`<h1 class="p-h1">More</h1><div class="p-list">
     <a class="p-row" href="#/agreements"><div><b>Agreements & quotes</b><div class="small muted">Review, sign and download</div></div><span>›</span></a>
+    <a class="p-row" href="#/alarm"><div><b>Alarm activity</b><div class="small muted">Alarms, openings/closings and tests from your monitoring account</div></div><span>›</span></a>
     <a class="p-row" href="#/systems"><div><b>My systems</b><div class="small muted">Cameras, alarm, fire protection and upcoming inspections</div></div><span>›</span></a>
     <a class="p-row" href="#/equipment"><div><b>Request equipment</b><div class="small muted">Get a quote for something new</div></div><span>›</span></a>
     <a class="p-row" href="#/profile"><div><b>Contact info & notifications</b><div class="small muted">Phone, address, text/email updates, password</div></div><span>›</span></a></div>`);
@@ -239,6 +240,20 @@ async function agreements(view) {
     ${rows.length ? rows.map(p => html`<a class="p-row" href="${p.url}"><div><b>${p.title}</b><div class="small muted">${p.kind} P-${p.number}${p.signed_at ? ` · signed ${fmtDate(p.signed_at.slice(0, 10))}` : ''}</div></div>
       <div class="right">${p.total ? html`<b>${money(p.total)}</b>` : ''}${p.monthly_amount ? html`<div class="small">${money(p.monthly_amount)}/mo</div>` : ''}<div>${p.status === 'signed' ? pill('signed') : html`<span class="badge warn">needs signature</span>`}</div></div></a>`)
       : html`<div class="empty">Nothing here yet.</div>`}</div>`);
+}
+
+async function alarm(view) {
+  const accts = await api('GET', acct('/api/portal/monitoring'));
+  const kinds = { alarm: ['bad', 'Alarm'], trouble: ['warn', 'Trouble'], restore: ['good', 'Restore'], 'open/close': ['info', 'Open/close'], test: ['primary', 'Test'], supervisory: ['warn', 'Supervisory'], cancel: ['', 'Cancel'], note: ['', 'Note'], other: ['', 'Other'] };
+  mount(view, html`<a href="#/more">← More</a><h1 class="p-h1">Alarm activity</h1>
+    ${accts.length ? accts.map(a => html`<div class="card p-job"><div class="card-head"><div><h2>${a.site || 'Monitoring account'} <span class="mono small muted">#${a.account_number}</span></h2>
+        <div class="small muted">${a.station} · ${a.service_type}${a.status === 'on test' ? ` · on test until ${fmtDateTime(a.test_until)}` : ''}</div></div><span class="badge ${a.status === 'active' ? 'good' : 'warn'}">${a.status}</span></div>
+      <div class="card-body flush">${a.events.length ? a.events.map(e => html`<div class="p-row"><div><span class="badge ${kinds[e.event_type]?.[0] || ''}">${kinds[e.event_type]?.[1] || e.event_type}</span>
+          ${e.zone_number != null ? html` <b>Zone ${e.zone_number}${e.zone_description ? ` · ${e.zone_description}` : ''}</b>` : ''}<div class="small">${e.description || ''}${e.disposition ? ` — ${e.disposition}` : ''}</div></div>
+          <div class="small muted right nowrap">${fmtDateTime(e.occurred_at)}</div></div>`) : html`<div class="empty">No activity yet.</div>`}</div>
+      ${a.zones.length ? html`<details class="card-body small"><summary>${a.zones.length} sensors on this account</summary>${a.zones.map(z => html`<div>Zone ${z.zone_number}: ${z.description} <span class="muted">(${z.zone_type})</span></div>`)}</details>` : ''}</div>`)
+    : html`<div class="empty">No monitored systems on your account.</div>`}
+    <p class="small muted">To put your system on test or update your call list, call us${S.company.phone ? html` at <a href="tel:${S.company.phone}">${S.company.phone}</a>` : ''}.</p>`);
 }
 
 async function systems(view) {

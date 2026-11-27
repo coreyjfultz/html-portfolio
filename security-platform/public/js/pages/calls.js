@@ -137,6 +137,7 @@ export async function detail(view, [id]) {
             { label: '', cls: 'actions-cell', render: p => html`<button class="btn sm ghost danger" data-rmpart="${p.id}" title="Remove and return to stock">Remove</button>` },
           ] })}</div></div>
       <div class="card" data-photos-card></div>
+      <div class="card hidden" data-mon-card></div>
       <div class="card span2"><div class="card-head"><div><h2>Messages to customer & tech</h2><div class="small muted">Texts, emails and calendar invites sent for this job</div></div></div>
         <div class="card-body flush">${dataTable({
           rows: messages, empty: 'Nothing sent yet. Confirmations go out when the job is scheduled with a technician.',
@@ -161,6 +162,7 @@ export async function detail(view, [id]) {
   $('[data-start]', view)?.addEventListener('click', async () => { await R.update('service_calls', id, { status: 'in progress' }); toast('Job started'); reload(); });
   $('[data-sign]', view)?.addEventListener('click', () => completeDialog(c, cust, { signOnly: true, onDone: reload }));
   drawPhotos($('[data-photos-card]', view), c);
+  drawMonitoring($('[data-mon-card]', view), c, reload);
   $('[data-complete]', view)?.addEventListener('click', () => completeDialog(c, cust, { office, onDone: reload }));
   $('[data-invoice]', view)?.addEventListener('click', async () => {
     const r = await POST(`/api/service_calls/${id}/invoice`);
@@ -241,4 +243,26 @@ function completeDialog(c, cust, { signOnly = false, office = false, onDone } = 
       onDone?.();
     } catch (e) { err.textContent = e.message; err.classList.remove('hidden'); $('[data-go]', el).disabled = false; }
   });
+}
+
+// Monitoring accounts at this job's customer/site, so the tech can put them on test right here.
+async function drawMonitoring(card, c, onDone) {
+  if (!card) return;
+  const rows = (await R.list('monitoring_accounts', { customer_id: c.customer_id }).catch(() => []))
+    .filter(a => a.status !== 'cancelled' && (!c.site_id || !a.site_id || a.site_id === c.site_id));
+  if (!rows.length) return;
+  const m = await import('./monitoring.js');
+  card.classList.remove('hidden');
+  mount(card, html`<div class="card-head"><div><h2>Alarm monitoring</h2><div class="small muted">Put the system on test before working on it</div></div></div>
+    <div class="card-body stack" style="gap:10px">${rows.map(a => html`<div class="row" style="justify-content:space-between">
+      <div><a href="#/monitoring/${a.id}" class="mono"><b>${a.account_number || 'pending'}</b></a> ${m.mBadge(a.status)}<div class="small muted">${a.station_id_label}${a.status === 'on test' ? ` · until ${fmtDateTime(a.test_until)}` : ''}</div></div>
+      ${a.status === 'on test' ? html`<button class="btn sm" data-off="${a.id}">Take off test</button>` : html`<button class="btn sm primary" data-on="${a.id}">Put on test</button>`}</div>`)}</div>`);
+  card.querySelectorAll('[data-on]').forEach(b => b.addEventListener('click', async () => {
+    const a = rows.find(x => x.id === Number(b.dataset.on));
+    m.testDialog(a, await GET(`/api/monitoring/${a.id}/station`), onDone);
+  }));
+  card.querySelectorAll('[data-off]').forEach(b => b.addEventListener('click', async () => {
+    const r = await POST(`/api/monitoring/${b.dataset.off}/test/clear`);
+    toast(r.station_confirmed ? 'Off test' : 'Off test here — tell the station too'); onDone();
+  }));
 }

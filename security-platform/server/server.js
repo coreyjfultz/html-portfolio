@@ -141,6 +141,8 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
   const db = openDb();
   purgeSessions(db);
   setInterval(() => purgeSessions(db), 6 * 3600e3).unref();
+  // Monitoring accounts automatically come off test when their test time is up.
+  import('./monitoring.js').then(m => setInterval(() => m.expireTests(db).catch(e => console.error('expireTests', e)), 60e3).unref());
   const port = Number(process.env.PORT) || 3000;
   const host = process.env.HOST || '0.0.0.0';
   createServer(db).listen(port, host, () => console.log(`SecureOps running at http://localhost:${port}`));

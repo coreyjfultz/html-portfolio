@@ -171,6 +171,15 @@ function migrate(db) {
       portal_user_id INTEGER NOT NULL REFERENCES portal_users(id) ON DELETE CASCADE,
       expires_at INTEGER NOT NULL
     );
+    CREATE TABLE IF NOT EXISTS monitoring_events (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      account_id INTEGER NOT NULL REFERENCES monitoring_accounts(id) ON DELETE CASCADE,
+      occurred_at TEXT NOT NULL, event_type TEXT NOT NULL, code TEXT, zone_number INTEGER, zone_description TEXT,
+      description TEXT, disposition TEXT, source TEXT NOT NULL DEFAULT 'system', external_id TEXT, on_test INTEGER NOT NULL DEFAULT 0, user_name TEXT,
+      created_at TEXT NOT NULL DEFAULT (datetime('now','localtime'))
+    );
+    CREATE INDEX IF NOT EXISTS idx_mon_events_acct ON monitoring_events(account_id, occurred_at);
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_mon_events_ext ON monitoring_events(external_id);
     CREATE TABLE IF NOT EXISTS qbo_map (
       entity TEXT NOT NULL, local_id INTEGER NOT NULL, qbo_id TEXT, sync_token TEXT, synced_at TEXT, error TEXT, dirty INTEGER NOT NULL DEFAULT 0,
       PRIMARY KEY (entity, local_id)

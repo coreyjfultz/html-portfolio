@@ -89,6 +89,7 @@ export async function detail(view, [id], query) {
     ['overview', 'Overview'],
     ['systems', 'Systems', cams.length + alarms.length + fires.length + exts.length],
     ['locations', 'Locations', locs.length || null],
+    ['monitoring', 'Monitoring'],
     ...(can.staff() ? [['proposals', 'Proposals']] : []),
     ['calls', 'Service calls', openCalls.length || null],
     ...(office ? [['billing', 'Billing', billing[1].filter(i => i.balance > 0 && i.status !== 'draft').length || null]] : []),
@@ -175,6 +176,15 @@ export async function detail(view, [id], query) {
     $('[data-add-child]', pane)?.addEventListener('click', () => openForm('customers', { title: `New business under ${c.name}`,
       defaults: { parent_id: c.id, type: 'commercial', phone: c.phone, email: c.email, contact_name: c.contact_name || c.name, stage: c.stage },
       onSaved: k => { location.hash = `#/customers/${k.id}`; } }));
+  }
+
+  if (tab === 'monitoring') {
+    const m = await import('./monitoring.js');
+    const rows = await R.list('monitoring_accounts', { customer_id: id });
+    mount(pane, html`<div class="card"><div class="card-head"><div><h2>Monitoring accounts</h2><div class="small muted">Central-station accounts for this customer${locs.length ? ' and its locations' : ''}</div></div>
+        ${can.staff() ? html`<button class="btn sm primary" data-nm>+ Monitoring account</button>` : ''}</div>
+      <div class="card-body flush">${m.accountsTable(rows, 'Not monitored yet. Add an account to link this customer to their central-station account.')}</div></div>`);
+    $('[data-nm]', pane)?.addEventListener('click', () => m.newAccount({ customer_id: c.id }));
   }
 
   if (tab === 'proposals') {

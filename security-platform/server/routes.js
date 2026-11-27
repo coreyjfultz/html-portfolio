@@ -13,6 +13,7 @@ import { callToEvent, buildCalendar } from './calendar.js';
 import { decodeImage, saveImage, sendImage, removeImage } from './media.js';
 import { sendForSignature, duplicate, publicView, byToken, markViewed, sign, decline, signingUrl } from './proposals.js';
 import { registerPortalRoutes, invite as portalInvite } from './portal.js';
+import { putOnTest, clearTest, markConfirmed, logEvent, ingestSignals, stationInfo, CONNECTORS } from './monitoring.js';
 import { stripeConfig, checkoutForInvoice, checkoutForSetup, listMethods, removeMethod, setDefaultMethod, chargeSaved, payLink, handleWebhook } from './payments.js';
 
 export function baseUrl(db, req) {
@@ -266,6 +267,62 @@ export function buildRoutes() {
     push('Technician', list(db, 'technicians', { q, limit: 3 }), t => ({ id: t.id, title: t.name, sub: t.phone || '', href: `#/technicians` }));
     return out;
   });
+
+  // ------------------------------------------------------------ alarm monitoring
+  const acctOr404 = (db, id) => {
+    const a = db.prepare('SELECT * FROM monitoring_accounts WHERE id = ?').get(Number(id));
+    if (!a) throw new HttpError(404, 'Monitoring account not found');
+    return a;
+  };
+  r('GET', '/api/monitoring/:id/events', ALL, ({ db, params, query }) => {
+    acctOr404(db, params.id);
+    const where = ['account_id = ?'];
+    const args = [Number(params.id)];
+    if (query.type) { where.push('event_type IN (' + String(query.type).split(',').map(() => '?').join(',') + ')'); args.push(...String(query.type).split(',')); }
+    if (query.from) { where.push('occurred_at >= ?'); args.push(query.from); }
+    if (query.to) { where.push('occurred_at <= ?'); args.push(query.to + 'T23:59'); }
+    return db.prepare(`SELECT * FROM monitoring_events WHERE ${where.join(' AND ')} ORDER BY occurred_at DESC, id DESC LIMIT ?`).all(...args, Math.min(Number(query.limit) || 300, 2000));
+  });
+  r('POST', '/api/monitoring/:id/events', ALL, ({ db, params, body, user }) => {
+    acctOr404(db, params.id);
+    const description = String(body.description || '').trim();
+    if (!description) throw new HttpError(400, 'Describe what happened');
+    logEvent(db, Number(params.id), { type: ['note', 'alarm', 'trouble', 'restore', 'test', 'cancel', 'other'].includes(body.type) ? body.type : 'note', code: body.code, zone: body.zone, description, disposition: body.disposition, time: body.time, source: 'manual', user });
+    return { ok: true };
+  });
+  r('GET', '/api/monitoring/:id/station', ALL, ({ db, params }) => stationInfo(db, acctOr404(db, params.id).station_id));
+  r('POST', '/api/monitoring/:id/test', ALL, ({ db, params, body, user }) => putOnTest(db, params.id, body, user));
+  r('POST', '/api/monitoring/:id/test/clear', ALL, ({ db, params, user }) => clearTest(db, params.id, user));
+  r('POST', '/api/monitoring/:id/confirmed', ALL, ({ db, params, user }) => { acctOr404(db, params.id); markConfirmed(db, params.id, user); return { ok: true }; });
+  r('GET', '/api/monitoring-on-test', ALL, ({ db }) => db.prepare(`SELECT a.id, a.account_number, a.test_until, a.test_reason, a.test_by, a.customer_id, c.name AS customer, s.name AS station
+    FROM monitoring_accounts a JOIN customers c ON c.id = a.customer_id JOIN monitoring_stations s ON s.id = a.station_id WHERE a.status = 'on test' ORDER BY a.test_until`).all());
+  r('GET', '/api/monitoring-stations/:id/feed', MANAGE, ({ db, params, req }) => {
+    const s = db.prepare('SELECT inbound_token, connector FROM monitoring_stations WHERE id = ?').get(Number(params.id));
+    if (!s) throw new HttpError(404, 'Not found');
+    return { url: `${baseUrl(db, req)}/api/inbound/monitoring/${s.inbound_token}`, connectors: Object.entries(CONNECTORS).map(([k, v]) => ({ id: k, label: v.label, connected: !!v.connected })) };
+  });
+  r('POST', '/api/monitoring-stations/:id/feed/reset', MANAGE, ({ db, params, user }) => {
+    db.prepare('UPDATE monitoring_stations SET inbound_token = ? WHERE id = ?').run(crypto.randomBytes(20).toString('base64url'), Number(params.id));
+    audit(db, user, 'reset signal feed', 'monitoring_stations', Number(params.id));
+    return { ok: true };
+  });
+  // Signals pushed by a central station (or middleware). The secret key in the URL is the credential.
+  r('POST', '/api/inbound/monitoring/:token', null, ({ db, params, body }) => ingestSignals(db, params.token, body));
+  // Turn the "monitoring center / account #" already typed on alarm systems into linked monitoring accounts.
+  r('POST', '/api/monitoring/import-alarm-systems', MANAGE, ({ db, user }) => tx(db, () => {
+    const rows = db.prepare(`SELECT a.* FROM alarm_systems a WHERE COALESCE(a.monitoring_account,'') <> ''
+      AND NOT EXISTS (SELECT 1 FROM monitoring_accounts m WHERE m.alarm_system_id = a.id)`).all();
+    let created = 0;
+    for (const a of rows) {
+      const name = (a.monitoring_center || 'Central station').trim();
+      let st = db.prepare('SELECT id FROM monitoring_stations WHERE lower(name) = lower(?)').get(name);
+      if (!st) st = { id: create(db, 'monitoring_stations', { name }, user).id };
+      create(db, 'monitoring_accounts', { customer_id: a.customer_id, site_id: a.site_id, station_id: st.id, account_number: a.monitoring_account, alarm_system_id: a.id, status: 'active',
+        communicator: { cellular: 'cellular', ip: 'IP', 'dual path': 'dual path', 'phone line': 'POTS' }[a.communicator] || null, service_type: 'burglary' }, user);
+      created++;
+    }
+    return { created };
+  }));
 
   // ------------------------------------------------------------ QuickBooks & accounting exports
   r('GET', '/api/qbo/status', BILLING, ({ db }) => {

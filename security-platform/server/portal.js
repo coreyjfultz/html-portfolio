@@ -341,6 +341,20 @@ export function registerPortalRoutes(r) {
     };
   });
 
+  r('GET', '/api/portal/monitoring', null, ({ db, req, query }) => {
+    const u = need(db, req);
+    const id = pickAccount(db, u, query.account);
+    const accounts = db.prepare(`SELECT a.id, a.account_number, a.status, a.service_type, a.test_until, s.name AS station, s.operator_phone, l.name AS site
+      FROM monitoring_accounts a JOIN monitoring_stations s ON s.id = a.station_id LEFT JOIN locations l ON l.id = a.site_id
+      WHERE a.customer_id = ? AND a.status <> 'cancelled' ORDER BY a.id`).all(id);
+    return accounts.map(({ id: aid, ...a }) => ({
+      ...a,
+      zones: db.prepare('SELECT zone_number, description, zone_type FROM monitoring_zones WHERE account_id = ? AND active = 1 ORDER BY zone_number').all(aid),
+      events: db.prepare(`SELECT occurred_at, event_type, code, zone_number, zone_description, description, disposition FROM monitoring_events
+        WHERE account_id = ? AND event_type <> 'system' ORDER BY occurred_at DESC, id DESC LIMIT 60`).all(aid),
+    }));
+  });
+
   // "Schedule a service call": the customer picks a preferred day and time window; the office confirms.
   r('POST', '/api/portal/service-requests', null, ({ db, req, body }) => {
     const u = need(db, req);
