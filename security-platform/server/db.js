@@ -40,6 +40,9 @@ export const DEFAULT_SETTINGS = {
   notify_on_schedule: '1', notify_on_way: '1', notify_tech_invites: '1',
   proposal_next_number: '1001',
   stripe_secret: '', stripe_webhook_secret: '', stripe_ach: '1',
+  qbo_client_id: '', qbo_client_secret: '', qbo_environment: 'sandbox', qbo_realm_id: '', qbo_company_name: '',
+  qbo_access: '', qbo_refresh: '', qbo_access_expires: '', qbo_item_id: '', qbo_tax_item_id: '', qbo_auto_sync: '1', qbo_last_sync: '',
+  export_income_account: '', export_tax_account: '',
   proposal_valid_days: '30',
   proposal_terms: `1. Scope. We will furnish and install the equipment and services listed above. Work outside this scope will be quoted separately.
 2. Payment. The deposit shown is due at signing; the balance is due on completion. Monthly service fees are billed in advance each month.
@@ -57,7 +60,9 @@ export const DEFAULT_TEMPLATES = {
 };
 Object.assign(DEFAULT_SETTINGS, DEFAULT_TEMPLATES);
 // Settings stored encrypted; never sent back to the browser.
-export const SECRET_SETTINGS = new Set(['smtp_pass', 'twilio_token', 'stripe_secret', 'stripe_webhook_secret']);
+export const SECRET_SETTINGS = new Set(['smtp_pass', 'twilio_token', 'stripe_secret', 'stripe_webhook_secret', 'qbo_client_secret']);
+// Managed by the system only: never sent to the browser, never set through the settings form.
+export const INTERNAL_SETTINGS = new Set(['qbo_access', 'qbo_refresh', 'qbo_access_expires', 'qbo_realm_id', 'qbo_company_name', 'qbo_last_sync', 'invoice_next_number_lock']);
 // Settings that are never sent to non-admin users or editable through PUT /api/settings.
 export const PRIVATE_SETTINGS = new Set(['inbound_token', 'calendar_token', 'smtp_pass', 'twilio_token', 'stripe_secret', 'stripe_webhook_secret']);
 
@@ -165,6 +170,10 @@ function migrate(db) {
       portal_user_id INTEGER NOT NULL REFERENCES portal_users(id) ON DELETE CASCADE,
       expires_at INTEGER NOT NULL
     );
+    CREATE TABLE IF NOT EXISTS qbo_map (
+      entity TEXT NOT NULL, local_id INTEGER NOT NULL, qbo_id TEXT, sync_token TEXT, synced_at TEXT, error TEXT, dirty INTEGER NOT NULL DEFAULT 0,
+      PRIMARY KEY (entity, local_id)
+    );
     CREATE TABLE IF NOT EXISTS job_photos (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       service_call_id INTEGER NOT NULL REFERENCES service_calls(id) ON DELETE CASCADE,
@@ -204,6 +213,8 @@ function migrate(db) {
       DROP TABLE users; ALTER TABLE users_new RENAME TO users;
       COMMIT; PRAGMA foreign_keys = ON;`);
   }
+
+  if (!db.prepare('PRAGMA table_info(qbo_map)').all().some(c => c.name === 'dirty')) db.exec('ALTER TABLE qbo_map ADD COLUMN dirty INTEGER NOT NULL DEFAULT 0');
 
   // Customers that existed before stages were added get a stage from their status.
   db.exec(`UPDATE customers SET stage = CASE status WHEN 'prospect' THEN 'lead' WHEN 'inactive' THEN 'lost' ELSE 'active' END WHERE stage IS NULL`);

@@ -4,7 +4,8 @@ import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
 import { RESOURCES, MAINTENANCE } from '../public/js/schema.js';
-import { getSettings, DEFAULT_SETTINGS, PRIVATE_SETTINGS, SECRET_SETTINGS, tx, DATA_DIR } from './db.js';
+import { getSettings, DEFAULT_SETTINGS, PRIVATE_SETTINGS, SECRET_SETTINGS, INTERNAL_SETTINGS, tx, DATA_DIR } from './db.js';
+import { markInvoiceDirty, qboConfig, qboConnected, authorizeUrl, handleCallback, disconnect as qboDisconnect, listItems as qboItems, syncAll as qboSync, exportFile } from './quickbooks.js';
 import { queue, notifyOnMyWay, notifyScheduled, sendEmail, sendSms, mailConfig, smsConfig, appUrl } from './notify.js';
 import { ingest, processInvoice, receive, saveReview, parseInboundEmail, filePath } from './receiving.js';
 import { aiConfigured } from './extract.js';
@@ -166,6 +167,7 @@ export function buildRoutes() {
   r('GET', '/api/settings', ALL, ({ db, user }) => {
     const s = getSettings(db);
     for (const k of SECRET_SETTINGS) { s[`${k}__set`] = !!s[k]; delete s[k]; }
+    for (const k of INTERNAL_SETTINGS) delete s[k];
     if (!MANAGE.includes(user.role)) for (const k of PRIVATE_SETTINGS) delete s[k];
     else { s.email_ready = mailConfig(db).ok; s.sms_ready = smsConfig(db).ok; }
     return s;
@@ -173,7 +175,7 @@ export function buildRoutes() {
   r('PUT', '/api/settings', MANAGE, ({ db, body, user }) => {
     const up = db.prepare('INSERT INTO settings(key, value) VALUES (?,?) ON CONFLICT(key) DO UPDATE SET value = excluded.value');
     for (const k of Object.keys(DEFAULT_SETTINGS)) {
-      if (!(k in body)) continue;
+      if (!(k in body) || INTERNAL_SETTINGS.has(k)) continue;
       if (SECRET_SETTINGS.has(k)) { if (body[k]) up.run(k, encrypt(String(body[k]))); continue; } // blank = keep
       if (!PRIVATE_SETTINGS.has(k)) up.run(k, String(body[k] ?? ''));
     }
@@ -239,6 +241,41 @@ export function buildRoutes() {
     push('Vehicle', list(db, 'vehicles', { q, limit: 3 }), v => ({ id: v.id, title: v.unit_name, sub: [v.year, v.make, v.model].filter(Boolean).join(' '), href: `#/vehicles/${v.id}` }));
     push('Technician', list(db, 'technicians', { q, limit: 3 }), t => ({ id: t.id, title: t.name, sub: t.phone || '', href: `#/technicians` }));
     return out;
+  });
+
+  // ------------------------------------------------------------ QuickBooks & accounting exports
+  r('GET', '/api/qbo/status', BILLING, ({ db }) => {
+    const c = qboConfig(db);
+    const errors = db.prepare("SELECT entity, local_id, error, synced_at FROM qbo_map WHERE error IS NOT NULL ORDER BY synced_at DESC LIMIT 50").all();
+    const synced = db.prepare("SELECT entity, COUNT(*) AS n FROM qbo_map WHERE qbo_id IS NOT NULL AND error IS NULL GROUP BY entity").all();
+    return { has_app: !!(c.clientId && c.clientSecret), client_id: c.clientId, env: c.env, connected: qboConnected(db), company: c.company, item_id: c.itemId, tax_item_id: c.taxItemId,
+      auto_sync: c.autoSync, last_sync: c.lastSync, redirect_uri: c.redirectUri, errors, synced: Object.fromEntries(synced.map(x => [x.entity, x.n])) };
+  });
+  r('PUT', '/api/qbo/settings', BILLING, ({ db, body, user }) => {
+    const up = db.prepare('INSERT INTO settings(key, value) VALUES (?,?) ON CONFLICT(key) DO UPDATE SET value = excluded.value');
+    for (const k of ['qbo_client_id', 'qbo_item_id', 'qbo_tax_item_id', 'export_income_account', 'export_tax_account']) if (k in body) up.run(k, String(body[k] ?? '').trim());
+    if ('qbo_environment' in body) up.run('qbo_environment', body.qbo_environment === 'production' ? 'production' : 'sandbox');
+    if ('qbo_auto_sync' in body) up.run('qbo_auto_sync', body.qbo_auto_sync ? '1' : '0');
+    if (body.qbo_client_secret) up.run('qbo_client_secret', encrypt(String(body.qbo_client_secret).trim()));
+    audit(db, user, 'update', 'settings', null, 'QuickBooks');
+    return { ok: true };
+  });
+  r('POST', '/api/qbo/connect', BILLING, ({ db }) => ({ url: authorizeUrl(db) }));
+  r('GET', '/api/qbo/callback', null, async ({ db, query, res }) => {
+    let to = '/#/accounting?qbo=connected';
+    try { await handleCallback(db, query); } catch (e) { to = `/#/accounting?qbo_error=${encodeURIComponent(e.message)}`; }
+    res.writeHead(302, { Location: to }); res.end();
+    return undefined;
+  });
+  r('POST', '/api/qbo/disconnect', BILLING, async ({ db, user }) => { await qboDisconnect(db, user); return { ok: true }; });
+  r('GET', '/api/qbo/items', BILLING, ({ db }) => qboItems(db));
+  r('POST', '/api/qbo/sync', BILLING, ({ db, user }) => qboSync(db, { user }));
+  r('GET', '/api/accounting/export', BILLING, ({ db, query, res, user }) => {
+    const f = exportFile(db, query.format, { from: query.from || undefined, to: query.to || undefined });
+    res.writeHead(200, { 'Content-Type': f.type, 'Content-Disposition': `attachment; filename="${f.name}"` });
+    res.end(f.body);
+    audit(db, user, 'accounting export', null, null, query.format);
+    return undefined;
   });
 
   // ------------------------------------------------------------ customer portal
@@ -610,6 +647,7 @@ ${s.company_name}` }));
     if (!['draft', 'sent', 'void'].includes(body.status)) throw new HttpError(400, 'Invalid status');
     db.prepare("UPDATE invoices SET status = ?, updated_at = datetime('now','localtime') WHERE id = ?").run(body.status, Number(params.id));
     recalcInvoice(db, Number(params.id));
+    markInvoiceDirty(db, Number(params.id));
     audit(db, user, `invoice ${body.status}`, 'invoices', Number(params.id));
     return get(db, 'invoices', params.id);
   });

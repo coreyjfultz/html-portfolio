@@ -497,4 +497,117 @@ test('customer portal: staff invite, isolation between customers, requests, chil
   assert.equal((await cafe.get('/api/portal/dashboard')).status, 401);
 });
 
+test('QuickBooks Online: connect, sync customers/invoices/payments once, update and void; export files', async () => {
+  const http = await import('node:http');
+  const seen = [];
+  let nextId = 100;
+  const fake = http.createServer((req, res) => {
+    let b = ''; req.on('data', c => { b += c; });
+    req.on('end', () => {
+      const send = o => { res.writeHead(200, { 'Content-Type': 'application/json' }); res.end(JSON.stringify(o)); };
+      const u = new URL(req.url, 'http://x');
+      seen.push({ method: req.method, path: u.pathname, search: u.search, body: b ? (req.headers['content-type']?.includes('json') ? JSON.parse(b) : Object.fromEntries(new URLSearchParams(b))) : null, auth: req.headers.authorization });
+      if (u.pathname === '/oauth2/v1/tokens/bearer') return send({ access_token: 'acc-1', refresh_token: 'ref-1', expires_in: 3600 });
+      if (u.pathname === '/revoke') return send({});
+      if (u.pathname.endsWith('/companyinfo/9130')) return send({ CompanyInfo: { CompanyName: 'Test Co Books' } });
+      if (u.pathname.endsWith('/query')) {
+        const q = u.searchParams.get('query');
+        if (/from Item/.test(q)) return send({ QueryResponse: { Item: [{ Id: '1', Name: 'Services', Type: 'Service' }, { Id: '7', Name: 'Sales Tax', Type: 'Service' }] } });
+        return send({ QueryResponse: {} });
+      }
+      if (/\/customer$/.test(u.pathname)) return send({ Customer: { Id: String(nextId++), SyncToken: '0' } });
+      if (/\/invoice\/\d+$/.test(u.pathname)) return send({ Invoice: { Id: u.pathname.split('/').pop(), SyncToken: '3' } });
+      if (/\/invoice$/.test(u.pathname)) return send({ Invoice: { Id: b && JSON.parse(b).Id || String(nextId++), SyncToken: '0' } });
+      if (/\/payment$/.test(u.pathname)) return send({ Payment: { Id: String(nextId++), SyncToken: '0' } });
+      res.writeHead(404); res.end('{}');
+    });
+  });
+  await new Promise(r => fake.listen(0, '127.0.0.1', r));
+  const fb = `http://127.0.0.1:${fake.address().port}`;
+  Object.assign(process.env, { QBO_OAUTH_BASE: fb, QBO_API_BASE: fb, QBO_REVOKE_URL: `${fb}/revoke` });
+  try {
+    assert.equal((await owner.post('/api/qbo/connect')).status, 400, 'needs app keys first');
+    await owner.put('/api/qbo/settings', { qbo_client_id: 'client-1', qbo_client_secret: 'secret-1' });
+    const { url } = (await owner.post('/api/qbo/connect')).data;
+    const auth = new URL(url);
+    assert.equal(auth.searchParams.get('scope'), 'com.intuit.quickbooks.accounting');
+    assert.match(auth.searchParams.get('redirect_uri'), /\/api\/qbo\/callback$/);
+    const state = auth.searchParams.get('state');
+    // Forged state is rejected
+    let cb = await fetch(`${base}/api/qbo/callback?code=x&realmId=9130&state=forged`, { redirect: 'manual' });
+    assert.match(cb.headers.get('location'), /qbo_error/);
+    cb = await fetch(`${base}/api/qbo/callback?code=abc&realmId=9130&state=${state}`, { redirect: 'manual' });
+    assert.equal(cb.headers.get('location'), '/#/accounting?qbo=connected');
+    const tokenCall = seen.find(s => s.path === '/oauth2/v1/tokens/bearer');
+    assert.equal(tokenCall.auth, 'Basic ' + Buffer.from('client-1:secret-1').toString('base64'));
+    assert.equal(tokenCall.body.grant_type, 'authorization_code');
+    const st = (await owner.get('/api/qbo/status')).data;
+    assert.equal(st.connected, true);
+    assert.equal(st.company, 'Test Co Books');
+    assert.equal(st.item_id, '1', 'picks the "Services" item');
+    assert.ok(!JSON.stringify((await owner.get('/api/settings')).data).includes('acc-1'), 'tokens never sent to the browser');
+
+    // A taxed invoice with a payment
+    const cust = (await owner.post('/api/r/customers', { name: "O'Brien Hardware", type: 'commercial', email: 'ob@example.com', billing_address: '5 Elm', city: 'Dayton', state: 'OH', portal_invite: 0 })).data;
+    const inv = (await owner.post('/api/r/invoices', { customer_id: cust.id, status: 'sent', tax_rate: 7, issue_date: '2031-04-01' })).data;
+    await owner.post('/api/r/invoice_items', { invoice_id: inv.id, description: 'Camera', qty: 2, unit_price: 100, taxable: 1 });
+    await owner.post('/api/r/invoice_items', { invoice_id: inv.id, description: 'Labor', qty: 1, unit_price: 50, taxable: 0 });
+    await owner.post('/api/r/payments', { invoice_id: inv.id, amount: 100, date: '2031-04-05', method: 'check', reference: '1234' });
+    const r1 = (await owner.post('/api/qbo/sync')).data;
+    assert.deepEqual(r1.errors, []);
+    assert.ok(r1.invoices >= 1 && r1.payments >= 1);
+    const custQuery = seen.find(s => s.path.endsWith('/query') && decodeURIComponent(s.search).includes('Brien'));
+    assert.match(decodeURIComponent(custQuery.search), /DisplayName = 'O\\'Brien Hardware'/, 'names are escaped in queries');
+    const invPost = seen.filter(s => s.path.endsWith('/invoice') && s.method === 'POST').find(s => s.body.DocNumber === String(inv.number));
+    const sum = invPost.body.Line.reduce((t, l) => t + l.Amount, 0);
+    assert.equal(Math.round(sum * 100) / 100, 264, 'QuickBooks total matches ours (250 + 14 tax)');
+    assert.equal(invPost.body.Line.at(-1).Description, 'Sales tax (7%)');
+    const payPost = seen.find(s => s.path.endsWith('/payment') && s.body.PaymentRefNum === '1234');
+    assert.equal(payPost.body.Line[0].LinkedTxn[0].TxnType, 'Invoice');
+    assert.equal(payPost.body.PaymentRefNum, '1234');
+
+    // Nothing new → nothing sent again
+    const before = seen.length;
+    const r2 = (await owner.post('/api/qbo/sync')).data;
+    assert.equal(r2.invoices + r2.payments, 0);
+    assert.equal(seen.filter((s, i) => i >= before && s.method === 'POST').length, 0);
+
+    // Edit → update with SyncToken; void → void operation
+    await owner.post('/api/r/invoice_items', { invoice_id: inv.id, description: 'Extra', qty: 1, unit_price: 10 });
+    await owner.post('/api/qbo/sync');
+    const upd = seen.filter(s => s.path.endsWith('/invoice') && s.method === 'POST').at(-1);
+    assert.equal(upd.body.SyncToken, '3');
+    assert.ok(upd.body.Id);
+    const inv2 = (await owner.post('/api/r/invoices', { customer_id: cust.id, status: 'sent', tax_rate: 0 })).data;
+    await owner.post('/api/r/invoice_items', { invoice_id: inv2.id, description: 'X', qty: 1, unit_price: 5 });
+    await owner.post('/api/qbo/sync');
+    await owner.post(`/api/invoices/${inv2.id}/status`, { status: 'void' });
+    await owner.post('/api/qbo/sync');
+    assert.ok(seen.some(s => s.search.includes('operation=void')), 'voided invoices are voided in QuickBooks');
+
+    // Exports
+    const q = await owner.call('GET', '/api/accounting/export?format=qbo-invoices&from=2031-01-01&to=2031-12-31', undefined, { raw: true });
+    const qtext = await q.text();
+    assert.match(qtext, /InvoiceNo","Customer","InvoiceDate"/);
+    assert.match(qtext, /"O'Brien Hardware","04\/01\/2031"/);
+    const iif = await (await owner.call('GET', '/api/accounting/export?format=iif&from=2031-01-01&to=2031-12-31', undefined, { raw: true })).text();
+    assert.match(iif, /^!TRNS\tTRNSTYPE/);
+    assert.match(iif, /\nTRNS\tINVOICE\t04\/01\/2031\tAccounts Receivable\tO'Brien Hardware\t274\.00/);
+    assert.match(iif, /\nENDTRNS/);
+    const xero = await (await owner.call('GET', '/api/accounting/export?format=xero-invoices&from=2031-01-01&to=2031-12-31', undefined, { raw: true })).text();
+    assert.match(xero, /\*ContactName/);
+    // Technicians and sales can't reach accounting
+    const sales = client();
+    await sales.post('/api/auth/login', { email: 'sal@example.com', password: 'password123' });
+    assert.equal((await sales.get('/api/qbo/status')).status, 403);
+    // Disconnect revokes the token
+    await owner.post('/api/qbo/disconnect');
+    assert.ok(seen.some(s => s.path === '/revoke'));
+    assert.equal((await owner.get('/api/qbo/status')).data.connected, false);
+  } finally {
+    fake.close();
+    for (const k of ['QBO_OAUTH_BASE', 'QBO_API_BASE', 'QBO_REVOKE_URL']) delete process.env[k];
+  }
+});
+
 export { owner, ids, db, base };

@@ -38,6 +38,7 @@ const NAV = [
   { href: '#/vehicles', label: 'Vehicles', ico: '🚚' },
   { section: 'Insights', roles: G.billing },
   { href: '#/reports', label: 'Reports', ico: '📈', roles: G.billing },
+  { href: '#/accounting', label: 'Accounting', ico: '📒', roles: G.billing },
   { href: '#/settings', label: 'Settings', ico: '⚙', roles: G.manage },
 ];
 
@@ -67,6 +68,7 @@ const ROUTES = [
   [/^vehicles\/(\d+)$/, 'vehicles', 'detail'],
   [/^technicians$/, 'technicians'],
   [/^reports$/, 'reports'],
+  [/^accounting$/, 'accounting'],
   [/^settings$/, 'settings'],
   [/^account$/, 'settings', 'account'],
 ];
