@@ -1,0 +1,587 @@
+// Custom (non-CRUD) endpoints: auth, users, settings, dashboard, billing runs,
+// inventory moves, maintenance, reports, search, export, backup.
+import fs from 'node:fs';
+import path from 'node:path';
+import crypto from 'node:crypto';
+import { RESOURCES, MAINTENANCE } from '../public/js/schema.js';
+import { getSettings, DEFAULT_SETTINGS, tx, DATA_DIR } from './db.js';
+import {
+  HttpError, list, get, create, update, adjustStock, recalcInvoice, round2, todayLocal, addMonths, addDays,
+} from './resources.js';
+import {
+  hashPassword, verifyPassword, validatePassword, createSession, destroySession, audit,
+  loginAllowed, recordFailedLogin, clearLogins,
+} from './security.js';
+
+const ADMIN = ['admin'];
+const OFFICE = ['admin', 'office'];
+const ALL = ['admin', 'office', 'technician'];
+
+const monthLabel = p => new Date(p + '-15T00:00:00Z').toLocaleString('en-US', { month: 'long', year: 'numeric', timeZone: 'UTC' });
+const monthsBetween = (from, to) => {
+  const out = [];
+  let [y, m] = from.split('-').map(Number);
+  const [ty, tm] = to.split('-').map(Number);
+  while ((y < ty || (y === ty && m <= tm)) && out.length < 120) {
+    out.push(`${y}-${String(m).padStart(2, '0')}`);
+    m++; if (m > 12) { m = 1; y++; }
+  }
+  return out;
+};
+const monthStart = () => todayLocal().slice(0, 8) + '01';
+const monthEnd = d => addDays(addMonths(d.slice(0, 8) + '01', 1), -1);
+
+function requireStr(v, label) {
+  if (typeof v !== 'string' || !v.trim()) throw new HttpError(400, `${label} is required`);
+  return v.trim();
+}
+
+function publicUser(u) {
+  return u && { id: u.id, name: u.name, email: u.email, role: u.role, technician_id: u.technician_id };
+}
+
+export function buildRoutes() {
+  const routes = [];
+  const r = (method, pattern, roles, handler) => {
+    const keys = [];
+    const re = new RegExp('^' + pattern.replace(/:(\w+)/g, (_, k) => { keys.push(k); return '([^/]+)'; }) + '$');
+    routes.push({ method, re, keys, roles, handler });
+  };
+
+  // ------------------------------------------------------------ auth
+  r('GET', '/api/auth/state', null, ({ db, user }) => ({
+    needsSetup: db.prepare('SELECT COUNT(*) AS n FROM users').get().n === 0,
+    user: publicUser(user),
+    company: getSettings(db).company_name,
+  }));
+
+  r('POST', '/api/auth/setup', null, ({ db, body, setCookie }) => {
+    if (db.prepare('SELECT COUNT(*) AS n FROM users').get().n > 0) throw new HttpError(409, 'Setup already completed');
+    const name = requireStr(body.name, 'Name');
+    const email = requireStr(body.email, 'Email').toLowerCase();
+    const err = validatePassword(body.password);
+    if (err) throw new HttpError(400, err);
+    const info = db.prepare("INSERT INTO users(name, email, password_hash, role) VALUES (?,?,?,'admin')").run(name, email, hashPassword(body.password));
+    if (body.company_name) db.prepare("UPDATE settings SET value = ? WHERE key = 'company_name'").run(String(body.company_name).trim());
+    setCookie(createSession(db, Number(info.lastInsertRowid)));
+    audit(db, { id: Number(info.lastInsertRowid), name }, 'setup', 'users', Number(info.lastInsertRowid));
+    return { ok: true };
+  });
+
+  r('POST', '/api/auth/login', null, ({ db, body, setCookie, ip }) => {
+    const email = String(body.email || '').trim().toLowerCase();
+    const key = `${ip}|${email}`;
+    if (!loginAllowed(key)) throw new HttpError(429, 'Too many attempts. Try again in 15 minutes.');
+    const u = db.prepare('SELECT * FROM users WHERE email = ?').get(email);
+    if (!u || !u.active || !verifyPassword(String(body.password || ''), u.password_hash)) {
+      recordFailedLogin(key);
+      throw new HttpError(401, 'Invalid email or password');
+    }
+    clearLogins(key);
+    setCookie(createSession(db, u.id));
+    audit(db, u, 'login', 'users', u.id);
+    return { user: publicUser(u) };
+  });
+
+  r('POST', '/api/auth/logout', null, ({ db, token, setCookie }) => {
+    destroySession(db, token);
+    setCookie(null);
+    return { ok: true };
+  });
+
+  r('POST', '/api/auth/password', ALL, ({ db, user, body }) => {
+    const u = db.prepare('SELECT * FROM users WHERE id = ?').get(user.id);
+    if (!verifyPassword(String(body.current || ''), u.password_hash)) throw new HttpError(400, 'Current password is incorrect');
+    const err = validatePassword(body.password);
+    if (err) throw new HttpError(400, err);
+    db.prepare('UPDATE users SET password_hash = ? WHERE id = ?').run(hashPassword(body.password), user.id);
+    audit(db, user, 'change password', 'users', user.id);
+    return { ok: true };
+  });
+
+  // ------------------------------------------------------------ users
+  r('GET', '/api/users', ADMIN, ({ db }) => db.prepare(`SELECT u.id, u.name, u.email, u.role, u.technician_id, u.active, u.last_login,
+      t.name AS technician_name FROM users u LEFT JOIN technicians t ON t.id = u.technician_id ORDER BY u.active DESC, u.name`).all());
+
+  r('POST', '/api/users', ADMIN, ({ db, body, user }) => {
+    const name = requireStr(body.name, 'Name');
+    const email = requireStr(body.email, 'Email').toLowerCase();
+    if (!['admin', 'office', 'technician'].includes(body.role)) throw new HttpError(400, 'Invalid role');
+    const err = validatePassword(body.password);
+    if (err) throw new HttpError(400, err);
+    try {
+      const info = db.prepare('INSERT INTO users(name, email, password_hash, role, technician_id) VALUES (?,?,?,?,?)')
+        .run(name, email, hashPassword(body.password), body.role, body.technician_id ? Number(body.technician_id) : null);
+      audit(db, user, 'create', 'users', Number(info.lastInsertRowid), body.role);
+      return { id: Number(info.lastInsertRowid) };
+    } catch (e) {
+      if (/UNIQUE/.test(e.message)) throw new HttpError(409, 'A user with that email already exists');
+      throw e;
+    }
+  });
+
+  r('PUT', '/api/users/:id', ADMIN, ({ db, body, user, params }) => {
+    const target = db.prepare('SELECT * FROM users WHERE id = ?').get(Number(params.id));
+    if (!target) throw new HttpError(404, 'Not found');
+    const role = body.role ?? target.role;
+    const active = body.active === undefined ? target.active : (body.active ? 1 : 0);
+    if (!['admin', 'office', 'technician'].includes(role)) throw new HttpError(400, 'Invalid role');
+    if (target.role === 'admin' && (role !== 'admin' || !active)) {
+      const admins = db.prepare("SELECT COUNT(*) AS n FROM users WHERE role = 'admin' AND active = 1").get().n;
+      if (admins <= 1) throw new HttpError(400, 'You must keep at least one active admin');
+    }
+    db.prepare('UPDATE users SET name = ?, email = ?, role = ?, active = ?, technician_id = ? WHERE id = ?').run(
+      body.name?.trim() || target.name, body.email?.trim().toLowerCase() || target.email, role, active,
+      body.technician_id === undefined ? target.technician_id : (body.technician_id ? Number(body.technician_id) : null), target.id);
+    if (body.password) {
+      const err = validatePassword(body.password);
+      if (err) throw new HttpError(400, err);
+      db.prepare('UPDATE users SET password_hash = ? WHERE id = ?').run(hashPassword(body.password), target.id);
+      db.prepare('DELETE FROM sessions WHERE user_id = ?').run(target.id);
+    }
+    if (!active) db.prepare('DELETE FROM sessions WHERE user_id = ?').run(target.id);
+    audit(db, user, 'update', 'users', target.id, body.password ? 'password reset' : null);
+    return { ok: true };
+  });
+
+  // ------------------------------------------------------------ settings
+  r('GET', '/api/settings', ALL, ({ db }) => getSettings(db));
+  r('PUT', '/api/settings', ADMIN, ({ db, body, user }) => {
+    const up = db.prepare('INSERT INTO settings(key, value) VALUES (?,?) ON CONFLICT(key) DO UPDATE SET value = excluded.value');
+    for (const k of Object.keys(DEFAULT_SETTINGS)) if (k in body) up.run(k, String(body[k] ?? ''));
+    audit(db, user, 'update', 'settings', null);
+    return getSettings(db);
+  });
+
+  r('GET', '/api/audit', ADMIN, ({ db, query }) =>
+    db.prepare('SELECT * FROM audit_log ORDER BY id DESC LIMIT ?').all(Math.min(Number(query.limit) || 300, 2000)));
+
+  // ------------------------------------------------------------ dashboard
+  r('GET', '/api/dashboard', ALL, ({ db, user }) => {
+    const today = todayLocal();
+    const isTech = user.role === 'technician';
+    const callWhere = isTech && user.technician_id ? `AND t.technician_id = ${Number(user.technician_id)}` : '';
+    const todayCalls = list(db, 'service_calls', { from: today, to: today, limit: 200 }, user)
+      .filter(c => !isTech || !user.technician_id || c.technician_id === user.technician_id)
+      .sort((a, b) => (a.scheduled_start || '').localeCompare(b.scheduled_start || ''));
+    const out = {
+      today,
+      todayCalls,
+      openCalls: db.prepare(`SELECT COUNT(*) AS n FROM service_calls t WHERE status NOT IN ('completed','cancelled') ${callWhere}`).get().n,
+      unassignedCalls: db.prepare(`SELECT COUNT(*) AS n FROM service_calls WHERE status NOT IN ('completed','cancelled') AND technician_id IS NULL`).get().n,
+      emergencies: db.prepare(`SELECT COUNT(*) AS n FROM service_calls t WHERE status NOT IN ('completed','cancelled') AND priority = 'emergency' ${callWhere}`).get().n,
+      customers: db.prepare(`SELECT type, COUNT(*) AS n FROM customers WHERE status = 'active' GROUP BY type`).all(),
+      maintenance: maintenanceDue(db, 30),
+      lowStock: db.prepare(`SELECT i.id, i.name, i.sku, i.reorder_level, COALESCE(SUM(s.qty),0) AS total_qty
+        FROM inventory_items i LEFT JOIN stock s ON s.item_id = i.id WHERE i.active = 1
+        GROUP BY i.id HAVING total_qty < i.reorder_level ORDER BY total_qty - i.reorder_level LIMIT 10`).all(),
+    };
+    if (!isTech) {
+      const m = today.slice(0, 7);
+      out.mrr = round2(db.prepare(`SELECT COALESCE(SUM(rc.amount),0) AS s FROM recurring_charges rc JOIN customers c ON c.id = rc.customer_id
+        WHERE rc.active = 1 AND c.status = 'active'`).get().s);
+      const open = list(db, 'invoices', { status__in: 'sent,partial' }, user).filter(i => i.balance > 0);
+      out.arTotal = round2(open.reduce((s, i) => s + i.balance, 0));
+      const overdue = open.filter(i => i.display_status === 'overdue');
+      out.overdueTotal = round2(overdue.reduce((s, i) => s + i.balance, 0));
+      out.overdueInvoices = overdue.sort((a, b) => a.due_date.localeCompare(b.due_date)).slice(0, 8);
+      out.monthRevenue = round2(db.prepare(`SELECT COALESCE(SUM(total),0) AS s FROM invoices WHERE status NOT IN ('void','draft') AND substr(issue_date,1,7) = ?`).get(m).s);
+      out.monthCollected = round2(db.prepare(`SELECT COALESCE(SUM(amount),0) AS s FROM payments WHERE substr(date,1,7) = ?`).get(m).s);
+      out.monthExpenses = round2(db.prepare(`SELECT COALESCE(SUM(amount),0) AS s FROM expenses WHERE substr(date,1,7) = ?`).get(m).s);
+      out.monthlyBilled = !!db.prepare(`SELECT 1 FROM invoices WHERE kind = 'monthly' AND period = ? AND status <> 'void' LIMIT 1`).get(m);
+      out.drafts = db.prepare(`SELECT COUNT(*) AS n FROM invoices WHERE status = 'draft'`).get().n;
+      out.uninvoicedCalls = db.prepare(`SELECT COUNT(*) AS n FROM service_calls WHERE status = 'completed' AND billable = 1 AND invoice_id IS NULL`).get().n;
+    }
+    return out;
+  });
+
+  r('GET', '/api/search', ALL, ({ db, query, user }) => {
+    const q = String(query.q || '').trim();
+    if (q.length < 2) return [];
+    const out = [];
+    const push = (kind, rows, toItem) => rows.forEach(x => out.push({ kind, ...toItem(x) }));
+    push('Customer', list(db, 'customers', { q, limit: 8 }), c => ({ id: c.id, title: c.name, sub: [c.type, c.phone, c.city].filter(Boolean).join(' · '), href: `#/customers/${c.id}` }));
+    push('Service call', list(db, 'service_calls', { q, limit: 6 }), c => ({ id: c.id, title: `SC-${c.number} ${c.title}`, sub: `${c.customer_id_label} · ${c.status}`, href: `#/calls/${c.id}` }));
+    if (OFFICE.includes(user.role)) {
+      push('Invoice', list(db, 'invoices', { q, limit: 5 }), i => ({ id: i.id, title: `Invoice #${i.number}`, sub: `${i.customer_id_label} · $${i.total}`, href: `#/invoices/${i.id}` }));
+    }
+    push('Item', list(db, 'inventory_items', { q, limit: 5 }), i => ({ id: i.id, title: i.name, sub: `${i.sku || ''} · ${i.total_qty} on hand`, href: `#/inventory/${i.id}` }));
+    push('Vehicle', list(db, 'vehicles', { q, limit: 3 }), v => ({ id: v.id, title: v.unit_name, sub: [v.year, v.make, v.model].filter(Boolean).join(' '), href: `#/vehicles/${v.id}` }));
+    push('Technician', list(db, 'technicians', { q, limit: 3 }), t => ({ id: t.id, title: t.name, sub: t.phone || '', href: `#/technicians` }));
+    return out;
+  });
+
+  // ------------------------------------------------------------ maintenance
+  r('GET', '/api/maintenance', ALL, ({ db, query }) => maintenanceDue(db, Number(query.days) || 60, query.customer_id));
+
+  r('POST', '/api/maintenance/complete', ALL, ({ db, body, user }) => {
+    const m = MAINTENANCE[body.key];
+    if (!m) throw new HttpError(400, 'Unknown maintenance type');
+    const ids = (Array.isArray(body.ids) ? body.ids : [body.id]).map(Number).filter(Boolean);
+    const date = body.date || todayLocal();
+    tx(db, () => {
+      for (const id of ids) {
+        const row = db.prepare(`SELECT * FROM "${m.table}" WHERE id = ?`).get(id);
+        if (!row) continue;
+        let next = body.next_date;
+        if (!next) {
+          if (m.intervalYearsField) next = addMonths(date, (Number(row[m.intervalYearsField]) || 12) * 12);
+          else if (m.intervalMonths) next = addMonths(date, m.intervalMonths);
+          else if (m.intervalField) next = addMonths(date, Number(row[m.intervalField]) || 12);
+          else next = addMonths(date, body.key === 'vehicle_service' ? 3 : 12);
+        }
+        const sets = [`"${m.due}" = ?`];
+        const vals = [next];
+        if (m.last) { sets.push(`"${m.last}" = ?`); vals.push(date); }
+        if (m.table === 'extinguishers' && body.key === 'ext_annual') sets.push(`status = CASE WHEN status = 'needs service' THEN status ELSE 'in service' END`);
+        db.prepare(`UPDATE "${m.table}" SET ${sets.join(', ')}, updated_at = datetime('now','localtime') WHERE id = ?`).run(...vals, id);
+        audit(db, user, 'maintenance complete', m.table, id, body.key);
+      }
+    });
+    return { ok: true, count: ids.length };
+  });
+
+  // ------------------------------------------------------------ billing
+  r('POST', '/api/invoices/generate-monthly', OFFICE, ({ db, body, user }) => {
+    const period = /^\d{4}-\d{2}$/.test(body.period || '') ? body.period : todayLocal().slice(0, 7);
+    const issue = todayLocal().slice(0, 7) === period ? todayLocal() : `${period}-01`;
+    const customers = db.prepare(`SELECT c.id, c.name, c.type FROM customers c WHERE c.status = 'active'
+      AND EXISTS (SELECT 1 FROM recurring_charges rc WHERE rc.customer_id = c.id AND rc.active = 1)
+      AND NOT EXISTS (SELECT 1 FROM invoices i WHERE i.customer_id = c.id AND i.kind = 'monthly' AND i.period = ? AND i.status <> 'void')
+      ORDER BY c.name`).all(period);
+    const charges = db.prepare('SELECT * FROM recurring_charges WHERE customer_id = ? AND active = 1 ORDER BY id');
+    const preview = customers.map(c => {
+      const ch = charges.all(c.id);
+      return { customer_id: c.id, name: c.name, type: c.type, amount: round2(ch.reduce((s, x) => s + x.amount, 0)), lines: ch.length };
+    });
+    if (body.dry_run) return { period, label: monthLabel(period), customers: preview, total: round2(preview.reduce((s, p) => s + p.amount, 0)) };
+    const created = tx(db, () => customers.map(c => {
+      const inv = create(db, 'invoices', { customer_id: c.id, kind: 'monthly', period, issue_date: issue, status: body.as_draft ? 'draft' : 'sent' }, user);
+      for (const ch of charges.all(c.id)) {
+        create(db, 'invoice_items', { invoice_id: inv.id, description: `${ch.description} — ${monthLabel(period)}`, qty: 1, unit_price: ch.amount, taxable: ch.taxable }, user);
+      }
+      return inv.id;
+    }));
+    audit(db, user, 'monthly billing run', 'invoices', null, `${period}: ${created.length} invoices`);
+    return { period, created: created.length };
+  });
+
+  r('POST', '/api/service_calls/:id/invoice', OFFICE, ({ db, params, user }) => {
+    const call = get(db, 'service_calls', params.id);
+    if (call.invoice_id) return { id: call.invoice_id, existing: true };
+    return tx(db, () => {
+      const inv = create(db, 'invoices', { customer_id: call.customer_id, kind: call.call_type === 'installation' ? 'installation' : 'service', status: 'draft', notes: `Service call SC-${call.number}: ${call.title}` }, user);
+      db.prepare('UPDATE invoices SET service_call_id = ? WHERE id = ?').run(call.id, inv.id);
+      if (call.labor_hours > 0) {
+        create(db, 'invoice_items', { invoice_id: inv.id, description: `Labor — ${call.title}${call.technician_id_label ? ` (${call.technician_id_label})` : ''}`, qty: call.labor_hours, unit_price: call.labor_rate || 0, taxable: 0 }, user);
+      }
+      const parts = db.prepare(`SELECT p.*, i.name, i.sku FROM service_call_parts p JOIN inventory_items i ON i.id = p.item_id WHERE p.service_call_id = ?`).all(call.id);
+      for (const p of parts) {
+        create(db, 'invoice_items', { invoice_id: inv.id, description: p.sku ? `${p.name} (${p.sku})` : p.name, qty: p.qty, unit_price: p.unit_price || 0, taxable: 1 }, user);
+      }
+      db.prepare('UPDATE service_calls SET invoice_id = ? WHERE id = ?').run(inv.id, call.id);
+      return { id: inv.id };
+    });
+  });
+
+  r('POST', '/api/invoices/:id/status', OFFICE, ({ db, params, body, user }) => {
+    if (!['draft', 'sent', 'void'].includes(body.status)) throw new HttpError(400, 'Invalid status');
+    db.prepare("UPDATE invoices SET status = ?, updated_at = datetime('now','localtime') WHERE id = ?").run(body.status, Number(params.id));
+    recalcInvoice(db, Number(params.id));
+    audit(db, user, `invoice ${body.status}`, 'invoices', Number(params.id));
+    return get(db, 'invoices', params.id);
+  });
+
+  r('POST', '/api/invoices/send-drafts', OFFICE, ({ db, user }) => {
+    const n = db.prepare("UPDATE invoices SET status = 'sent' WHERE status = 'draft'").run().changes;
+    audit(db, user, 'mark drafts sent', 'invoices', null, String(n));
+    return { count: n };
+  });
+
+  // ------------------------------------------------------------ inventory
+  r('GET', '/api/stock', ALL, ({ db, query }) => {
+    const where = query.location_id !== undefined && query.location_id !== '' ? 'WHERE s.location_id = ?' : '';
+    const params = where ? [Number(query.location_id)] : [];
+    return db.prepare(`SELECT s.item_id, s.location_id, s.qty, i.name, i.sku, i.category, i.unit_cost, i.unit_price,
+        CASE WHEN s.location_id = 0 THEN 'Warehouse' ELSE v.unit_name END AS location_name
+      FROM stock s JOIN inventory_items i ON i.id = s.item_id LEFT JOIN vehicles v ON v.id = s.location_id
+      ${where} ORDER BY i.category, i.name`).all(...params);
+  });
+
+  r('GET', '/api/stock/movements', ALL, ({ db, query }) => {
+    const where = [];
+    const params = [];
+    if (query.item_id) { where.push('m.item_id = ?'); params.push(Number(query.item_id)); }
+    if (query.location_id !== undefined && query.location_id !== '') {
+      where.push('(m.from_location = ? OR m.to_location = ?)'); params.push(Number(query.location_id), Number(query.location_id));
+    }
+    return db.prepare(`SELECT m.*, i.name AS item_name, u.name AS user_name,
+        CASE WHEN m.from_location = 0 THEN 'Warehouse' ELSE fv.unit_name END AS from_name,
+        CASE WHEN m.to_location = 0 THEN 'Warehouse' ELSE tv.unit_name END AS to_name,
+        sc.number AS call_number
+      FROM stock_movements m JOIN inventory_items i ON i.id = m.item_id
+      LEFT JOIN users u ON u.id = m.user_id
+      LEFT JOIN vehicles fv ON fv.id = m.from_location LEFT JOIN vehicles tv ON tv.id = m.to_location
+      LEFT JOIN service_calls sc ON sc.id = m.service_call_id
+      ${where.length ? 'WHERE ' + where.join(' AND ') : ''} ORDER BY m.id DESC LIMIT 300`).all(...params);
+  });
+
+  const locId = v => {
+    const n = Number(v);
+    if (!Number.isInteger(n) || n < 0) throw new HttpError(400, 'Invalid location');
+    return n;
+  };
+  const checkItem = (db, id) => {
+    const item = db.prepare('SELECT * FROM inventory_items WHERE id = ?').get(Number(id));
+    if (!item) throw new HttpError(400, 'Item not found');
+    return item;
+  };
+  const checkLocation = (db, id) => {
+    if (id !== 0 && !db.prepare('SELECT 1 FROM vehicles WHERE id = ?').get(id)) throw new HttpError(400, 'Vehicle not found');
+  };
+
+  r('POST', '/api/stock/receive', OFFICE, ({ db, body, user }) => {
+    const item = checkItem(db, body.item_id);
+    const qty = Number(body.qty);
+    if (!(qty > 0)) throw new HttpError(400, 'Quantity must be greater than zero');
+    const loc = locId(body.location_id ?? 0);
+    checkLocation(db, loc);
+    return tx(db, () => {
+      const cost = body.unit_cost === '' || body.unit_cost == null ? item.unit_cost : round2(body.unit_cost);
+      adjustStock(db, { itemId: item.id, locationId: loc, delta: qty, kind: 'received', note: body.vendor ? `from ${body.vendor}` : body.note, userId: user.id });
+      if (cost != null && cost !== item.unit_cost && body.update_cost) {
+        db.prepare('UPDATE inventory_items SET unit_cost = ? WHERE id = ?').run(cost, item.id);
+      }
+      if (body.record_expense && cost) {
+        create(db, 'expenses', { date: todayLocal(), category: 'Parts & equipment', vendor: body.vendor || '', description: `${qty} × ${item.name}`, amount: round2(qty * cost), payment_method: 'card' }, user);
+      }
+      return { ok: true };
+    });
+  });
+
+  r('POST', '/api/stock/transfer', ALL, ({ db, body, user }) => {
+    const item = checkItem(db, body.item_id);
+    const qty = Number(body.qty);
+    if (!(qty > 0)) throw new HttpError(400, 'Quantity must be greater than zero');
+    const from = locId(body.from), to = locId(body.to);
+    if (from === to) throw new HttpError(400, 'Choose two different locations');
+    checkLocation(db, from); checkLocation(db, to);
+    return tx(db, () => {
+      adjustStock(db, { itemId: item.id, locationId: from, delta: -qty, kind: 'transfer out', note: body.note, userId: user.id });
+      adjustStock(db, { itemId: item.id, locationId: to, delta: qty, kind: 'transfer in', note: body.note, userId: user.id });
+      return { ok: true };
+    });
+  });
+
+  r('POST', '/api/stock/count', OFFICE, ({ db, body, user }) => {
+    const item = checkItem(db, body.item_id);
+    const loc = locId(body.location_id ?? 0);
+    checkLocation(db, loc);
+    const counted = Number(body.qty);
+    if (!Number.isFinite(counted) || counted < 0) throw new HttpError(400, 'Enter the counted quantity');
+    return tx(db, () => {
+      const cur = db.prepare('SELECT qty FROM stock WHERE item_id = ? AND location_id = ?').get(item.id, loc)?.qty || 0;
+      if (counted !== cur) adjustStock(db, { itemId: item.id, locationId: loc, delta: counted - cur, kind: 'count adjustment', note: body.note || `counted ${counted} (was ${cur})`, userId: user.id, allowNegative: true });
+      return { ok: true, delta: counted - cur };
+    });
+  });
+
+  // ------------------------------------------------------------ reports
+  r('GET', '/api/reports/pnl', OFFICE, ({ db, query }) => {
+    const to = /^\d{4}-\d{2}$/.test(query.to || '') ? query.to : todayLocal().slice(0, 7);
+    const from = /^\d{4}-\d{2}$/.test(query.from || '') ? query.from : addMonths(to + '-01', -5).slice(0, 7);
+    const months = monthsBetween(from, to);
+    const byMonth = (sql, ...p) => Object.fromEntries(db.prepare(sql).all(...p).map(r => [r.m, r]));
+    const rev = byMonth(`SELECT substr(i.issue_date,1,7) AS m, SUM(i.total) AS total,
+        SUM(CASE WHEN c.type = 'commercial' THEN i.total ELSE 0 END) AS commercial,
+        SUM(CASE WHEN c.type = 'residential' THEN i.total ELSE 0 END) AS residential,
+        SUM(CASE WHEN i.kind = 'monthly' THEN i.total ELSE 0 END) AS recurring
+      FROM invoices i JOIN customers c ON c.id = i.customer_id
+      WHERE i.status NOT IN ('void','draft') AND substr(i.issue_date,1,7) BETWEEN ? AND ? GROUP BY m`, from, to);
+    const col = byMonth(`SELECT substr(date,1,7) AS m, SUM(amount) AS total FROM payments WHERE substr(date,1,7) BETWEEN ? AND ? GROUP BY m`, from, to);
+    const exp = byMonth(`SELECT substr(date,1,7) AS m, SUM(amount) AS total FROM expenses WHERE substr(date,1,7) BETWEEN ? AND ? GROUP BY m`, from, to);
+    const labor = byMonth(`SELECT substr(sc.completed_at,1,7) AS m, SUM(COALESCE(sc.labor_hours,0) * COALESCE(t.hourly_cost,0)) AS total
+      FROM service_calls sc LEFT JOIN technicians t ON t.id = sc.technician_id
+      WHERE sc.status = 'completed' AND substr(sc.completed_at,1,7) BETWEEN ? AND ? GROUP BY m`, from, to);
+    const parts = byMonth(`SELECT substr(sc.completed_at,1,7) AS m, SUM(p.qty * COALESCE(p.unit_cost,0)) AS total
+      FROM service_call_parts p JOIN service_calls sc ON sc.id = p.service_call_id
+      WHERE sc.status = 'completed' AND substr(sc.completed_at,1,7) BETWEEN ? AND ? GROUP BY m`, from, to);
+    const categories = db.prepare(`SELECT category, SUM(amount) AS total FROM expenses WHERE substr(date,1,7) BETWEEN ? AND ? GROUP BY category ORDER BY total DESC`).all(from, to);
+    const catByMonth = db.prepare(`SELECT substr(date,1,7) AS m, category, SUM(amount) AS total FROM expenses WHERE substr(date,1,7) BETWEEN ? AND ? GROUP BY m, category`).all(from, to);
+    const rows = months.map(m => {
+      const revenue = round2(rev[m]?.total || 0);
+      const expenses = round2(exp[m]?.total || 0);
+      const laborEst = round2(labor[m]?.total || 0);
+      return {
+        month: m, label: monthLabel(m), revenue,
+        commercial: round2(rev[m]?.commercial || 0), residential: round2(rev[m]?.residential || 0), recurring: round2(rev[m]?.recurring || 0),
+        collected: round2(col[m]?.total || 0), expenses, laborEst, partsUsedCost: round2(parts[m]?.total || 0),
+        net: round2(revenue - expenses), netWithLabor: round2(revenue - expenses - laborEst),
+        categories: Object.fromEntries(catByMonth.filter(c => c.m === m).map(c => [c.category, round2(c.total)])),
+      };
+    });
+    const sum = k => round2(rows.reduce((s, r) => s + r[k], 0));
+    return {
+      from, to, months: rows, categories: categories.map(c => ({ ...c, total: round2(c.total) })),
+      totals: Object.fromEntries(['revenue', 'commercial', 'residential', 'recurring', 'collected', 'expenses', 'laborEst', 'partsUsedCost', 'net', 'netWithLabor'].map(k => [k, sum(k)])),
+    };
+  });
+
+  r('GET', '/api/reports/technicians', OFFICE, ({ db, query }) => {
+    const from = query.from || monthStart();
+    const to = query.to || monthEnd(todayLocal());
+    let workdays = 0;
+    for (let d = from; d <= to; d = addDays(d, 1)) { const wd = new Date(d + 'T12:00:00Z').getUTCDay(); if (wd > 0 && wd < 6) workdays++; if (workdays > 400) break; }
+    const rows = db.prepare(`SELECT t.id, t.name, t.color, t.active, t.hourly_cost,
+        COUNT(sc.id) AS calls,
+        SUM(CASE WHEN sc.status = 'completed' THEN 1 ELSE 0 END) AS completed,
+        SUM(CASE WHEN sc.priority = 'emergency' THEN 1 ELSE 0 END) AS emergencies,
+        SUM(CASE WHEN sc.call_type = 'installation' THEN 1 ELSE 0 END) AS installs,
+        COALESCE(SUM(sc.duration_hours),0) AS scheduled_hours,
+        COALESCE(SUM(CASE WHEN sc.status = 'completed' THEN sc.labor_hours END),0) AS labor_hours,
+        COALESCE(SUM(CASE WHEN sc.status = 'completed' THEN sc.labor_hours * sc.labor_rate END),0) AS labor_billed,
+        COALESCE(SUM(CASE WHEN sc.status = 'completed' THEN sc.labor_hours END),0) * COALESCE(t.hourly_cost,0) AS labor_cost,
+        (SELECT COALESCE(SUM(p.qty * p.unit_price),0) FROM service_call_parts p JOIN service_calls s2 ON s2.id = p.service_call_id
+          WHERE s2.technician_id = t.id AND s2.status = 'completed' AND substr(COALESCE(s2.scheduled_start, s2.created_at),1,10) BETWEEN ? AND ?) AS parts_billed,
+        (SELECT COUNT(*) FROM service_calls s3 WHERE s3.technician_id = t.id AND s3.status NOT IN ('completed','cancelled')) AS open_backlog
+      FROM technicians t
+      LEFT JOIN service_calls sc ON sc.technician_id = t.id AND sc.status <> 'cancelled'
+        AND substr(COALESCE(sc.scheduled_start, sc.created_at),1,10) BETWEEN ? AND ?
+      GROUP BY t.id ORDER BY scheduled_hours DESC, calls DESC`).all(from, to, from, to);
+    const capacity = workdays * 8;
+    return {
+      from, to, workdays, capacity,
+      technicians: rows.map(t => ({
+        ...t, scheduled_hours: round2(t.scheduled_hours), labor_hours: round2(t.labor_hours), labor_billed: round2(t.labor_billed),
+        labor_cost: round2(t.labor_cost), parts_billed: round2(t.parts_billed),
+        utilization: capacity ? Math.round((t.scheduled_hours / capacity) * 100) : 0,
+      })),
+      unassigned: db.prepare(`SELECT COUNT(*) AS n FROM service_calls WHERE technician_id IS NULL AND status NOT IN ('completed','cancelled')`).get().n,
+    };
+  });
+
+  r('GET', '/api/reports/segments', OFFICE, ({ db, query }) => {
+    const from = query.from || addMonths(monthStart(), -11);
+    const to = query.to || todayLocal();
+    return ['residential', 'commercial'].map(type => {
+      const q = (sql, ...p) => db.prepare(sql).get(type, ...p);
+      const active = q(`SELECT COUNT(*) AS n FROM customers WHERE type = ? AND status = 'active'`).n;
+      const mrr = round2(q(`SELECT COALESCE(SUM(rc.amount),0) AS s FROM recurring_charges rc JOIN customers c ON c.id = rc.customer_id WHERE c.type = ? AND c.status = 'active' AND rc.active = 1`).s);
+      const revenue = round2(q(`SELECT COALESCE(SUM(i.total),0) AS s FROM invoices i JOIN customers c ON c.id = i.customer_id WHERE c.type = ? AND i.status NOT IN ('void','draft') AND i.issue_date BETWEEN ? AND ?`, from, to).s);
+      const billed = q(`SELECT COALESCE(SUM(i.total),0) AS s FROM invoices i JOIN customers c ON c.id = i.customer_id WHERE c.type = ? AND i.status IN ('sent','partial')`).s;
+      const paid = q(`SELECT COALESCE(SUM(p.amount),0) AS s FROM payments p JOIN invoices i ON i.id = p.invoice_id JOIN customers c ON c.id = i.customer_id WHERE c.type = ? AND i.status IN ('sent','partial')`).s;
+      const calls = q(`SELECT COUNT(*) AS n FROM service_calls sc JOIN customers c ON c.id = sc.customer_id WHERE c.type = ? AND substr(COALESCE(sc.scheduled_start, sc.created_at),1,10) BETWEEN ? AND ?`, from, to).n;
+      return { type, active, mrr, arr: round2(mrr * 12), revenue, openAR: round2(billed - paid), calls, avgMrr: active ? round2(mrr / active) : 0, from, to };
+    });
+  });
+
+  r('GET', '/api/reports/aging', OFFICE, ({ db, user }) => {
+    const today = todayLocal();
+    const open = list(db, 'invoices', { status__in: 'sent,partial' }, user).filter(i => i.balance > 0);
+    const byCust = new Map();
+    const totals = { current: 0, d30: 0, d60: 0, d90: 0, d90plus: 0, total: 0 };
+    for (const i of open) {
+      const days = Math.floor((Date.parse(today) - Date.parse(i.due_date || i.issue_date)) / 864e5);
+      const bucket = days <= 0 ? 'current' : days <= 30 ? 'd30' : days <= 60 ? 'd60' : days <= 90 ? 'd90' : 'd90plus';
+      const c = byCust.get(i.customer_id) || { customer_id: i.customer_id, name: i.customer_id_label, type: i.customer_type, current: 0, d30: 0, d60: 0, d90: 0, d90plus: 0, total: 0, invoices: 0 };
+      c[bucket] = round2(c[bucket] + i.balance); c.total = round2(c.total + i.balance); c.invoices++;
+      totals[bucket] = round2(totals[bucket] + i.balance); totals.total = round2(totals.total + i.balance);
+      byCust.set(i.customer_id, c);
+    }
+    return { customers: [...byCust.values()].sort((a, b) => b.total - a.total), totals };
+  });
+
+  r('GET', '/api/reports/jobs', OFFICE, ({ db, query }) => {
+    const from = query.from || monthStart();
+    const to = query.to || todayLocal();
+    return db.prepare(`SELECT sc.id, sc.number, sc.title, sc.call_type, sc.completed_at, c.name AS customer, c.type AS customer_type, t.name AS technician,
+        COALESCE(sc.labor_hours,0) AS labor_hours,
+        COALESCE(sc.labor_hours,0) * COALESCE(t.hourly_cost,0) AS labor_cost,
+        (SELECT COALESCE(SUM(p.qty * p.unit_cost),0) FROM service_call_parts p WHERE p.service_call_id = sc.id) AS parts_cost,
+        COALESCE(i.subtotal, COALESCE(sc.labor_hours,0) * COALESCE(sc.labor_rate,0) + (SELECT COALESCE(SUM(p.qty * p.unit_price),0) FROM service_call_parts p WHERE p.service_call_id = sc.id)) AS billed,
+        i.number AS invoice_number, sc.billable
+      FROM service_calls sc JOIN customers c ON c.id = sc.customer_id LEFT JOIN technicians t ON t.id = sc.technician_id LEFT JOIN invoices i ON i.id = sc.invoice_id AND i.status <> 'void'
+      WHERE sc.status = 'completed' AND substr(sc.completed_at,1,10) BETWEEN ? AND ? ORDER BY sc.completed_at DESC LIMIT 500`).all(from, to)
+      .map(j => {
+        const billed = j.billable ? round2(j.billed) : 0;
+        const cost = round2(j.labor_cost + j.parts_cost);
+        return { ...j, billed, labor_cost: round2(j.labor_cost), parts_cost: round2(j.parts_cost), cost, profit: round2(billed - cost), margin: billed ? Math.round(((billed - cost) / billed) * 100) : null };
+      });
+  });
+
+  // ------------------------------------------------------------ export / backup
+  r('GET', '/api/export/:resource', OFFICE, ({ db, params, res, user }) => {
+    const def = RESOURCES[params.resource];
+    if (!def) throw new HttpError(404, 'Unknown resource');
+    const rows = list(db, params.resource, { limit: 5000 }, user);
+    const fields = def.fields.filter(f => f.type !== 'secret');
+    const cell = v => {
+      const s = v == null ? '' : String(v);
+      // Neutralise spreadsheet formula injection and quote.
+      const safe = /^[=+\-@\t\r]/.test(s) ? `'${s}` : s;
+      return `"${safe.replace(/"/g, '""')}"`;
+    };
+    const header = ['id', ...fields.map(f => f.label)];
+    const lines = [header.map(cell).join(',')];
+    for (const row of rows) lines.push([row.id, ...fields.map(f => f.type === 'ref' ? row[`${f.name}_label`] : row[f.name])].map(cell).join(','));
+    res.writeHead(200, { 'Content-Type': 'text/csv; charset=utf-8', 'Content-Disposition': `attachment; filename="${params.resource}-${todayLocal()}.csv"` });
+    res.end('﻿' + lines.join('\r\n'));
+    audit(db, user, 'export', params.resource, null, String(rows.length));
+    return undefined;
+  });
+
+  r('GET', '/api/admin/backup', ADMIN, ({ db, res, user }) => {
+    const file = path.join(DATA_DIR, `backup-${crypto.randomBytes(6).toString('hex')}.db`);
+    db.exec(`VACUUM INTO '${file.replace(/'/g, "''")}'`);
+    const buf = fs.readFileSync(file);
+    fs.unlinkSync(file);
+    audit(db, user, 'backup', null, null);
+    res.writeHead(200, { 'Content-Type': 'application/octet-stream', 'Content-Disposition': `attachment; filename="secureops-backup-${todayLocal()}.db"` });
+    res.end(buf);
+    return undefined;
+  });
+
+  return routes;
+}
+
+export function maintenanceDue(db, days = 60, customerId) {
+  const today = todayLocal();
+  const horizon = addDays(today, days);
+  const out = [];
+  for (const [key, m] of Object.entries(MAINTENANCE)) {
+    let rows;
+    if (m.vehicle) {
+      rows = db.prepare(`SELECT id, unit_name AS label, "${m.due}" AS due FROM vehicles WHERE "${m.due}" IS NOT NULL AND "${m.due}" <= ? AND status <> 'sold'`).all(horizon);
+      if (customerId) continue;
+      rows.forEach(r => out.push({ key, label: m.label, table: m.table, ids: [r.id], count: 1, due: r.due, what: r.label, vehicle_id: r.id }));
+      continue;
+    }
+    const extra = m.table === 'extinguishers' ? `AND x.status NOT IN ('removed','out of service')` : '';
+    rows = db.prepare(`SELECT x.id, x."${m.due}" AS due, x.customer_id, c.name AS customer, c.type AS customer_type, c.phone,
+        ${RESOURCES[m.table].labelExpr.replace(/\b(location|brand|panel_brand|system_type|ext_type)\b/g, 'x.$1')} AS what
+      FROM "${m.table}" x JOIN customers c ON c.id = x.customer_id
+      WHERE x."${m.due}" IS NOT NULL AND x."${m.due}" <= ? AND c.status = 'active' ${extra} ${customerId ? 'AND x.customer_id = ?' : ''}
+      ORDER BY x."${m.due}"`).all(...[horizon, ...(customerId ? [Number(customerId)] : [])]);
+    if (m.table === 'extinguishers') {
+      // Group a customer's extinguishers that are due the same month into one line.
+      const groups = new Map();
+      for (const r of rows) {
+        const g = `${r.customer_id}|${r.due.slice(0, 7)}`;
+        const cur = groups.get(g) || { key, label: m.label, table: m.table, ids: [], count: 0, due: r.due, customer_id: r.customer_id, customer: r.customer, customer_type: r.customer_type, phone: r.phone, what: '' };
+        cur.ids.push(r.id); cur.count++;
+        if (r.due < cur.due) cur.due = r.due;
+        cur.what = cur.count === 1 ? r.what : `${cur.count} extinguishers`;
+        groups.set(g, cur);
+      }
+      out.push(...groups.values());
+    } else {
+      rows.forEach(r => out.push({ key, label: m.label, table: m.table, ids: [r.id], count: 1, due: r.due, customer_id: r.customer_id, customer: r.customer, customer_type: r.customer_type, phone: r.phone, what: r.what, system: m.system }));
+    }
+  }
+  for (const o of out) {
+    o.overdue = o.due < today;
+    o.days = Math.round((Date.parse(o.due) - Date.parse(today)) / 864e5);
+    o.system ||= MAINTENANCE[o.key].system;
+  }
+  return out.sort((a, b) => a.due.localeCompare(b.due));
+}
