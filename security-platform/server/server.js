@@ -66,6 +66,7 @@ function serveStatic(req, res, pathname) {
   if (!file.startsWith(PUBLIC)) { res.writeHead(403); return res.end(); }
   if (/^\/sign\/[A-Za-z0-9_-]+$/.test(pathname)) file = path.join(PUBLIC, 'sign.html');
   else if (/^\/report\/[A-Za-z0-9_-]+$/.test(pathname)) file = path.join(PUBLIC, 'report.html');
+  else if (/^\/survey\/[A-Za-z0-9_-]+$/.test(pathname)) file = path.join(PUBLIC, 'survey.html');
   else if (/^\/portal(\/.*)?$/.test(pathname) && !path.extname(pathname)) file = path.join(PUBLIC, 'portal.html');
   else if (pathname === '/' || !fs.existsSync(file) || fs.statSync(file).isDirectory()) {
     if (path.extname(pathname)) { res.writeHead(404); return res.end('Not found'); }
@@ -167,6 +168,8 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
     setInterval(() => m.pollPositions(db).catch(e => console.error('tracking', e)), every).unref();
     setInterval(() => m.geocodeMissing(db).catch(e => console.error('geocode', e)), 10 * 60e3).unref();
   });
+  // Customer satisfaction surveys a couple of hours after each job.
+  import('./surveys.js').then(m => setInterval(() => { try { m.sendDueSurveys(db); } catch (e) { console.error('surveys', e); } }, 5 * 60e3).unref());
   // Nightly backups (database + uploaded files), kept for BACKUP_KEEP days.
   import('./backup.js').then(m => m.scheduleBackups(db));
   const port = Number(process.env.PORT) || 3000;

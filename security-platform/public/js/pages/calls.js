@@ -117,6 +117,7 @@ export async function detail(view, [id]) {
           ${c.no_parts_used ? html`<dt>Parts</dt><dd>Tech confirmed no parts were used</dd>` : ''}
           ${c.completion_override ? html`<dt>Rule override</dt><dd>${badge('override', 'warn')} ${c.completion_override}</dd>` : ''}` : ''}
         <dt>Billable</dt><dd>${c.billable ? 'Yes' : 'No (warranty / estimate / no charge)'}</dd>
+        ${c.status === 'completed' && can.manage() ? html`<div data-survey style="display:contents"></div>` : ''}
         ${!c.signed_by && c.signature_waived ? html`<dt>Customer sign-off</dt><dd>${badge('not needed', 'info')} <span class="small muted">approved by ${c.signature_waived_by || 'the office'}</span></dd>` : ''}
         ${c.signed_by ? html`<dt>Customer sign-off</dt><dd><div class="sig-box"><img src="/api/service_calls/${c.id}/signature?v=${encodeURIComponent(c.signed_at)}" alt="Signature of ${c.signed_by}"></div>
           <div class="small muted">${c.signed_by} · ${fmtDateTime(c.signed_at)}</div></dd>` : ''}
@@ -176,6 +177,7 @@ export async function detail(view, [id]) {
   drawPhotos($('[data-photos-card]', view), c);
   import('./truckstock.js').then(m => m.materialsCard($('[data-materials-card]', view), c));
   import('./equipment.js').then(m => m.jobEquipmentCard($('[data-equipment-card]', view), c));
+  if ($('[data-survey]', view)) import('./ratings.js').then(m => m.jobSurveyBlock($('[data-survey]', view), c));
   if ($('[data-inspections-card]', view)) import('./inspections.js').then(m => m.reportsCard($('[data-inspections-card]', view), { customer_id: c.customer_id, service_call_id: c.id, site_id: c.site_id, title: 'Inspection reports for this job' }));
   drawMonitoring($('[data-mon-card]', view), c, reload);
   $('[data-complete]', view)?.addEventListener('click', () => completeDialog(c, cust, { office, partsCount: parts.length, onDone: reload }));

@@ -1,3 +1,4 @@
+import crypto from 'node:crypto';
 // Loads realistic DEMO data so you can try the system. Refuses to run if the
 // database already has customers. Usage: npm run seed
 import { openDb, DB_PATH, tx } from './db.js';
@@ -342,6 +343,26 @@ db.prepare("UPDATE service_calls SET signature_waived = 1, signature_waived_by =
     [items.cam4k.id, '4K turret IP camera', 'T4K-88123419', 'Back patio', 36],
     [items.panel.id, 'Wireless alarm panel w/ touchscreen', 'IQ4-0098812', 'Kitchen wall', 24],
   ]) C('installed_equipment', { customer_id: becker.id, item_id: item, description: desc, serial_number: sn, location: where, install_date: installed, warranty_months: warranty, status: 'installed' });
+}
+
+// Six months of customer survey answers.
+{
+  const comments = { 5: ['Super professional, explained everything.', 'On time and cleaned up after himself.', 'Fixed it fast — thank you!', ''], 4: ['Good job, a bit late.', 'Great work, had to come back for one camera.', ''], 3: ['Took longer than expected.', ''], 2: ['Arrived two hours late and didn’t call.'] };
+  const plan = [[mike, [5, 5, 4, 5, 5, 4, 5, 3]], [jen, [5, 5, 5, 4, 5, 5, 5]], [sam, [4, 2, 3, 5, 4, 4, 5]]];
+  const ins = db.prepare(`INSERT INTO job_surveys (service_call_id, customer_id, technician_id, token, sent_at, channel, opened_at, rating, tech_rating, on_time, comment, contact_ok, responded_at)
+    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)`);
+  let k = 0;
+  for (const [t, ratings] of plan) ratings.forEach((r, i) => {
+    const cust = custs[(k++) % custs.length];
+    const when = `${day(-(8 + i * 22 + k))}T15:30`;
+    const job = C('service_calls', { customer_id: cust.id, title: ['Camera offline', 'Keypad replacement', 'Annual inspection', 'Add motion detector', 'Battery replacement', 'Doorbell install', 'Panel trouble', 'Smoke detector chirping'][(i + k) % 8], call_type: 'service', technician_id: t.id, notify: false });
+    db.prepare("UPDATE service_calls SET status = 'completed', scheduled_start = ?, completed_at = ?, labor_hours = 1 WHERE id = ?").run(when, when, job.id);
+    const list = comments[r] || [''];
+    ins.run(job.id, cust.id, t.id, 'demo' + crypto.randomBytes(18).toString('base64url'), when, 'text', when, Math.min(5, r + (r < 5 && i % 3 === 0 ? 1 : 0)), r, r <= 2 || /late/.test(list[i % list.length]) ? 0 : 1, list[i % list.length] || null, r <= 2 ? 1 : 0, when);
+  });
+  db.prepare("UPDATE settings SET value = 'https://g.page/r/demo-security/review' WHERE key = 'review_url'").run();
+  const bad = db.prepare('SELECT j.id, c.name, sc.number FROM job_surveys j JOIN customers c ON c.id = j.customer_id JOIN service_calls sc ON sc.id = j.service_call_id WHERE j.tech_rating <= 2 LIMIT 1').get();
+  if (bad) db.prepare('INSERT INTO alerts (kind, severity, title, body, link) VALUES (?,?,?,?,?)').run('survey_low', 'bad', `★★☆☆☆ from ${bad.name} (SC-${bad.number}, Sam Turner)`, 'Said the technician was NOT on time. “Arrived two hours late and didn’t call.”\nOK to contact them about it.', `#/ratings?survey=${bad.id}`);
 }
 
 // Map points around Springfield, OH for customers/sites, and live truck positions.

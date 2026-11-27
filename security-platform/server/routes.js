@@ -19,6 +19,7 @@ import { registerPhoneRoutes, onCallFeedEvents } from './phone.js';
 import { registerTrackingRoutes } from './tracking.js';
 import { registerInspectionRoutes } from './inspections.js';
 import { registerVehicleCheckRoutes } from './vehiclechecks.js';
+import { registerSurveyRoutes } from './surveys.js';
 import { requestOrigin } from './net.js';
 import { runBackup, listBackups } from './backup.js';
 import { openAlerts, resolveAlert } from './alerts.js';
@@ -400,6 +401,9 @@ export function buildRoutes() {
 
   // ------------------------------------------------------------ vehicle checklist
   registerVehicleCheckRoutes(r);
+
+  // ------------------------------------------------------------ customer surveys & technician ratings
+  registerSurveyRoutes(r);
 
   // ------------------------------------------------------------ alerts for the owner / office
   r('GET', '/api/alerts', G.staff, ({ db, user }) => openAlerts(db, user.role));

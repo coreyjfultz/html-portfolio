@@ -43,6 +43,7 @@ export const DEFAULT_SETTINGS = {
   inspection_next_number: '1001', inspector_license: '',
   vehicle_check_frequency: 'daily', vehicle_check_required: '1', vehicle_check_photos: 'damage',
   require_serials: '1', require_serial_photos: '1',
+  survey_enabled: '1', survey_delay_hours: '2', survey_min_days: '30', survey_skip_types: 'estimate', survey_alert_below: '3', review_url: '',
   truck_count_day: '5', truck_count_reminders: '1', inventory_manager_id: '', readiness_required: '1', readiness_spares: '1',
   alert_email: '1', alert_sms: '0', alert_phone: '',
   office_address: '', office_lat: '', office_lng: '', office_radius_m: '300', clock_alert: '1', clock_alert_out: '0', clock_allow_jobsite: '1',
@@ -73,6 +74,10 @@ export const DEFAULT_TEMPLATES = {
   tpl_onway_sms: '{company}: {tech} is on the way{eta}. See you soon!',
   tpl_onway_email: 'Hi {customer},\n\n{tech} from {company} is on the way to {address}{eta}.\n\nThank you,\n{company}',
 };
+Object.assign(DEFAULT_TEMPLATES, {
+  tpl_survey_sms: '{company}: thanks for having {tech} out today. How did we do? It takes 20 seconds: {link}',
+  tpl_survey_email: 'Hi {customer},\n\nThank you for choosing {company}. How did {tech} do on your {type}?\n\nTell us in 20 seconds:\n{link}\n\nYour feedback goes straight to the owner.\n\nThank you,\n{company}',
+});
 Object.assign(DEFAULT_SETTINGS, DEFAULT_TEMPLATES);
 // Settings stored encrypted; never sent back to the browser.
 export const SECRET_SETTINGS = new Set(['samsara_token', 'tracking_feed_token', 'google_maps_key', 'smtp_pass', 'twilio_token', 'stripe_secret', 'stripe_webhook_secret', 'qbo_client_secret']);
@@ -303,6 +308,18 @@ function migrate(db) {
       created_at TEXT NOT NULL DEFAULT (datetime('now','localtime'))
     );
     CREATE INDEX IF NOT EXISTS idx_equipment_photos ON equipment_photos(equipment_id);
+    -- Post-job customer surveys (one per job) and the answers.
+    CREATE TABLE IF NOT EXISTS job_surveys (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      service_call_id INTEGER NOT NULL UNIQUE REFERENCES service_calls(id) ON DELETE CASCADE,
+      customer_id INTEGER NOT NULL REFERENCES customers(id) ON DELETE CASCADE,
+      technician_id INTEGER REFERENCES technicians(id) ON DELETE SET NULL,
+      token TEXT NOT NULL UNIQUE, sent_at TEXT, channel TEXT, opened_at TEXT,
+      rating INTEGER, tech_rating INTEGER, on_time INTEGER, comment TEXT, contact_ok INTEGER, responded_at TEXT, ip TEXT,
+      followed_up_by TEXT, followed_up_at TEXT, follow_up_note TEXT,
+      created_at TEXT NOT NULL DEFAULT (datetime('now','localtime'))
+    );
+    CREATE INDEX IF NOT EXISTS idx_surveys_tech ON job_surveys(technician_id, responded_at);
     -- Latest GPS position per vehicle, from the tracking provider.
     CREATE TABLE IF NOT EXISTS vehicle_positions (
       vehicle_id INTEGER PRIMARY KEY REFERENCES vehicles(id) ON DELETE CASCADE,

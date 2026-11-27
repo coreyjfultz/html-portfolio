@@ -202,6 +202,15 @@ export async function render(view, _, query) {
         ['truck_count_reminders', 'Text each tech a reminder on count day; flag trucks that are overdue', 'check'],
         ['inventory_manager_id', 'Inventory manager (also gets count results)', 'select', [['', '— Owner only —'], ...users.filter(u => u.active).map(u => [String(u.id), `${u.name} (${u.role})`])]],
       ] },
+      { title: 'Customer surveys', fields: [
+        ['survey_enabled', 'Text / email a short survey after each completed job (per the customer’s preferences)', 'check'],
+        ['survey_delay_hours', 'Hours after the job to send it', 'number'],
+        ['survey_min_days', 'Survey the same customer at most once every (days)', 'number'],
+        ['survey_skip_types', 'Job types to skip (comma-separated)', 'text', 'e.g. estimate'],
+        ['survey_alert_below', 'Alert the owner at this many stars or fewer', 'number'],
+        ['review_url', 'Google review link (offered to 5-star customers)', 'text', 'https://g.page/r/…/review'],
+        ['tpl_survey_sms', 'Text message ({company} {tech} {link})', 'text'],
+      ], note: 'Results: Field work → Customer ratings. Customers can be excluded on their record.' },
       { title: 'Vehicle checklist', fields: [
         ['vehicle_check_frequency', 'How often techs check their truck', 'select', [['daily', 'Every day'], ['weekly', 'Once a week'], ['off', 'Off']]],
         ['vehicle_check_required', 'Must be done before starting the first job', 'check'],

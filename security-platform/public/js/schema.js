@@ -76,6 +76,7 @@ export const RESOURCES = {
       { name: 'notify_sms', label: 'Text appointment updates', type: 'checkbox', default: 1 },
       { name: 'stripe_customer_id', label: 'Stripe customer', type: 'text', readonly: true, hidden: true },
       { name: 'portal_invite', label: 'Invite to the customer portal (emails a sign-in link)', type: 'checkbox', default: 1 },
+      { name: 'no_surveys', label: 'Don’t send this customer satisfaction surveys', type: 'checkbox' },
       { name: 'no_signature_needed', label: 'Usually nobody on site to sign — jobs don’t need a customer signature', type: 'checkbox', roles: G.manage, help: 'Owners/admins only. E.g. commercial sites serviced after hours. Applies to new jobs for this customer.' },
       { name: 'lead_source', label: 'Lead source', type: 'select', options: ['referral', 'website', 'google', 'facebook', 'yard sign', 'builder / contractor', 'repeat customer', 'portal sign-up', 'other'] },
       { name: 'tax_exempt', label: 'Tax exempt', type: 'checkbox' },
