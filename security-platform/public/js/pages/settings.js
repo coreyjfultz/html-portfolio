@@ -9,6 +9,8 @@ const SETTINGS = [
   ['tax_rate', 'Sales tax rate %', 'number'], ['payment_terms_days', 'Payment terms (days)', 'number'], ['default_labor_rate', 'Default labor rate / hr', 'number'],
   ['invoice_next_number', 'Next invoice #', 'number'], ['call_next_number', 'Next service call #', 'number'],
   ['invoice_footer', 'Invoice footer (payment instructions)', 'textarea'],
+  ['proposal_valid_days', 'Proposals valid for (days)', 'number'], ['proposal_next_number', 'Next proposal #', 'number'],
+  ['proposal_terms', 'Default terms & conditions for proposals and agreements (have your attorney review)', 'textarea'],
 ];
 
 export async function render(view, _, query) {
@@ -24,7 +26,7 @@ export async function render(view, _, query) {
     const s = await GET('/api/settings');
     mount(pane, html`<div class="card"><div class="card-body"><form class="form-grid" data-form>
       ${SETTINGS.map(([k, l, t]) => html`<div class="field ${t === 'textarea' ? 'full' : ''}"><label for="s_${k}">${l}</label>
-        ${t === 'textarea' ? html`<textarea id="s_${k}" name="${k}">${s[k]}</textarea>` : html`<input id="s_${k}" name="${k}" type="${t || 'text'}" step="any" value="${s[k]}">`}</div>`)}
+        ${t === 'textarea' ? html`<textarea id="s_${k}" name="${k}" rows="${k === 'proposal_terms' ? 12 : 3}">${s[k]}</textarea>` : html`<input id="s_${k}" name="${k}" type="${t || 'text'}" step="any" value="${s[k]}">`}</div>`)}
       </form><div class="row" style="margin-top:16px"><button class="btn primary" data-save>Save settings</button></div></div></div>
       <div class="card" style="margin-top:16px"><div class="card-head"><div><h2>Logo</h2><div class="small muted">Shown on invoices, proposals, the customer portal and the app. PNG or JPG, ideally wide and on a transparent or white background.</div></div></div>
         <div class="card-body row" style="gap:16px">${state.logo ? html`<img src="/api/public/logo?v=${state.logo}" alt="Current logo" style="max-height:64px;max-width:220px;background:#fff;padding:6px;border:1px solid var(--border);border-radius:8px">` : html`<span class="muted">No logo yet</span>`}

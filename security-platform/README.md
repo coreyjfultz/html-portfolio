@@ -6,19 +6,24 @@ One system for the office and the field. It runs as a **website** and installs o
 
 | Area | Features |
 |---|---|
-| **Customers** | Residential vs. commercial accounts; multiple contacts per account (emails, phones, roles, who gets invoices); billing and service addresses with map/directions links; monitoring account #s; site-access notes; encrypted gate/door codes |
+| **Customers** | Residential vs. commercial accounts; **multiple locations** per customer (each with its own systems, jobs, access notes and gate code); **businesses grouped under one owner** (parent account); multiple contacts; map/directions links; monitoring account #s; text/email preferences |
+| **Sales pipeline** | Every customer has a stage — **Lead → Site survey → Bid sent → Accepted → Installation → Active** (or Lost) — shown on a drag-and-drop board, with history. Stages move automatically: scheduling a site survey, sending a proposal, the customer signing, booking and finishing the install |
+| **Proposals & agreements** | Sales builds proposals and installation / monitoring / service agreements from inventory and labor, with monthly fees, term and deposit. Customers **review and sign online** on any device (finger or mouse). Each signature records name, time, IP, device and a **SHA-256 fingerprint of the exact document**; signed documents are locked. Signing automatically starts monthly billing, creates the installation job and a deposit invoice |
 | **Systems on file** | **Camera systems**: NVR/DVR, IPs, ports, remote access, viewing app, admin and viewer logins. **Alarm systems**: panel, monitoring center, master/installer codes, zones. **Fire systems**: fire alarm, sprinkler, kitchen hood, fire pump, AHJ, panel codes. **Fire extinguishers**: one record per unit with location, type, size, annual and hydrostatic test dates |
 | **Password security** | Camera passwords and alarm/panel/gate codes are **encrypted (AES-256-GCM)** in the database, hidden until someone clicks **Show**, auto-hidden after 30 s, and every reveal is written to the activity log |
 | **Maintenance due** | One list of overdue and upcoming camera service, alarm tests, fire inspections, extinguisher annuals and hydro tests, plus vehicle service/registration/insurance. **Mark done** rolls the next due date forward automatically; **Schedule** turns it into a service call. Commercial customers' extinguishers can be marked inspected in bulk |
-| **Service calls** | Work orders with type, priority (including emergency), technician, schedule, labor, parts used and resolution. Techs can start and complete jobs from their phone |
-| **Scheduling** | Week board by technician with drag-and-drop rescheduling and booked-hours vs. 40-hour load bars; a "needs scheduling" queue; a day list on phones; a **My Day** screen for technicians |
-| **Billing** | Recurring monthly charges per customer (monitoring, cloud video, service plans); **Run monthly billing** creates every invoice for the month in one click (safe to re-run); invoices from completed service calls (labor + parts); sales tax per line; partial payments; overdue tracking; printable/PDF invoices; email links; payments ledger |
+| **Service calls** | Work orders with type, priority, technician, schedule, labor, parts and resolution. Techs tap **On my way** (texts the customer), take **before/after photos**, and get the **customer's signature** on the phone when they finish; the signature prints on the invoice |
+| **Scheduling & calendars** | Central **month calendar** (all techs, or filter to one) and a drag-and-drop **dispatch board**. **Double-booking a technician is blocked** (owners/admins can override). Jobs appear in **Outlook / Google / iPhone calendars**: techs get an email calendar invite when booked, moved or unassigned, and everyone can subscribe to a live feed (central or per tech) |
+| **Texts & emails** | Customers get a confirmation when a job is scheduled or moved and an **"on the way"** text/email from the tech (per their preferences). Wording is editable. Works with any email account (SMTP: Microsoft 365, Gmail…) and Twilio for texting; every message is logged on the job |
+| **Billing & payments** | Recurring monthly charges; **Run monthly billing** creates every invoice in one click; invoices from completed jobs (labor + parts); sales tax; partial payments; overdue tracking; polished printable/PDF invoices. Payments by **cash, check, credit card and bank ACH** — card/ACH online through Stripe: "Pay now" links, saved cards/bank accounts, **charge on file**, automatic recording |
+| **Customer portal** | Customers sign up (email verified) or are invited, then land in their own portal: balance and invoices, **pay online**, **change payment method**, past and upcoming service with photos, **request service** (preferred day/time), **request equipment** (becomes a draft quote for sales), sign agreements, see their systems, update contact info and text/email preferences. Owners of several businesses switch between them |
+| **QuickBooks & accounting** | **QuickBooks Online sync** (connect once; customers, invoices — including edits and voids — and payments flow over automatically). Export files for **QuickBooks Desktop (IIF)**, QuickBooks Online import, **Xero**, and a generic CSV for FreshBooks, Wave, Zoho, Sage or Excel |
 | **Inventory** | Warehouse stock **plus inventory on each vehicle**. Receive (optionally logged as an expense), transfer/load trucks, physical counts, reorder alerts, full movement history. Parts used on a job are deducted from the tech's truck automatically |
 | **Receiving (supplier invoices)** | Distributor invoices that are **emailed in, uploaded, or photographed** are read automatically (PDF, photo, email text or CSV), matched to your inventory by part #, and **added to stock**, with the purchase logged as an expense and item costs updated. Anything uncertain waits in a review inbox, shown side by side with the original document. The system learns each distributor's part numbers as you match them |
 | **Vehicles** | Fleet list, assigned tech, mileage, service/registration/insurance dates, on-board stock and its value, per-vehicle expenses |
 | **Expenses & profit** | Categorized expenses; **Profit & loss** by month (residential vs. commercial revenue, collected, expenses, estimated labor cost, net); **Job profitability** per completed call |
 | **Reports** | **Technician workload** (busiest tech, booked hours vs. capacity, calls, emergencies, labor billed/cost, backlog); **Residential vs. commercial** (customers, MRR/ARR, revenue, open balance); **A/R aging** (current / 30 / 60 / 90+) |
-| **Team & security** | Roles: **Admin** (everything), **Office** (everything except users/settings), **Technician** (field work only, no billing or financials). Activity log, CSV exports, one-click database backup |
+| **Team & roles** | **Owner / Global admin** (everything, incl. admins and backups), **Administrator** (runs the business, but not owner accounts or backups), **Sales** (leads, pipeline, proposals, site surveys; no invoices or financials), **Accounting** (invoices, payments, expenses, receiving, reports, QuickBooks), **Technician** (their jobs, schedule, systems & passwords, photos, signatures, truck inventory). Activity log, CSV exports, one-click backup |
 
 ## Try it in 2 minutes
 
@@ -26,14 +31,17 @@ Requires **Node.js 22.5 or newer**. The database (SQLite) is built into Node.
 
 ```bash
 cd security-platform
-npm install      # one dependency: the Claude SDK used to read supplier invoices
+npm install      # the Claude SDK (supplier-invoice reading) and nodemailer (email)
 npm run seed     # loads demo data (optional)
 npm start        # http://localhost:3000
 ```
 
-Demo logins (password `demo1234`): `admin@demo.local`, `office@demo.local`, `jen@demo.local` (technician).
+Demo logins (password `demo1234`): `owner@demo.local`, `admin@demo.local`, `sales@demo.local`, `accounting@demo.local`, `jen@demo.local` (technician).
+Customer portal: http://localhost:3000/portal — `becker@example.com` / `demo1234`.
 
-For real use, **skip `npm run seed`**. The first visit asks you to create the owner/admin account. Then add technicians, vehicles, inventory items and customers.
+For real use, **skip `npm run seed`**. The first visit asks you to create the owner account. Then add your team (Settings → Users), technicians, vehicles, inventory items and customers.
+
+Upgrading an existing database is automatic: old *admin* users become **Owners** and old *office* users become **Administrators**.
 
 Run the tests with `npm test`.
 
@@ -53,6 +61,12 @@ Settings (environment variables):
 | `APP_SECRET` | Optional 64-hex-char encryption key for stored passwords. If not set, one is generated in `DATA_DIR/secret.key` |
 | `COOKIE_SECURE=1` | Set when served over HTTPS (it always should be in production) |
 | `ANTHROPIC_API_KEY` | Claude API key, used only to read supplier invoice PDFs, photos and emails. Optional: without it, CSV invoices still work and other documents are entered by hand |
+| `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASS`, `MAIL_FROM` | Outgoing email (or enter them in Settings → Texts & email) |
+| `TWILIO_ACCOUNT_SID`, `TWILIO_AUTH_TOKEN`, `TWILIO_FROM` | Text messages (or Settings → Texts & email) |
+| `STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET` | Online card/ACH payments (or Settings → Payments) |
+| `QBO_CLIENT_ID`, `QBO_CLIENT_SECRET` | QuickBooks Online app keys (or Accounting page) |
+
+Secrets entered in Settings are stored encrypted with the same key as camera passwords and are never shown again after saving.
 
 **Back up both the database and the secret key.** Settings → Backup & data downloads the database. Stored passwords can't be decrypted without the key, so keep a copy of `secret.key` (or `APP_SECRET`) somewhere safe and separate.
 
@@ -90,13 +104,35 @@ Each PDF, image or CSV attachment becomes its own entry (small signature images 
 
 Try it with `samples/adi-invoice-sample.csv` on the Receiving page.
 
+## Connecting the outside services
+
+Everything works without these; each one switches on a feature. Owners/admins set them up in the app.
+
+| Service | What it enables | Where | Notes |
+|---|---|---|---|
+| **Email (SMTP)** | Appointment confirmations, invites to techs' calendars, invoice and signing links, portal invites, receipts | Settings → Texts & email | Microsoft 365 needs SMTP AUTH enabled for the sending mailbox; Gmail needs an app password. "Send test email" checks it |
+| **Twilio** | Text confirmations and "on my way" | Settings → Texts & email | US business texting requires registering your number for **A2P 10DLC** in Twilio (a few days). Customers can reply STOP |
+| **Stripe** | Card and ACH payments, saved payment methods | Settings → Payments | Add the webhook endpoint shown there with the listed events. Start with test keys (`sk_test_…`) |
+| **QuickBooks Online** | Automatic invoice/customer/payment sync | Accounting | Create an app at developer.intuit.com, add the redirect URI shown, paste the keys, click Connect. Try the sandbox first |
+| **Outlook / Google calendars** | Jobs in everyone's normal calendar | Calendar → "Sync to Outlook / Google", Settings → Calendars | Invites need email set up; subscription feeds work right away |
+| **Claude API** | Reading supplier-invoice PDFs/photos | `ANTHROPIC_API_KEY` | See Receiving below |
+
+Things to have a professional review before relying on them:
+- **Agreement terms:** the default terms in Settings → Company are a starting point; have your attorney adjust them for your state and services. Electronic signatures capture consent, identity details and a tamper-evident fingerprint in line with the U.S. ESIGN Act / UETA.
+- **Sales tax:** confirm rates and taxable items with your accountant (and the QuickBooks item used for tax).
+
 ## How it's built
 
-- `server/` — plain Node.js (no web framework; the only package is the Anthropic SDK, loaded only for invoice reading): HTTP server, SQLite via `node:sqlite`, auth (scrypt password hashing, HttpOnly session cookies, CSRF header check, login rate limiting), AES-GCM encryption, business rules, reports.
+- `server/` — plain Node.js (no web framework; packages: the Anthropic SDK for invoice reading, nodemailer for email): HTTP server, SQLite via `node:sqlite`, auth (scrypt password hashing, HttpOnly session cookies, CSRF header check, login rate limiting), AES-GCM encryption, business rules, reports.
 - `public/js/schema.js` — **the data model, shared by server and browser**. Adding a field here adds the database column, the form input and the validation, with no other changes.
 - `public/` — the web app (vanilla JavaScript modules), installable via `manifest.webmanifest` + `sw.js`.
 - `server/receiving.js` + `server/extract.js` — supplier-invoice intake, CSV parsing, matching, auto-receive rules, and the Claude call.
-- `test/` — end-to-end API tests (`node --test`), including the receiving flow against a stand-in Claude API.
+- `server/proposals.js` — proposals, signing links, e-signature and what happens after signing. `public/sign.html` is the customer's signing page.
+- `server/portal.js` + `public/portal.html` — the customer portal (its own logins, separate from staff).
+- `server/notify.js` (email/text), `server/calendar.js` (Outlook/Google feeds and invites), `server/payments.js` (Stripe), `server/quickbooks.js` (QuickBooks sync and exports), `server/media.js` (photos, signatures, logo).
+- `public/js/doc.js` — the shared invoice and agreement document layout.
+- Icons: [Lucide](https://lucide.dev) (ISC); font: Inter (SIL Open Font License), both served from this app.
+- `test/` — end-to-end API tests (`node --test`). Outside services (Claude, Twilio, Stripe, QuickBooks, email) are tested against local stand-ins, so the tests run offline.
 
 ## Handing this project off
 
@@ -104,16 +140,14 @@ Everything needed is in this folder. To pick it up:
 
 1. Clone the repo, `cd security-platform`, `npm install`, `npm test` (all tests should pass), `npm run seed && npm start` to explore with demo data.
 2. Read `public/js/schema.js` first: it defines every record type and field. Then `server/routes.js` (business endpoints) and `public/js/pages/` (one file per screen).
-3. To go live: follow **Going live**, then **Supplier invoices → Connecting email**, using the company's own mailbox and a Claude API key on the company's account.
+3. To go live: follow **Going live**, then **Connecting the outside services** and **Supplier invoices → Connecting email**, using accounts owned by the company (email, Twilio, Stripe, Intuit, Anthropic).
 4. Start a real database empty (no `seed`): create the admin account, then enter technicians, vehicles, inventory items (with part #s matching your distributors' where possible) and customers. Existing customer lists can be imported by asking a developer to load a CSV.
 
 ## Good next steps
 
-1. **Online card/ACH payments** via Stripe, with a "Pay now" link on each invoice and autopay for monthly monitoring.
-2. **Send invoices by email automatically** (SMTP / SendGrid) instead of the current email link.
-3. **Customer portal**: customers view and pay invoices and request service.
-4. **QuickBooks export/sync** for the accountant.
-5. **Text reminders** to customers before appointments and inspections.
-6. **Photo uploads and signatures** on service calls (before/after pictures, inspection sign-off).
-7. **Inspection checklists / NFPA report forms** for fire inspections.
-8. **Purchase orders & reorder emails**: create POs from low-stock items and match incoming invoices against them.
+1. **Autopay** for monthly monitoring (charge saved cards/ACH automatically after the monthly billing run).
+2. **Two-way calendar sync** with Microsoft 365 / Google (today the app sends invites and feeds; edits made in Outlook don't flow back).
+3. **Inspection checklists / NFPA report forms** for fire inspections, attached to the job and emailed to the customer and AHJ.
+4. **Purchase orders & reorder emails** from low-stock items, matched against incoming supplier invoices.
+5. **Technician time off** blocks on the calendar, included in the double-booking check.
+6. **Native app store listing** (the installable web app already covers phones; a store listing adds push notifications on iPhone).
