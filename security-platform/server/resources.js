@@ -600,4 +600,12 @@ const HOOKS = {
 };
 
 /** Lets feature modules (proposals, portal…) add business rules for their own resources. */
-export function registerHooks(name, hooks) { HOOKS[name] = { ...(HOOKS[name] || {}), ...hooks }; }
+export function registerHooks(name, hooks) {
+  const cur = HOOKS[name] || {};
+  const merged = { ...cur };
+  for (const [k, fn] of Object.entries(hooks)) {
+    const prev = cur[k];
+    merged[k] = prev ? (...args) => { prev(...args); fn(...args); } : fn; // run both, existing first
+  }
+  HOOKS[name] = merged;
+}

@@ -1,7 +1,7 @@
 import { RESOURCES, STAGES, STAGE_INFO } from '../schema.js';
 import {
   html, raw, mount, $, $$, money, fmtDate, badge, typeBadge, stageBadge, relDays, dataTable, fieldColumns, openForm, renderValue,
-  loading, toast, secretView, confirmDialog,
+  loading, toast, secretView, confirmDialog, openModal,
 } from '../ui.js';
 import { R, GET, POST, api } from '../api.js';
 import { can, refresh } from '../app.js';
@@ -114,6 +114,7 @@ export async function detail(view, [id], query) {
       <div class="actions">
         ${editor ? html`<button class="btn" data-edit>Edit</button>` : ''}
         <button class="btn" data-newcall>+ Service call</button>
+        ${editor ? html`<button class="btn" data-portal>Portal access</button>` : ''}
         ${can.sales() ? html`<button class="btn" data-newprop>+ Proposal</button>` : ''}
         ${office ? html`<button class="btn primary" data-newinv>+ Invoice</button>` : ''}
       </div></div>
@@ -123,6 +124,7 @@ export async function detail(view, [id], query) {
   $$('[data-tab]', view).forEach(b => b.addEventListener('click', () => { location.hash = `#/customers/${id}?tab=${b.dataset.tab}`; }));
   $('[data-edit]', view)?.addEventListener('click', () => openForm('customers', { record: c, onSaved: reload, onDeleted: () => { location.hash = '#/customers'; } }));
   $('[data-newcall]', view).addEventListener('click', () => newCall({}));
+  $('[data-portal]', view)?.addEventListener('click', () => portalDialog(c));
   $('[data-newprop]', view)?.addEventListener('click', async () => (await import('./proposals.js')).newProposal({ customer_id: c.id }));
   $('[data-stage-sel]', view)?.addEventListener('change', async e => {
     try { await R.update('customers', c.id, { stage: e.target.value }); toast(`Moved to ${STAGE_INFO[e.target.value].label}`); reload(); }
@@ -361,4 +363,26 @@ async function drawPaymentMethods(card, c) {
     if (!(await confirmDialog('Remove this saved payment method?', { okLabel: 'Remove', danger: true }))) return;
     await api('DELETE', `/api/customers/${c.id}/payment-methods/${b.dataset.pmdel}`); toast('Removed'); again();
   }));
+}
+
+async function portalDialog(c) {
+  const users = await GET(`/api/customers/${c.id}/portal-users`);
+  const { el, close } = openModal({
+    title: 'Customer portal access', size: 'sm',
+    body: html`<p class="muted" style="margin-top:0">The portal lets ${c.name} see and pay invoices, update their payment method, view service history and photos, request service or equipment, and sign agreements.</p>
+      ${users.length ? html`<div class="stack" style="gap:6px;margin-bottom:12px">${users.map(u => html`<div class="row" style="justify-content:space-between"><span><b>${u.name}</b> · ${u.email}<br><span class="small muted">${u.email_verified ? (u.last_login ? `last signed in ${u.last_login}` : 'active, not signed in yet') : 'invited — hasn’t set a password yet'}</span></span>
+        ${u.active ? html`<span class="badge good">active</span>` : html`<span class="badge">disabled</span>`}</div>`)}</div>` : html`<p>No portal login yet.</p>`}
+      <div class="err-box hidden" data-err></div>
+      <div class="field"><label for="pe">Send an invite to</label><input id="pe" type="email" value="${c.email || ''}"></div>`,
+    foot: html`<button class="btn" data-close>Close</button><button class="btn" data-copy>Copy invite link</button><button class="btn primary" data-send>Email invite</button>`,
+  });
+  const go = async copy => {
+    try {
+      const r = await POST(`/api/customers/${c.id}/portal-invite`, { email: $('#pe', el).value });
+      if (copy) { await navigator.clipboard?.writeText(r.link); toast('Invite link copied'); } else toast('Invite sent');
+      close();
+    } catch (e) { const b = $('[data-err]', el); b.textContent = e.message; b.classList.remove('hidden'); }
+  };
+  $('[data-send]', el).addEventListener('click', () => go(false));
+  $('[data-copy]', el).addEventListener('click', () => go(true));
 }

@@ -72,6 +72,7 @@ export const RESOURCES = {
       { name: 'notify_email', label: 'Email appointment updates', type: 'checkbox', default: 1 },
       { name: 'notify_sms', label: 'Text appointment updates', type: 'checkbox', default: 1 },
       { name: 'stripe_customer_id', label: 'Stripe customer', type: 'text', readonly: true, hidden: true },
+      { name: 'portal_invite', label: 'Invite to the customer portal (emails a sign-in link)', type: 'checkbox', default: 1 },
       { name: 'lead_source', label: 'Lead source', type: 'select', options: ['referral', 'website', 'google', 'facebook', 'yard sign', 'builder / contractor', 'repeat customer', 'portal sign-up', 'other'] },
       { name: 'tax_exempt', label: 'Tax exempt', type: 'checkbox' },
       { name: 'gate_code', label: 'Gate / door code', type: 'secret' },

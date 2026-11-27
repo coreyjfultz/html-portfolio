@@ -411,4 +411,90 @@ test('online payments (Stripe): pay link, signed webhook records payment once, c
   }
 });
 
+test('customer portal: sign-up → verify email → lands in portal as a new lead', async () => {
+  process.env.SMTP_HOST = 'json'; process.env.MAIL_FROM = 'office@test.example';
+  const { notifyIdle } = await import('../server/notify.js');
+  try {
+    const p = client();
+    const r = await p.post('/api/portal/signup', { name: 'Jordan Fox', email: 'jordan@example.com', password: 'longpassword1', phone: '555-777-8888', address: '12 Pine St', type: 'residential' });
+    assert.equal(r.status, 200);
+    assert.match(r.data.message, /Check your email/);
+    await notifyIdle();
+    const mail = db.prepare("SELECT body FROM notifications WHERE to_addr = 'jordan@example.com' ORDER BY id DESC").get();
+    const token = mail.body.match(/#\/verify\/([A-Za-z0-9_-]+)/)[1];
+    // Can sign in, but nothing is visible until the email is confirmed
+    await p.post('/api/portal/login', { email: 'jordan@example.com', password: 'longpassword1' });
+    assert.equal((await p.get('/api/portal/dashboard')).status, 403);
+    assert.equal((await p.post('/api/portal/verify', { token })).status, 200);
+    assert.equal((await p.post('/api/portal/verify', { token })).status, 400, 'links work once');
+    const st = (await p.get('/api/portal/state')).data;
+    assert.equal(st.user.verified, true);
+    const cust = db.prepare('SELECT * FROM customers WHERE id = ?').get(st.accounts[0].id);
+    assert.equal(cust.stage, 'lead');
+    assert.equal(cust.lead_source, 'portal sign-up');
+    assert.equal(cust.phone, '555-777-8888');
+    assert.equal((await p.get('/api/portal/dashboard')).status, 200);
+    ids.portalCust = cust.id;
+    ids.portalClient = p;
+    // Signing up again with the same email doesn't reveal the account exists
+    assert.match((await client().post('/api/portal/signup', { name: 'Jo F', email: 'jordan@example.com', password: 'longpassword1' })).data.message, /Check your email/);
+  } finally { delete process.env.SMTP_HOST; delete process.env.MAIL_FROM; }
+});
+
+test('customer portal: staff invite, isolation between customers, requests, child accounts', async () => {
+  // Invite an existing customer (Riverside Café, which has invoices and a signed agreement)
+  await owner.put(`/api/r/customers/${ids.cafe}`, { email: 'owner@riverside.example' });
+  const { link } = (await owner.post(`/api/customers/${ids.cafe}/portal-invite`, {})).data;
+  const token = link.match(/#\/accept\/(.+)$/)[1];
+  const cafe = client();
+  assert.equal((await cafe.post('/api/portal/accept', { token, password: 'short' })).status, 400);
+  assert.equal((await cafe.post('/api/portal/accept', { token, password: 'cafe-password-1' })).status, 200);
+  const invs = (await cafe.get('/api/portal/invoices')).data;
+  assert.ok(invs.length >= 2);
+  const one = (await cafe.get(`/api/portal/invoices/${invs[0].id}`)).data;
+  assert.equal(one.customer.name, 'Riverside Café');
+  assert.ok((await cafe.get('/api/portal/agreements')).data.some(a => a.status === 'signed'));
+
+  // Jordan (the other portal user) can't see the café's data
+  const jordan = ids.portalClient;
+  assert.equal((await jordan.get(`/api/portal/invoices/${invs[0].id}`)).status, 404);
+  assert.equal((await jordan.get(`/api/portal/invoices?account=${ids.cafe}`)).status, 404);
+  const photo = db.prepare('SELECT id FROM job_photos LIMIT 1').get();
+  assert.equal((await jordan.call('GET', `/api/portal/photos/${photo.id}`, undefined, { raw: true })).status, 404);
+  // Portal logins can't use staff endpoints, and vice versa
+  assert.equal((await cafe.get('/api/r/customers')).status, 401);
+  assert.equal((await cafe.get('/api/dashboard')).status, 401);
+  assert.equal((await owner.get('/api/portal/dashboard')).status, 401);
+
+  // Requests
+  const sr = await cafe.post('/api/portal/service-requests', { title: 'Camera 2 offline', system_type: 'camera', preferred_date: '2099-01-02', window: 'morning', urgent: true });
+  assert.equal(sr.status, 200);
+  const call = db.prepare("SELECT * FROM service_calls WHERE title = 'Camera 2 offline'").get();
+  assert.equal(call.customer_id, ids.cafe);
+  assert.equal(call.status, 'new');
+  assert.equal(call.priority, 'high');
+  assert.match(call.description, /Preferred: .* morning/);
+  assert.equal((await cafe.post('/api/portal/equipment-requests', { what: 'Two more cameras for the patio' })).status, 200);
+  const draft = db.prepare("SELECT * FROM proposals WHERE title LIKE 'Request: Two more cameras%'").get();
+  assert.equal(draft.status, 'draft');
+  assert.equal(draft.customer_id, ids.cafe);
+
+  // A business listed under the café's account shows up for them
+  const child = (await owner.post('/api/r/customers', { name: 'Riverside Catering', type: 'commercial', parent_id: ids.cafe, portal_invite: 0 })).data;
+  const st = (await cafe.get('/api/portal/state')).data;
+  assert.deepEqual(st.accounts.map(a => a.name).sort(), ['Riverside Café', 'Riverside Catering']);
+  assert.equal((await cafe.get(`/api/portal/invoices?account=${child.id}`)).status, 200);
+  assert.equal((await jordan.get(`/api/portal/invoices?account=${child.id}`)).status, 404);
+
+  // Profile: notification preferences
+  await cafe.put('/api/portal/profile', { phone: '555-000-1234', notify_sms: false });
+  const c = db.prepare('SELECT phone, notify_sms FROM customers WHERE id = ?').get(ids.cafe);
+  assert.equal(c.phone, '555-000-1234');
+  assert.equal(c.notify_sms, 0);
+  // Staff can disable a portal login
+  const pu = (await owner.get(`/api/customers/${ids.cafe}/portal-users`)).data[0];
+  await owner.put(`/api/portal-users/${pu.id}`, { active: false });
+  assert.equal((await cafe.get('/api/portal/dashboard')).status, 401);
+});
+
 export { owner, ids, db, base };

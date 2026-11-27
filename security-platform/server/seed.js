@@ -75,7 +75,7 @@ for (const [k, [wh, a, b, c]] of Object.entries(stockPlan)) {
 // --- customers
 const custs = [];
 const addCust = (data, charges = [], extra = () => {}) => {
-  const c = C('customers', { state: 'OH', status: 'active', ...data });
+  const c = C('customers', { state: 'OH', status: 'active', portal_invite: 0, ...data });
   charges.forEach(([description, amount, taxable = 0]) => C('recurring_charges', { customer_id: c.id, description, amount, taxable }));
   extra(c);
   custs.push(c);
@@ -219,6 +219,10 @@ db.prepare('UPDATE service_calls SET invoice_id = ? WHERE id = ?').run(inst.id, 
   C('proposal_items', { proposal_id: p2.id, description: 'Card reader + strike + REX, installed', qty: 2, unit_price: 1150, taxable: 1 });
 });
 
+// A demo customer-portal login (Tom & Linda Becker)
+db.prepare('INSERT INTO portal_users (customer_id, name, email, password_hash, email_verified) VALUES (?,?,?,?,1)')
+  .run(1, 'Tom Becker', 'becker@example.com', hashPassword('demo1234'));
+
 // Supplier invoices: one received automatically, one waiting for review.
 db.prepare("UPDATE settings SET value = 'adiglobal.com, anixter.com' WHERE key = 'trusted_vendor_domains'").run();
 const csv1 = 'Part #,Description,Qty Shipped,Unit Price\nBAT-12V7,12V 7Ah battery,24,15.80\nSNS-PIR,PIR motion detector,10,21.50\n';
@@ -232,3 +236,4 @@ await processInvoice(db, r2);
 
 console.log(`Demo data loaded into ${DB_PATH}`);
 console.log('Sign in with owner@demo.local / demo1234 (also admin@, sales@, accounting@, jen@demo.local)');
+console.log('Customer portal (/portal): becker@example.com / demo1234');

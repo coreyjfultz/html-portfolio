@@ -151,6 +151,20 @@ function migrate(db) {
     );
     CREATE INDEX IF NOT EXISTS idx_service_calls_sched ON service_calls(scheduled_start);
     CREATE INDEX IF NOT EXISTS idx_invoices_period ON invoices(customer_id, kind, period);
+    CREATE TABLE IF NOT EXISTS portal_users (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      customer_id INTEGER REFERENCES customers(id) ON DELETE CASCADE,
+      name TEXT NOT NULL, email TEXT NOT NULL UNIQUE COLLATE NOCASE, password_hash TEXT,
+      email_verified INTEGER NOT NULL DEFAULT 0, token_hash TEXT, token_purpose TEXT, token_expires INTEGER,
+      signup_type TEXT, signup_phone TEXT, signup_address TEXT,
+      active INTEGER NOT NULL DEFAULT 1, last_login TEXT,
+      created_at TEXT NOT NULL DEFAULT (datetime('now','localtime'))
+    );
+    CREATE TABLE IF NOT EXISTS portal_sessions (
+      token_hash TEXT PRIMARY KEY,
+      portal_user_id INTEGER NOT NULL REFERENCES portal_users(id) ON DELETE CASCADE,
+      expires_at INTEGER NOT NULL
+    );
     CREATE TABLE IF NOT EXISTS job_photos (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       service_call_id INTEGER NOT NULL REFERENCES service_calls(id) ON DELETE CASCADE,

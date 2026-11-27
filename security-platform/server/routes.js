@@ -11,6 +11,7 @@ import { aiConfigured } from './extract.js';
 import { callToEvent, buildCalendar } from './calendar.js';
 import { decodeImage, saveImage, sendImage, removeImage } from './media.js';
 import { sendForSignature, duplicate, publicView, byToken, markViewed, sign, decline, signingUrl } from './proposals.js';
+import { registerPortalRoutes, invite as portalInvite } from './portal.js';
 import { stripeConfig, checkoutForInvoice, checkoutForSetup, listMethods, removeMethod, setDefaultMethod, chargeSaved, payLink, handleWebhook } from './payments.js';
 
 export function baseUrl(db, req) {
@@ -238,6 +239,18 @@ export function buildRoutes() {
     push('Vehicle', list(db, 'vehicles', { q, limit: 3 }), v => ({ id: v.id, title: v.unit_name, sub: [v.year, v.make, v.model].filter(Boolean).join(' '), href: `#/vehicles/${v.id}` }));
     push('Technician', list(db, 'technicians', { q, limit: 3 }), t => ({ id: t.id, title: t.name, sub: t.phone || '', href: `#/technicians` }));
     return out;
+  });
+
+  // ------------------------------------------------------------ customer portal
+  registerPortalRoutes(r);
+  r('POST', '/api/customers/:id/portal-invite', G.customers, ({ db, params, body, user }) => portalInvite(db, Number(params.id), user, { email: body.email }));
+  r('GET', '/api/customers/:id/portal-users', G.customers, ({ db, params }) =>
+    db.prepare('SELECT id, name, email, email_verified, active, last_login, created_at FROM portal_users WHERE customer_id = ? ORDER BY id').all(Number(params.id)));
+  r('PUT', '/api/portal-users/:id', G.manage, ({ db, params, body, user }) => {
+    db.prepare('UPDATE portal_users SET active = ? WHERE id = ?').run(body.active ? 1 : 0, Number(params.id));
+    if (!body.active) db.prepare('DELETE FROM portal_sessions WHERE portal_user_id = ?').run(Number(params.id));
+    audit(db, user, body.active ? 'enable portal login' : 'disable portal login', 'portal_users', Number(params.id));
+    return { ok: true };
   });
 
   // ------------------------------------------------------------ online payments (Stripe)

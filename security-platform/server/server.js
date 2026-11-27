@@ -103,7 +103,7 @@ export function createServer(db) {
         if (rt.method !== req.method) continue;
         const m = pathname.match(rt.re);
         if (!m) continue;
-        if (rt.roles) {
+        if (rt.roles) { // staff-only route
           if (!user) throw new HttpError(401, 'Please sign in');
           if (!rt.roles.includes(user.role)) throw new HttpError(403, 'Your role does not have access to this');
         }
