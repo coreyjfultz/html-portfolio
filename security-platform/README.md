@@ -7,6 +7,7 @@ One system for the office and the field. It runs as a **website** and installs o
 | Area | Features |
 |---|---|
 | **Customers** | Residential vs. commercial accounts; **multiple locations** per customer (each with its own systems, jobs, access notes and gate code); **businesses grouped under one owner** (parent account); multiple contacts; map/directions links; monitoring account #s; text/email preferences |
+| **Alarm monitoring** | Every customer or site links to its **central-station account(s)**: station, account #, status, communicator ID, permit, encrypted passcode/duress, dispatch notes. Account numbers can be **assigned automatically** from each station's numbering. **Zones/sensors** are added and removed (removed ones stay as history), the **call list** is kept in order, and **all activity** — alarms, troubles, restores, openings/closings, tests and every change — shows on the account. Techs **put systems on test** (from the job on their phone) and tests end automatically. Customers see their alarm activity in the portal |
 | **Sales pipeline** | Every customer has a stage — **Lead → Site survey → Bid sent → Accepted → Installation → Active** (or Lost) — shown on a drag-and-drop board, with history. Stages move automatically: scheduling a site survey, sending a proposal, the customer signing, booking and finishing the install |
 | **Proposals & agreements** | Sales builds proposals and installation / monitoring / service agreements from inventory and labor, with monthly fees, term and deposit. Customers **review and sign online** on any device (finger or mouse). Each signature records name, time, IP, device and a **SHA-256 fingerprint of the exact document**; signed documents are locked. Signing automatically starts monthly billing, creates the installation job and a deposit invoice |
 | **Systems on file** | **Camera systems**: NVR/DVR, IPs, ports, remote access, viewing app, admin and viewer logins. **Alarm systems**: panel, monitoring center, master/installer codes, zones. **Fire systems**: fire alarm, sprinkler, kitchen hood, fire pump, AHJ, panel codes. **Fire extinguishers**: one record per unit with location, type, size, annual and hydrostatic test dates |
@@ -121,6 +122,16 @@ Things to have a professional review before relying on them:
 - **Agreement terms:** the default terms in Settings → Company are a starting point; have your attorney adjust them for your state and services. Electronic signatures capture consent, identity details and a tamper-evident fingerprint in line with the U.S. ESIGN Act / UETA.
 - **Sales tax:** confirm rates and taxable items with your accountant (and the QuickBooks item used for tax).
 
+## Alarm monitoring & connecting a central station
+
+Set up under **Monitoring → Stations**: add the station you use (e.g. CMS) with its operator line, dealer number and, if you number accounts yourself, the prefix and next number. Then add a monitoring account from any customer's **Monitoring** tab (or click **Import from alarm systems** to convert the station/account numbers already typed on alarm systems).
+
+**Today the station connection is "manual".** Everything is tracked here, and the screens say so plainly: putting an account on test, adding/removing a zone or changing the call list does **not** change anything at the station until someone calls the station or uses its dealer portal. Each account shows "not confirmed with station" until someone clicks **Confirmed with station**. This avoids anyone assuming an account is on test when the station doesn't know.
+
+**Signals in:** each station has a private **signal feed** address (Stations → Signal feed). The station, or a middleware/receiver service, can POST alarm events to it and they appear in the account's activity, matched by account number. Contact ID (`E130`, `R401`, `E602`…) and SIA (`BA`, `OP`, `RP`…) codes are recognized; signals received while an account is on test are marked as test; resent events are ignored.
+
+**Next step: a direct connection.** To create station accounts automatically when a customer is created, and to send tests and zone/call-list changes straight to the station, a connector is added in `server/monitoring.js` (`CONNECTORS`). It implements `createAccount`, `updateAccount`, `saveZone`, `removeZone`, `putOnTest`, `clearTest` and optionally `fetchEvents`; the screens already call these. What's needed from the station: its dealer integration (most wholesale stations run Manitou, MASterMind, stages or SIMS and offer an API or data exchange to dealers) and API credentials for your dealer account.
+
 ## How it's built
 
 - `server/` — plain Node.js (no web framework; packages: the Anthropic SDK for invoice reading, nodemailer for email): HTTP server, SQLite via `node:sqlite`, auth (scrypt password hashing, HttpOnly session cookies, CSRF header check, login rate limiting), AES-GCM encryption, business rules, reports.
@@ -129,6 +140,7 @@ Things to have a professional review before relying on them:
 - `server/receiving.js` + `server/extract.js` — supplier-invoice intake, CSV parsing, matching, auto-receive rules, and the Claude call.
 - `server/proposals.js` — proposals, signing links, e-signature and what happens after signing. `public/sign.html` is the customer's signing page.
 - `server/portal.js` + `public/portal.html` — the customer portal (its own logins, separate from staff).
+- `server/monitoring.js` — monitoring accounts, zones, test mode, signal feed and the station connector slot.
 - `server/notify.js` (email/text), `server/calendar.js` (Outlook/Google feeds and invites), `server/payments.js` (Stripe), `server/quickbooks.js` (QuickBooks sync and exports), `server/media.js` (photos, signatures, logo).
 - `public/js/doc.js` — the shared invoice and agreement document layout.
 - Icons: [Lucide](https://lucide.dev) (ISC); font: Inter (SIL Open Font License), both served from this app.

@@ -5,6 +5,7 @@ import { create, update, adjustStock, todayLocal, addDays, addMonths } from './r
 import { hashPassword } from './security.js';
 import { ingest, processInvoice } from './receiving.js';
 import { sendForSignature } from './proposals.js';
+import { logEvent, putOnTest } from './monitoring.js';
 
 const db = openDb();
 if (db.prepare('SELECT COUNT(*) AS n FROM customers').get().n > 0) {
@@ -209,6 +210,37 @@ C('invoice_items', { invoice_id: inst.id, description: '5MP bullet IP camera', q
 C('invoice_items', { invoice_id: inst.id, description: '16-channel PoE NVR + 2×4TB', qty: 1, unit_price: 1117, taxable: 1 });
 C('payments', { invoice_id: inst.id, date: day(-6), amount: 1500, method: 'card', reference: 'Deposit' });
 db.prepare('UPDATE service_calls SET invoice_id = ? WHERE id = ?').run(inst.id, a.id);
+
+// Alarm monitoring: one central station, accounts with zones, call lists and recent signals
+const cs = C('monitoring_stations', { name: 'Central Station A', platform: 'Manitou', operator_phone: '(800) 555-0199', dealer_number: 'D-4471', dealer_portal: 'dealers.example-station.com', account_prefix: 'MC-', next_account_number: 20200, account_digits: 5 });
+const at2 = (daysAgo, time) => `${addDays(today, -daysAgo)}T${time}`;
+const monitor = (cust, number, service, zones, calls, events, extra = {}) => {
+  const alarm = db.prepare('SELECT id FROM alarm_systems WHERE customer_id = ? LIMIT 1').get(cust.id);
+  const acc = C('monitoring_accounts', { customer_id: cust.id, station_id: cs.id, account_number: number, status: 'active', service_type: service, alarm_system_id: alarm?.id || null,
+    communicator: 'cellular', comm_id: `ADC-${number.replace(/\D/g, '')}`, passcode: 'blue sky', monitoring_start: '2023-03-01', permit_number: `SPD-${number.slice(-4)}`, ...extra });
+  zones.forEach(([n, d, t]) => C('monitoring_zones', { account_id: acc.id, zone_number: n, description: d, zone_type: t }));
+  calls.forEach(([name, rel, phone, key], i) => C('monitoring_contacts', { account_id: acc.id, sequence: i + 1, name, relation: rel, phone, has_key: key ? 1 : 0 }));
+  events.forEach(([ago, time, code, zone, desc, disp]) => logEvent(db, acc.id, { time: at2(ago, time), code, zone, description: desc, disposition: disp, source: 'station' }));
+  db.prepare('UPDATE monitoring_accounts SET station_synced = 1 WHERE id = ?').run(acc.id);
+  db.prepare('UPDATE monitoring_zones SET station_synced = 1 WHERE account_id = ?').run(acc.id);
+  return acc;
+};
+monitor(res1, 'MC-10442', 'burglary', [[1, 'Front door', 'entry/exit'], [2, 'Back door', 'entry/exit'], [3, 'Living room motion', 'interior / motion'], [4, 'Hallway smoke', 'smoke'], [5, 'Garage entry', 'entry/exit']],
+  [['Tom Becker', 'Owner', '555-0201', true], ['Linda Becker', 'Owner', '555-0211', true], ['Sue Park', 'Neighbor', '555-0299', true]],
+  [[9, '22:41', 'E130', 3, 'Burglary — living room motion', 'Called premises, owner gave passcode. Cancelled.'], [9, '22:43', 'R130', 3, 'Restore'], [6, '07:12', 'R401', null, 'Disarmed by user 1'], [6, '18:30', 'E401', null, 'Armed away by user 1'],
+   [2, '03:15', 'E302', null, 'Low system battery'], [1, '10:05', 'R302', null, 'Battery restored (tech replaced)'], [0, '06:00', 'E602', null, 'Periodic test']]);
+monitor(res2, 'MC-10587', 'burglary', [[1, 'Front door', 'entry/exit'], [2, 'Patio slider', 'entry/exit'], [3, 'Hall motion', 'interior / motion']],
+  [['Maria Gonzalez', 'Owner', '555-0202', true]], [[3, '08:01', 'R401', null, 'Disarmed by user 1'], [0, '06:00', 'E602', null, 'Periodic test']]);
+monitor(com1, 'MC-20011', 'burglary + fire', [[1, 'Front entrance', 'entry/exit'], [2, 'Back door (kitchen)', 'entry/exit'], [3, 'Office motion', 'interior / motion'], [10, 'Kitchen heat', 'heat'], [11, 'Dining smoke', 'smoke'], [12, 'Hood suppression', 'other'], [20, 'Hold-up button (register)', 'panic']],
+  [['Rosie Kim', 'Owner', '555-0301', true], ['Dave Ruiz', 'Night manager', '555-0399', true]],
+  [[12, '23:58', 'E131', 2, 'Perimeter — back door', 'Police dispatched, door found unsecured. Owner notified.'], [5, '05:02', 'R401', null, 'Opened by user 3 (Dave)'], [5, '22:30', 'E401', null, 'Closed by user 3 (Dave)'], [1, '14:20', 'E373', 11, 'Fire trouble — dining smoke', 'Tech dispatched'], [1, '15:05', 'R373', 11, 'Trouble restored']]);
+const m4 = monitor(com3, 'MC-20078', 'burglary + fire', [[1, 'Front door', 'entry/exit'], [2, 'Rear door', 'entry/exit'], [5, 'Server closet motion', 'interior / motion'], [10, 'Lobby smoke', 'smoke'], [11, 'Operatory 3 smoke', 'smoke'], [12, 'Sprinkler flow', 'other']],
+  [['Karen Lee', 'Office manager', '555-0303', true], ['Dr. Helen Cho', 'Owner', '555-0313', false]],
+  [[0, '07:44', 'E380', 11, 'Fire trouble — Operatory 3 smoke (dirty sensor)', 'Customer called, service call opened']]);
+monitor(com4, 'MC-20102', 'burglary + fire', [[1, 'Main entrance', 'entry/exit'], [2, 'Dock door 1', 'perimeter'], [3, 'Dock door 2', 'perimeter'], [10, 'Fire alarm panel (general)', 'smoke'], [11, 'Sprinkler water flow', 'other'], [12, 'Fire pump run', 'other']],
+  [['Greg Miller', 'Facilities', '555-0304', true], ['Plant security desk', 'Security', '555-0390', true]],
+  [[4, '06:00', 'R401', null, 'Opened by user 5'], [4, '18:10', 'E401', null, 'Closed by user 5'], [0, '06:00', 'E602', null, 'Periodic test']]);
+putOnTest(db, m4.id, { minutes: 240, reason: 'Smoke detector replacement in Operatory 3' }, { name: 'Mike Alvarez' }).catch(e => console.error(e));
 
 // Proposals: one out for signature, one draft
   const p1 = C('proposals', { customer_id: res4.id, kind: 'installation agreement', title: '6-camera system with video doorbell', intro: 'Supply and install six 4K turret cameras covering the driveway, front and back entries and backyard, a 4K video doorbell and an 8-channel NVR with 4TB storage. Includes app setup on your phones and a walkthrough.', monthly_amount: 24.99, monthly_description: 'Cloud backup + remote support', term_months: 12, deposit_percent: 30 });

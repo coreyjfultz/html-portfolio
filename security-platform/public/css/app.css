@@ -587,3 +587,5 @@ table.t tr.click:hover td { background: #f8faff; }
   .doc-parties { grid-template-columns: 1fr 1fr; gap: 14px; }
   .p-top .p-brand img + span { display: none; }
 }
+
+.page-head h1 .mono { font-size: inherit; letter-spacing: -.01em; }
