@@ -3,6 +3,8 @@ import {
 } from '../ui.js';
 import { R, GET, POST } from '../api.js';
 import { state, refresh } from '../app.js';
+import { renderInvoice } from '../doc.js';
+import { PAYMENT_METHODS } from '../schema.js';
 
 export async function list(view, _, query) {
   const f = { status: query.status || 'open', kind: '', q: '' };
@@ -133,43 +135,17 @@ export async function detail(view, [id]) {
       </div></div>
     <div class="grid g3">
       <div class="span2">
-        <div class="invoice-paper">
-          <div class="head">
-            <div><h2 style="font-size:20px">${s.company_name}</h2>
-              <div style="white-space:pre-wrap;color:#555">${s.company_address}</div>
-              <div style="color:#555">${[s.company_phone, s.company_email].filter(Boolean).join(' · ')}</div>
-              ${s.company_license ? html`<div style="color:#555">License ${s.company_license}</div>` : ''}</div>
-            <div style="text-align:right"><h1>INVOICE</h1>
-              <div><b>#${inv.number}</b></div><div>Issued ${fmtDate(inv.issue_date)}</div><div>Due ${fmtDate(inv.due_date)}</div>
-              ${inv.period ? html`<div>Period ${inv.period}</div>` : ''}
-              ${['paid', 'void', 'overdue'].includes(inv.display_status) ? html`<div style="margin-top:10px"><span class="stamp ${inv.display_status}">${inv.display_status}</span></div>` : ''}</div>
-          </div>
-          <div style="margin-top:24px"><div style="font-size:12px;color:#555;text-transform:uppercase;letter-spacing:.04em">Bill to</div>
-            <div><b>${cust.name}</b></div>${cust.contact_name ? html`<div>Attn: ${cust.contact_name}</div>` : ''}
-            ${addr.map(a => html`<div>${a}</div>`)}${cust.account_number ? html`<div>Account ${cust.account_number}</div>` : ''}</div>
-          <table><thead><tr><th>Description</th><th style="text-align:right">Qty</th><th style="text-align:right">Rate</th><th style="text-align:right">Amount</th></tr></thead>
-            <tbody>${items.length ? items.map(i => html`<tr class="${inv.status !== 'void' ? 'click' : ''}" data-item="${i.id}" title="Click to edit">
-              <td>${i.description}${i.taxable ? html` <span style="color:#888;font-size:11px">T</span>` : ''}</td><td style="text-align:right">${i.qty}</td>
-              <td style="text-align:right">${money(i.unit_price)}</td><td style="text-align:right">${money(i.qty * i.unit_price)}</td></tr>`)
-              : html`<tr><td colspan="4" style="color:#888">No line items yet — add one.</td></tr>`}</tbody></table>
-          <div class="totals">
-            <div><span>Subtotal</span><span>${money(inv.subtotal)}</span></div>
-            <div><span>Tax (${inv.tax_rate || 0}%)</span><span>${money(inv.tax)}</span></div>
-            <div class="grand"><span>Total</span><span>${money(inv.total)}</span></div>
-            ${inv.paid ? html`<div><span>Paid</span><span>−${money(inv.paid)}</span></div>` : ''}
-            <div style="font-weight:700"><span>Balance due</span><span>${money(inv.balance)}</span></div>
-          </div>
-          ${inv.notes ? html`<div style="margin-top:20px;white-space:pre-wrap">${inv.notes}</div>` : ''}
-          ${job?.signed_by ? html`<div class="doc-sign"><div class="doc-sign-label">Work completed and accepted</div>
-            <img src="/api/service_calls/${job.id}/signature" alt="Customer signature">
-            <div>${job.signed_by} · ${new Date(job.signed_at).toLocaleString('en-US', { month: 'short', day: 'numeric', year: 'numeric', hour: 'numeric', minute: '2-digit' })} · SC-${job.number}</div></div>` : ''}
-          ${s.invoice_footer ? html`<div style="margin-top:28px;color:#555;white-space:pre-wrap;border-top:1px solid #ddd;padding-top:12px">${s.invoice_footer}</div>` : ''}
-        </div>
+        <div class="doc-frame">${renderInvoice({
+          number: inv.number, issue_date: inv.issue_date, due_date: inv.due_date, period: inv.period, status: inv.display_status, notes: inv.notes,
+          subtotal: inv.subtotal, tax: inv.tax, tax_rate: inv.tax_rate, total: inv.total, paid: inv.paid, balance: inv.balance, items, customer: cust,
+          company: { name: s.company_name, address: s.company_address, phone: s.company_phone, email: s.company_email, license: s.company_license, footer: s.invoice_footer },
+          signed: job?.signed_by ? { by: job.signed_by, at: job.signed_at, number: job.number } : null,
+        }, { logoUrl: state.logo ? `/api/public/logo?v=${state.logo}` : null, signatureUrl: job?.signed_by ? `/api/service_calls/${job.id}/signature` : null, editable: inv.status !== 'void' })}</div>
       </div>
       <div class="stack no-print">
         <div class="card"><div class="card-head"><h2>Payments</h2></div><div class="card-body flush">${dataTable({
           rows: payments, empty: 'No payments yet.',
-          columns: [{ label: 'Date', render: p => fmtDate(p.date) }, { label: 'Method', render: p => html`${p.method}<div class="small muted">${p.reference || ''}</div>` },
+          columns: [{ label: 'Date', render: p => fmtDate(p.date) }, { label: 'Method', render: p => html`${PAYMENT_METHODS[p.method] || p.method}<div class="small muted">${p.reference || ''}</div>` },
             { label: 'Amount', render: p => money(p.amount), cls: 'num' }, { label: '', cls: 'actions-cell', render: p => html`<button class="btn sm ghost" data-editpay="${p.id}">Edit</button>` }],
         })}</div></div>
         <div class="card"><div class="card-body"><dl class="dl small">
@@ -208,7 +184,7 @@ export async function payments(view, _, query) {
     <div class="filters">
       <label class="small">From <input type="date" data-from value="${f.from}"></label>
       <label class="small">To <input type="date" data-to value="${f.to}"></label>
-      <select data-method aria-label="Method"><option value="">All methods</option>${['check', 'card', 'ach', 'cash', 'other'].map(m => html`<option>${m}</option>`)}</select>
+      <select data-method aria-label="Method"><option value="">All methods</option>${Object.entries(PAYMENT_METHODS).map(([v, l]) => html`<option value="${v}">${l}</option>`)}</select>
     </div>
     <div class="kpis" data-kpis></div>
     <div class="card"><div class="card-body flush" data-table></div></div>`);
@@ -218,12 +194,12 @@ export async function payments(view, _, query) {
     const byMethod = {};
     rows.forEach(p => { byMethod[p.method] = (byMethod[p.method] || 0) + p.amount; });
     mount($('[data-kpis]', view), html`<div class="kpi"><div class="label">Total collected</div><div class="value">${money(total)}</div><div class="hint">${rows.length} payments</div></div>
-      ${Object.entries(byMethod).map(([m, v]) => html`<div class="kpi"><div class="label">${m.toUpperCase()}</div><div class="value">${money0(v)}</div></div>`)}`);
+      ${Object.entries(byMethod).map(([m, v]) => html`<div class="kpi"><div class="label">${PAYMENT_METHODS[m] || m}</div><div class="value">${money0(v)}</div></div>`)}`);
     mount($('[data-table]', view), dataTable({
       rows, href: p => `#/invoices/${p.invoice_id}`, empty: 'No payments in this range.',
       columns: [
         { label: 'Date', render: p => fmtDate(p.date) }, { label: 'Customer', render: p => p.customer_id_label },
-        { label: 'Invoice', render: p => p.invoice_id_label }, { label: 'Method', key: 'method' },
+        { label: 'Invoice', render: p => p.invoice_id_label }, { label: 'Method', render: p => PAYMENT_METHODS[p.method] || p.method },
         { label: 'Reference', render: p => p.reference || '—' }, { label: 'Amount', render: p => money(p.amount), cls: 'num' },
       ],
       foot: rows.length ? html`<tr><td colspan="5">Total</td><td class="num">${money(total)}</td></tr>` : null,

@@ -43,6 +43,7 @@ export const DEFAULT_SETTINGS = {
   qbo_client_id: '', qbo_client_secret: '', qbo_environment: 'sandbox', qbo_realm_id: '', qbo_company_name: '',
   qbo_access: '', qbo_refresh: '', qbo_access_expires: '', qbo_item_id: '', qbo_tax_item_id: '', qbo_auto_sync: '1', qbo_last_sync: '',
   export_income_account: '', export_tax_account: '',
+  logo_key: '',
   proposal_valid_days: '30',
   proposal_terms: `1. Scope. We will furnish and install the equipment and services listed above. Work outside this scope will be quoted separately.
 2. Payment. The deposit shown is due at signing; the balance is due on completion. Monthly service fees are billed in advance each month.

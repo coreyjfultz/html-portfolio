@@ -1,4 +1,4 @@
-import { html, mount, $, $$, toast, initials, esc, installGlobalHandlers } from './ui.js';
+import { html, mount, $, $$, toast, initials, esc, installGlobalHandlers, icon } from './ui.js';
 import { api, GET, POST } from './api.js';
 import { G, ROLE_INFO } from './schema.js';
 
@@ -16,30 +16,30 @@ export const can = {
 
 const NAV = [
   { section: null },
-  { href: '#/', label: 'Dashboard', ico: '▦' },
-  { href: '#/myday', label: 'My Day', ico: '☀', roles: ['technician'] },
+  { href: '#/', label: 'Dashboard', ico: 'layout-dashboard' },
+  { href: '#/myday', label: 'My Day', ico: 'sun', roles: ['technician'] },
   { section: 'Customers' },
-  { href: '#/customers', label: 'Customers', ico: '👥' },
-  { href: '#/pipeline', label: 'Pipeline', ico: '📊', roles: G.staff },
-  { href: '#/proposals', label: 'Proposals', ico: '✍', roles: G.salesOrBilling },
-  { href: '#/maintenance', label: 'Maintenance Due', ico: '⏰' },
+  { href: '#/customers', label: 'Customers', ico: 'users' },
+  { href: '#/pipeline', label: 'Pipeline', ico: 'kanban', roles: G.staff },
+  { href: '#/proposals', label: 'Proposals', ico: 'file-signature', roles: G.salesOrBilling },
+  { href: '#/maintenance', label: 'Maintenance Due', ico: 'alarm-clock' },
   { section: 'Field work' },
-  { href: '#/calls', label: 'Service Calls', ico: '🔧' },
-  { href: '#/calendar', label: 'Calendar', ico: '🗓' },
-  { href: '#/schedule', label: 'Dispatch board', ico: '📅' },
-  { href: '#/technicians', label: 'Technicians', ico: '👷' },
+  { href: '#/calls', label: 'Service Calls', ico: 'wrench' },
+  { href: '#/calendar', label: 'Calendar', ico: 'calendar-days' },
+  { href: '#/schedule', label: 'Dispatch board', ico: 'calendar-range' },
+  { href: '#/technicians', label: 'Technicians', ico: 'hard-hat' },
   { section: 'Billing', roles: G.billing },
-  { href: '#/invoices', label: 'Invoices', ico: '🧾', roles: G.billing },
-  { href: '#/payments', label: 'Payments', ico: '💵', roles: G.billing },
-  { href: '#/expenses', label: 'Expenses', ico: '💳', roles: G.billing },
+  { href: '#/invoices', label: 'Invoices', ico: 'receipt', roles: G.billing },
+  { href: '#/payments', label: 'Payments', ico: 'banknote', roles: G.billing },
+  { href: '#/expenses', label: 'Expenses', ico: 'credit-card', roles: G.billing },
   { section: 'Operations' },
-  { href: '#/inventory', label: 'Inventory', ico: '📦' },
-  { href: '#/receiving', label: 'Receiving', ico: '📥', roles: G.billing },
-  { href: '#/vehicles', label: 'Vehicles', ico: '🚚' },
+  { href: '#/inventory', label: 'Inventory', ico: 'package' },
+  { href: '#/receiving', label: 'Receiving', ico: 'inbox', roles: G.billing },
+  { href: '#/vehicles', label: 'Vehicles', ico: 'truck' },
   { section: 'Insights', roles: G.billing },
-  { href: '#/reports', label: 'Reports', ico: '📈', roles: G.billing },
-  { href: '#/accounting', label: 'Accounting', ico: '📒', roles: G.billing },
-  { href: '#/settings', label: 'Settings', ico: '⚙', roles: G.manage },
+  { href: '#/reports', label: 'Reports', ico: 'chart-line', roles: G.billing },
+  { href: '#/accounting', label: 'Accounting', ico: 'book-open', roles: G.billing },
+  { href: '#/settings', label: 'Settings', ico: 'settings', roles: G.manage },
 ];
 
 // path pattern -> [module, export]
@@ -81,6 +81,7 @@ async function boot() {
   try {
     const s = await GET('/api/auth/state');
     state.company = s.company;
+    state.logo = s.logo;
     if (s.needsSetup) return renderSetup();
     if (!s.user) return renderLogin();
     state.user = s.user;
@@ -92,13 +93,14 @@ async function boot() {
   }
 }
 
-function brand(name) {
+function brand(name, { useLogo = false } = {}) {
+  if (useLogo && state.logo) return html`<img class="login-logo" src="/api/public/logo?v=${state.logo}" alt="${name || ''}">`;
   return html`<div class="brand"><img src="/icons/icon.svg" alt=""><span>${name || 'SecureOps'}</span></div>`;
 }
 
 function renderLogin() {
   mount(root, html`<div class="login-wrap"><div class="login-card">
-    ${brand(state.company)}
+    ${brand(state.company, { useLogo: true })}
     <form data-login>
       <div class="err-box hidden" data-err></div>
       <div class="field"><label for="email">Email</label><input id="email" name="email" type="email" autocomplete="username" required></div>
@@ -145,13 +147,13 @@ function renderShell() {
     <aside class="sidebar">
       ${brand(state.settings.company_name)}
       <nav class="nav">${nav.map(n => n.section === undefined
-        ? html`<a href="${n.href}" data-nav="${n.href}"><span class="ico" aria-hidden="true">${n.ico}</span>${n.label}</a>`
+        ? html`<a href="${n.href}" data-nav="${n.href}">${icon(n.ico)}${n.label}</a>`
         : n.section ? html`<div class="section">${n.section}</div>` : '')}</nav>
     </aside>
     <div class="main">
       <header class="topbar">
-        <button class="btn ghost menu-btn" data-menu aria-label="Menu">☰</button>
-        <div class="search"><span class="ico">🔍</span><input type="search" placeholder="Search customers, phone, invoice #, call #, parts…" data-search aria-label="Search">
+        <button class="btn ghost menu-btn" data-menu aria-label="Menu">${icon('menu')}</button>
+        <div class="search"><span class="ico">${icon('search')}</span><input type="search" placeholder="Search customers, phone, invoice #, call #, parts…" data-search aria-label="Search">
           <div class="search-results hidden" data-results></div></div>
         <div class="user-menu">
           <a href="#/account" class="row" style="color:inherit" title="My account">

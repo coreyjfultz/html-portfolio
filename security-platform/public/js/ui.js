@@ -12,6 +12,7 @@ export function html(strings, ...vals) {
   vals.forEach((v, i) => { out += val(v) + strings[i + 1]; });
   return new Safe(out);
 }
+export const icon = (name, cls = '') => raw(`<svg class="ico-svg ${cls}" aria-hidden="true" focusable="false"><use href="/icons/sprite.svg#i-${name}"></use></svg>`);
 export const mount = (el, content) => { el.innerHTML = content instanceof Safe ? content.s : esc(content); return el; };
 export const $ = (sel, root = document) => root.querySelector(sel);
 export const $$ = (sel, root = document) => [...root.querySelectorAll(sel)];

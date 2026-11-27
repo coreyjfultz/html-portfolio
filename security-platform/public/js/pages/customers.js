@@ -1,6 +1,6 @@
-import { RESOURCES, STAGES, STAGE_INFO } from '../schema.js';
+import { RESOURCES, STAGES, STAGE_INFO, PAYMENT_METHODS } from '../schema.js';
 import {
-  html, raw, mount, $, $$, money, fmtDate, badge, typeBadge, stageBadge, relDays, dataTable, fieldColumns, openForm, renderValue,
+  html, raw, icon, mount, $, $$, money, fmtDate, badge, typeBadge, stageBadge, relDays, dataTable, fieldColumns, openForm, renderValue,
   loading, toast, secretView, confirmDialog, openModal,
 } from '../ui.js';
 import { R, GET, POST, api } from '../api.js';
@@ -62,9 +62,9 @@ function newCustomer() {
 }
 
 const SYSTEM_TYPES = [
-  ['camera_systems', '📹', 'Camera systems'],
-  ['alarm_systems', '🔔', 'Alarm / intrusion systems'],
-  ['fire_systems', '🔥', 'Fire systems'],
+  ['camera_systems', 'camera', 'Camera systems'],
+  ['alarm_systems', 'bell', 'Alarm / intrusion systems'],
+  ['fire_systems', 'flame', 'Fire systems'],
 ];
 
 export async function detail(view, [id], query) {
@@ -206,10 +206,10 @@ export async function detail(view, [id], query) {
     mount(pane, html`
       ${maint.length ? html`<div class="card" style="margin-bottom:16px"><div class="card-head"><h2>Due soon</h2></div><div class="card-body flush" data-maint></div></div>` : ''}
       <div class="stack">
-      ${SYSTEM_TYPES.map(([res, ico, label]) => html`<div class="card"><div class="card-head"><h2>${ico} ${label}</h2>
+      ${SYSTEM_TYPES.map(([res, ico, label]) => html`<div class="card"><div class="card-head"><h2 class="row" style="gap:8px">${icon(ico)} ${label}</h2>
           <button class="btn sm" data-add="${res}">+ Add</button></div>
         <div class="card-body">${systems[res].length ? html`<div class="grid g2">${systems[res].map(s => systemCard(res, s))}</div>` : html`<div class="muted">None on file.</div>`}</div></div>`)}
-      <div class="card"><div class="card-head"><h2>🧯 Fire extinguishers <span class="muted small">(${exts.length})</span></h2>
+      <div class="card"><div class="card-head"><h2 class="row" style="gap:8px">${icon('fire-extinguisher')} Fire extinguishers <span class="muted small">(${exts.length})</span></h2>
           <div class="actions">${exts.length ? html`<button class="btn sm" data-inspect-all>Mark selected inspected today</button>` : ''}<button class="btn sm" data-add="extinguishers">+ Add</button></div></div>
         <div class="card-body flush">${exts.length ? html`<div class="table-wrap"><table class="t responsive"><thead><tr>
             <th><input type="checkbox" data-all aria-label="Select all"></th><th>Location</th><th>Type</th><th>Size</th><th>Status</th><th>Next annual</th><th>Next hydro</th><th>Serial</th><th></th></tr></thead>
@@ -289,7 +289,7 @@ export async function detail(view, [id], query) {
         rows: payments, empty: 'No payments recorded.', href: p => `#/invoices/${p.invoice_id}`,
         columns: [
           { label: 'Date', render: p => fmtDate(p.date) }, { label: 'Invoice', render: p => p.invoice_id_label },
-          { label: 'Method', key: 'method' }, { label: 'Reference', render: p => p.reference || '—' },
+          { label: 'Method', render: p => PAYMENT_METHODS[p.method] || p.method }, { label: 'Reference', render: p => p.reference || '—' },
           { label: 'Amount', render: p => money(p.amount), cls: 'num' }] })}</div></div>
     </div>`);
     drawPaymentMethods($('[data-pm-card]', pane), c);

@@ -1,7 +1,7 @@
 // Caches the app shell so it opens instantly and survives flaky signal in the field.
 // API data is never cached: it always comes live from the server.
-const CACHE = 'secureops-v1';
-const SHELL = ['/', '/css/app.css', '/js/app.js', '/js/ui.js', '/js/api.js', '/js/schema.js', '/icons/icon.svg', '/manifest.webmanifest'];
+const CACHE = 'secureops-v2';
+const SHELL = ['/', '/css/app.css', '/js/app.js', '/js/ui.js', '/js/api.js', '/js/schema.js', '/icons/icon.svg', '/icons/sprite.svg', '/fonts/inter-latin-wght-normal.woff2', '/manifest.webmanifest'];
 
 self.addEventListener('install', e => {
   e.waitUntil(caches.open(CACHE).then(c => c.addAll(SHELL)).then(() => self.skipWaiting()));

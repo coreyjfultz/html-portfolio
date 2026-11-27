@@ -70,6 +70,7 @@ export function buildRoutes() {
     needsSetup: db.prepare('SELECT COUNT(*) AS n FROM users').get().n === 0,
     user: publicUser(user),
     company: getSettings(db).company_name,
+    logo: (getSettings(db).logo_key || '').slice(0, 8) || null,
   }));
 
   r('POST', '/api/auth/setup', null, ({ db, body, setCookie }) => {
@@ -181,6 +182,29 @@ export function buildRoutes() {
     }
     audit(db, user, 'update', 'settings', null);
     return getSettings(db);
+  });
+
+  r('POST', '/api/settings/logo', MANAGE, ({ db, body, user }) => {
+    const img = decodeImage(body.data, { maxBytes: 2 * 1024 * 1024 });
+    const old = getSettings(db).logo_key;
+    const key = saveImage('branding', img);
+    db.prepare("INSERT INTO settings(key, value) VALUES ('logo_key', ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value").run(key);
+    removeImage('branding', old);
+    audit(db, user, 'update logo', 'settings', null);
+    return { ok: true };
+  });
+  r('DELETE', '/api/settings/logo', MANAGE, ({ db, user }) => {
+    removeImage('branding', getSettings(db).logo_key);
+    db.prepare("UPDATE settings SET value = '' WHERE key = 'logo_key'").run();
+    audit(db, user, 'remove logo', 'settings', null);
+    return { ok: true };
+  });
+  // Public: shown on sign-in, invoices, agreements and the customer portal.
+  r('GET', '/api/public/logo', null, ({ db, res }) => {
+    const key = getSettings(db).logo_key;
+    if (!key) throw new HttpError(404, 'No logo');
+    sendImage(res, 'branding', key, { cache: 'public, max-age=3600' });
+    return undefined;
   });
 
   r('GET', '/api/audit', MANAGE, ({ db, query }) =>

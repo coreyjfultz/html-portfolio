@@ -1,5 +1,5 @@
-import { html, raw, mount, $, $$, dataTable, promptForm, toast, badge, loading, confirmDialog } from '../ui.js';
-import { GET, PUT, POST, R } from '../api.js';
+import { html, raw, mount, $, $$, dataTable, promptForm, toast, badge, loading, confirmDialog, pickPhotos, resizeImage } from '../ui.js';
+import { GET, PUT, POST, R, api } from '../api.js';
 import { ROLES, ROLE_INFO } from '../schema.js';
 import { state, refresh } from '../app.js';
 
@@ -25,7 +25,20 @@ export async function render(view, _, query) {
     mount(pane, html`<div class="card"><div class="card-body"><form class="form-grid" data-form>
       ${SETTINGS.map(([k, l, t]) => html`<div class="field ${t === 'textarea' ? 'full' : ''}"><label for="s_${k}">${l}</label>
         ${t === 'textarea' ? html`<textarea id="s_${k}" name="${k}">${s[k]}</textarea>` : html`<input id="s_${k}" name="${k}" type="${t || 'text'}" step="any" value="${s[k]}">`}</div>`)}
-      </form><div class="row" style="margin-top:16px"><button class="btn primary" data-save>Save settings</button></div></div></div>`);
+      </form><div class="row" style="margin-top:16px"><button class="btn primary" data-save>Save settings</button></div></div></div>
+      <div class="card" style="margin-top:16px"><div class="card-head"><div><h2>Logo</h2><div class="small muted">Shown on invoices, proposals, the customer portal and the app. PNG or JPG, ideally wide and on a transparent or white background.</div></div></div>
+        <div class="card-body row" style="gap:16px">${state.logo ? html`<img src="/api/public/logo?v=${state.logo}" alt="Current logo" style="max-height:64px;max-width:220px;background:#fff;padding:6px;border:1px solid var(--border);border-radius:8px">` : html`<span class="muted">No logo yet</span>`}
+          <button class="btn" data-logo>Upload logo</button>${state.logo ? html`<button class="btn ghost danger" data-nologo>Remove</button>` : ''}</div></div>`);
+    $('[data-logo]', pane).addEventListener('click', async () => {
+      const [file] = await pickPhotos({ camera: false, multiple: false });
+      if (!file) return;
+      try {
+        const data = file.type === 'image/png' ? await new Promise((res, rej) => { const r = new FileReader(); r.onload = () => res(r.result); r.onerror = rej; r.readAsDataURL(file); }) : await resizeImage(file, 800, 0.9);
+        await POST('/api/settings/logo', { data });
+        toast('Logo updated'); location.reload();
+      } catch (e) { toast(e.message, 'error'); }
+    });
+    $('[data-nologo]', pane)?.addEventListener('click', async () => { await api('DELETE', '/api/settings/logo'); toast('Logo removed'); location.reload(); });
     $('[data-save]', pane).addEventListener('click', async () => {
       const data = Object.fromEntries(new FormData($('[data-form]', pane)));
       state.settings = await PUT('/api/settings', data);

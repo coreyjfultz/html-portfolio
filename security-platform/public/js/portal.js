@@ -1,6 +1,7 @@
 // Customer portal (separate from the staff app).
-import { html, mount, $, $$, money, fmtDate, fmtDateTime, toast, openModal, confirmDialog, todayStr, addDays, esc } from './ui.js';
+import { html, mount, $, $$, money, fmtDate, fmtDateTime, toast, openModal, confirmDialog, todayStr, addDays, esc, icon } from './ui.js';
 import { PAYMENT_METHODS } from './schema.js';
+import { renderInvoice } from './doc.js';
 
 const root = document.getElementById('root');
 const S = { user: null, accounts: [], account: null, company: {} };
@@ -100,12 +101,12 @@ function verifyPending() {
 async function logout() { await api('POST', '/api/portal/logout'); S.user = null; location.hash = '#/login'; boot(); }
 
 // ------------------------------------------------------------------ signed-in shell
-const NAV = [['home', 'Home', '🏠'], ['invoices', 'Invoices', '🧾'], ['service', 'Service', '🔧'], ['payment-methods', 'Payment', '💳'], ['more', 'More', '☰']];
+const NAV = [['home', 'Home', 'house'], ['invoices', 'Invoices', 'receipt'], ['service', 'Service', 'wrench'], ['payment-methods', 'Payment', 'credit-card'], ['more', 'More', 'ellipsis']];
 function shell(page, arg) {
   mount(root, html`<header class="p-top">${brand()}
       <div class="row">${S.accounts.length > 1 ? html`<select data-acct aria-label="Account" style="width:auto;min-height:34px">${S.accounts.map(a => html`<option value="${a.id}" ${a.id === S.account ? 'selected' : ''}>${a.name}</option>`)}</select>` : ''}
         <button class="btn ghost sm p-out" data-out>Sign out</button></div></header>
-    <nav class="p-nav">${NAV.map(([k, l, i]) => html`<a href="#/${k === 'home' ? '' : k}" class="${(page === k || (k === 'more' && ['agreements', 'systems', 'profile', 'equipment'].includes(page))) ? 'on' : ''}"><span>${i}</span>${l}</a>`)}</nav>
+    <nav class="p-nav">${NAV.map(([k, l, i]) => html`<a href="#/${k === 'home' ? '' : k}" class="${(page === k || (k === 'more' && ['agreements', 'systems', 'profile', 'equipment'].includes(page))) ? 'on' : ''}">${icon(i)}${l}</a>`)}</nav>
     <main class="p-main" id="pview"><div class="empty">Loading…</div></main>`);
   $('[data-out]').addEventListener('click', logout);
   $('[data-acct]')?.addEventListener('change', e => { S.account = Number(e.target.value); try { localStorage.setItem('portal_account', S.account); } catch {} route(); });
@@ -125,10 +126,10 @@ async function home(view) {
       <div class="p-tile"><div class="label">Monthly service</div><div class="value">${money(d.monthly)}</div><div class="hint">monitoring & service plans</div></div>
     </div>
     <div class="p-actions">
-      ${d.balance > 0 && S.company.online_payments ? html`<a class="p-action primary" href="#/invoices">💳<span>Pay my bill</span></a>` : ''}
-      <a class="p-action" href="#/request">🔧<span>Request service</span></a>
-      <a class="p-action" href="#/equipment">📦<span>Request equipment</span></a>
-      <a class="p-action" href="#/payment-methods">💳<span>Payment method</span></a>
+      ${d.balance > 0 && S.company.online_payments ? html`<a class="p-action primary" href="#/invoices">${icon('credit-card')}<span>Pay my bill</span></a>` : ''}
+      <a class="p-action" href="#/request">${icon('wrench')}<span>Request service</span></a>
+      <a class="p-action" href="#/equipment">${icon('package')}<span>Request equipment</span></a>
+      <a class="p-action" href="#/payment-methods">${icon('credit-card')}<span>Payment method</span></a>
     </div>
     ${d.open_requests.length ? html`<div class="card" style="margin-top:16px"><div class="card-head"><h2>Your requests</h2></div><div class="card-body">${d.open_requests.map(r => html`<div style="padding:4px 0">${r.title} <span class="muted small">· we'll call to confirm a time</span></div>`)}</div></div>` : ''}
     <p class="small muted" style="text-align:center;margin-top:24px">Need help now? ${S.company.phone ? html`Call <a href="tel:${S.company.phone}">${S.company.phone}</a>` : ''}</p>`);
@@ -148,18 +149,8 @@ async function invoice(view, id) {
   mount(view, html`<div class="row no-print" style="justify-content:space-between;margin-bottom:12px"><a href="#/invoices">← Invoices</a>
       <div class="row"><button class="btn sm" data-print>Print / PDF</button>${d.balance > 0 && S.company.online_payments ? html`<button class="btn primary" data-pay>Pay ${money(d.balance)}</button>` : ''}</div></div>
     ${d.balance > 0 && !S.company.online_payments ? html`<div class="note no-print">To pay, mail a check or call us${S.company.phone ? ` at ${S.company.phone}` : ''}.</div>` : ''}
-    <div class="invoice-paper">
-      <div class="head"><div><h2 style="font-size:20px">${d.company.name}</h2><div style="white-space:pre-wrap;color:#555">${d.company.address || ''}</div><div style="color:#555">${[d.company.phone, d.company.email].filter(Boolean).join(' · ')}</div></div>
-        <div style="text-align:right"><h1>INVOICE</h1><div><b>#${d.number}</b></div><div>Issued ${fmtDate(d.issue_date)}</div><div>Due ${fmtDate(d.due_date)}</div>
-          ${['paid', 'overdue'].includes(d.status) ? html`<div style="margin-top:10px"><span class="stamp ${d.status}">${d.status}</span></div>` : ''}</div></div>
-      <div style="margin-top:20px"><div style="font-size:12px;color:#555;text-transform:uppercase">Bill to</div><b>${d.customer.name}</b><div>${d.customer.billing_address || ''}</div><div>${[d.customer.city, d.customer.state].filter(Boolean).join(', ')} ${d.customer.zip || ''}</div></div>
-      <table><thead><tr><th>Description</th><th style="text-align:right">Qty</th><th style="text-align:right">Rate</th><th style="text-align:right">Amount</th></tr></thead>
-        <tbody>${d.items.map(i => html`<tr><td>${i.description}</td><td style="text-align:right">${i.qty}</td><td style="text-align:right">${money(i.unit_price)}</td><td style="text-align:right">${money(i.qty * i.unit_price)}</td></tr>`)}</tbody></table>
-      <div class="totals"><div><span>Subtotal</span><span>${money(d.subtotal)}</span></div><div><span>Tax</span><span>${money(d.tax)}</span></div>
-        <div class="grand"><span>Total</span><span>${money(d.total)}</span></div>${d.paid ? html`<div><span>Paid</span><span>−${money(d.paid)}</span></div>` : ''}<div style="font-weight:700"><span>Balance due</span><span>${money(d.balance)}</span></div></div>
-      ${d.signed ? html`<div class="doc-sign"><div class="doc-sign-label">Work completed and accepted</div><img src="/api/portal/service-calls/${d.signed.call_id}/signature" alt="Signature"><div>${d.signed.by} · ${fmtDateTime(d.signed.at)}</div></div>` : ''}
-      ${d.payments.length ? html`<div style="margin-top:18px;font-size:13px;color:#555">Payments: ${d.payments.map(p => `${fmtDate(p.date)} ${money(p.amount)} (${PAYMENT_METHODS[p.method] || p.method})`).join(' · ')}</div>` : ''}
-      ${d.company.footer ? html`<div style="margin-top:22px;color:#555;white-space:pre-wrap;border-top:1px solid #ddd;padding-top:12px">${d.company.footer}</div>` : ''}</div>`);
+    <div class="doc-frame">${renderInvoice({ ...d, signed: d.signed ? { ...d.signed } : null }, { logoUrl: S.company.logo ? '/api/public/logo' : null, signatureUrl: d.signed ? `/api/portal/service-calls/${d.signed.call_id}/signature` : null })}</div>
+    ${d.payments.length ? html`<div class="small muted" style="margin-top:12px">Payments received: ${d.payments.map(p => `${fmtDate(p.date)} ${money(p.amount)} (${PAYMENT_METHODS[p.method] || p.method})`).join(' · ')}</div>` : ''}`);
   $('[data-print]').addEventListener('click', () => window.print());
   $('[data-pay]')?.addEventListener('click', async () => { try { location.href = (await api('POST', `/api/portal/invoices/${id}/pay`)).url; } catch (e) { toast(e.message, 'error'); } });
 }
@@ -236,10 +227,10 @@ async function paymentMethods(view) {
 
 async function more(view) {
   mount(view, html`<h1 class="p-h1">More</h1><div class="p-list">
-    <a class="p-row" href="#/agreements"><div><b>✍ Agreements & quotes</b><div class="small muted">Review, sign and download</div></div><span>›</span></a>
-    <a class="p-row" href="#/systems"><div><b>🛡 My systems</b><div class="small muted">Cameras, alarm, fire protection and upcoming inspections</div></div><span>›</span></a>
-    <a class="p-row" href="#/equipment"><div><b>📦 Request equipment</b><div class="small muted">Get a quote for something new</div></div><span>›</span></a>
-    <a class="p-row" href="#/profile"><div><b>👤 Contact info & notifications</b><div class="small muted">Phone, address, text/email updates, password</div></div><span>›</span></a></div>`);
+    <a class="p-row" href="#/agreements"><div><b>Agreements & quotes</b><div class="small muted">Review, sign and download</div></div><span>›</span></a>
+    <a class="p-row" href="#/systems"><div><b>My systems</b><div class="small muted">Cameras, alarm, fire protection and upcoming inspections</div></div><span>›</span></a>
+    <a class="p-row" href="#/equipment"><div><b>Request equipment</b><div class="small muted">Get a quote for something new</div></div><span>›</span></a>
+    <a class="p-row" href="#/profile"><div><b>Contact info & notifications</b><div class="small muted">Phone, address, text/email updates, password</div></div><span>›</span></a></div>`);
 }
 
 async function agreements(view) {
