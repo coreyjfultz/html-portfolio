@@ -274,6 +274,10 @@ for (const [name, tag, category, v, cost, status] of [
   if (install) for (const [k, q] of [['cam4k', 4], ['nvr8', 1], ['hdd4', 1], ['cat6', 1]]) C('job_materials', { service_call_id: install.id, item_id: items[k].id, qty: q });
 }
 
+// Northgate's office isn't staffed when techs visit: jobs there don't need a signature.
+db.prepare("UPDATE customers SET no_signature_needed = 1 WHERE name = 'Northgate Self Storage'").run();
+db.prepare("UPDATE service_calls SET signature_waived = 1, signature_waived_by = 'Customer setting (nobody usually on site)' WHERE customer_id = (SELECT id FROM customers WHERE name = 'Northgate Self Storage') AND status <> 'completed'").run();
+
 // Fire: extinguisher tags & ratings, a clean-agent system, and inspection reports.
 {
   db.prepare("UPDATE extinguishers SET tag_number = 'T' || (4100 + id), brand = 'Amerex', mount = CASE WHEN location LIKE '%Kitchen%' THEN 'bracket' ELSE 'wall hook' END, rating = CASE size WHEN '5 lb' THEN '3-A:40-B:C' WHEN '10 lb' THEN '4-A:80-B:C' WHEN '20 lb' THEN '10-A:120-B:C' WHEN '15 lb' THEN '10-B:C' ELSE NULL END").run();

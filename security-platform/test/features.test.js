@@ -40,7 +40,7 @@ const stageOf = id => db.prepare('SELECT stage FROM customers WHERE id = ?').get
 
 test('setup', async () => {
   assert.equal((await owner.post('/api/auth/setup', { name: 'Owner', email: 'owner@example.com', password: 'password123', company_name: 'Test Co' })).status, 200);
-  await owner.put('/api/settings', { require_photos: '0', require_parts: '0' }); // switched on in their own test
+  await owner.put('/api/settings', { require_photos: '0', require_parts: '0', require_signature: '0' }); // switched on in their own tests
   ids.tech = (await owner.post('/api/r/technicians', { name: 'Tess', email: 'tess@example.com' })).data.id;
   ids.tech2 = (await owner.post('/api/r/technicians', { name: 'Bo' })).data.id;
 });
@@ -729,6 +729,50 @@ test('a job can only be completed with before/after photos and parts (or "no par
     assert.equal((await owner.put(`/api/r/service_calls/${est.id}`, { status: 'completed' })).status, 200);
   } finally {
     await owner.put('/api/settings', { require_photos: '0', require_parts: '0' });
+  }
+});
+
+test('customer sign-off is required to complete a job unless an owner/admin pre-approves it (per job, or per customer)', async () => {
+  await owner.put('/api/settings', { require_signature: '1' });
+  const PNGX = 'data:image/png;base64,' + Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, ...Buffer.alloc(40)]).toString('base64');
+  try {
+    const tech = client();
+    await tech.post('/api/auth/login', { email: 'tess-login@example.com', password: 'password123' });
+    const today = new Date().toISOString().slice(0, 10);
+    const job = (await owner.post('/api/r/service_calls', { customer_id: ids.cafe, title: 'Sign-off job', technician_id: ids.tech, scheduled_start: `${today}T21:00`, duration_hours: 0.25, allow_conflict: true })).data;
+    let r = await tech.put(`/api/r/service_calls/${job.id}`, { status: 'completed' });
+    assert.equal(r.data.code, 'completion_rules');
+    assert.match(r.data.error, /customer’s signature/);
+    // A tech can't approve it for themselves
+    await tech.put(`/api/r/service_calls/${job.id}`, { signature_waived: 1 });
+    assert.ok(!db.prepare('SELECT signature_waived FROM service_calls WHERE id = ?').get(job.id).signature_waived, 'ignored for technicians');
+    // Signing first, then completing, works
+    assert.equal((await tech.post(`/api/service_calls/${job.id}/signature`, { name: 'Cafe Manager', image: PNGX })).status, 200);
+    assert.equal((await tech.put(`/api/r/service_calls/${job.id}`, { status: 'completed' })).status, 200);
+
+    // Office pre-approves a job where nobody will be on site
+    const job2 = (await owner.post('/api/r/service_calls', { customer_id: ids.cafe, title: 'After-hours job', technician_id: ids.tech, scheduled_start: `${today}T21:30`, duration_hours: 0.25, allow_conflict: true })).data;
+    const appr = (await owner.put(`/api/r/service_calls/${job2.id}`, { signature_waived: 1 })).data;
+    assert.equal(appr.signature_waived_by, 'Owner');
+    assert.equal((await tech.put(`/api/r/service_calls/${job2.id}`, { status: 'completed' })).status, 200);
+
+    // Customer-level setting: new jobs start pre-approved
+    const tech2 = client();
+    await tech2.post('/api/auth/login', { email: 'tess-login@example.com', password: 'password123' });
+    await tech.put(`/api/r/customers/${ids.cafe}`, { no_signature_needed: 1 });
+    assert.ok(!db.prepare('SELECT no_signature_needed FROM customers WHERE id = ?').get(ids.cafe).no_signature_needed, 'techs can’t change it');
+    await owner.put(`/api/r/customers/${ids.cafe}`, { no_signature_needed: 1 });
+    const job3 = (await owner.post('/api/r/service_calls', { customer_id: ids.cafe, title: 'Night service' })).data;
+    assert.equal(job3.signature_waived, 1);
+    assert.match(job3.signature_waived_by, /Customer setting/);
+    await owner.put(`/api/r/customers/${ids.cafe}`, { no_signature_needed: 0 });
+    // Estimates don't need one; admins can still override at completion with a reason
+    const est = (await owner.post('/api/r/service_calls', { customer_id: ids.cafe, title: 'Survey', call_type: 'estimate' })).data;
+    assert.equal((await owner.put(`/api/r/service_calls/${est.id}`, { status: 'completed' })).status, 200);
+    const job4 = (await owner.post('/api/r/service_calls', { customer_id: ids.cafe, title: 'Override' })).data;
+    assert.equal((await owner.put(`/api/r/service_calls/${job4.id}`, { status: 'completed', override_reason: 'Signed paper ticket instead' })).status, 200);
+  } finally {
+    await owner.put('/api/settings', { require_signature: '0' });
   }
 });
 

@@ -117,6 +117,7 @@ export async function detail(view, [id]) {
           ${c.no_parts_used ? html`<dt>Parts</dt><dd>Tech confirmed no parts were used</dd>` : ''}
           ${c.completion_override ? html`<dt>Rule override</dt><dd>${badge('override', 'warn')} ${c.completion_override}</dd>` : ''}` : ''}
         <dt>Billable</dt><dd>${c.billable ? 'Yes' : 'No (warranty / estimate / no charge)'}</dd>
+        ${!c.signed_by && c.signature_waived ? html`<dt>Customer sign-off</dt><dd>${badge('not needed', 'info')} <span class="small muted">approved by ${c.signature_waived_by || 'the office'}</span></dd>` : ''}
         ${c.signed_by ? html`<dt>Customer sign-off</dt><dd><div class="sig-box"><img src="/api/service_calls/${c.id}/signature?v=${encodeURIComponent(c.signed_at)}" alt="Signature of ${c.signed_by}"></div>
           <div class="small muted">${c.signed_by} · ${fmtDateTime(c.signed_at)}</div></dd>` : ''}
       </dl>
@@ -249,26 +250,31 @@ async function completeDialog(c, cust, { signOnly = false, office = false, parts
         <p class="small muted" style="margin:4px 0 8px">I confirm the work above was completed to my satisfaction.</p>
         <canvas class="sig-pad" data-pad aria-label="Sign here"></canvas>
         <div class="field" style="margin-top:10px"><label for="cd_name">Signer's name</label><input id="cd_name" type="text" value="${cust.contact_name || cust.name}" autocomplete="off"></div>
-        ${signOnly ? '' : html`<label class="row small" style="margin-top:8px"><input type="checkbox" data-nosig> Customer not available to sign</label>`}
+        ${signOnly ? '' : c.signature_waived ? html`<div class="note small" style="margin-top:8px">✔ No signature needed — approved by ${c.signature_waived_by || 'the office'}. Get one anyway if someone is there.</div>`
+          : can.manage() ? html`<label class="check-row small" style="margin-top:8px"><input type="checkbox" data-nosig> <span>Nobody available to sign — I approve completing without a signature</span></label>`
+          : html`<p class="small muted" style="margin:8px 0 0">The customer’s signature is required. If nobody is on site, ask the office to approve “Customer won’t be on site” on this job.</p>`}
       </div>`,
     foot: html`<button class="btn" data-close>Cancel</button><button class="btn primary" data-go>${signOnly ? 'Save signature' : 'Complete job'}</button>`,
   });
   const pad = signaturePad($('[data-pad]', el));
   $('[data-clear]', el).addEventListener('click', () => pad.clear());
   const err = $('[data-err]', el);
+  let signedHere = false;
   $('[data-go]', el).addEventListener('click', async () => {
-    const noSig = $('[data-nosig]', el)?.checked;
+    const noSig = pad.isEmpty() && (c.signature_waived || $('[data-nosig]', el)?.checked);
     const name = $('#cd_name', el).value.trim();
-    if (!noSig && pad.isEmpty()) { err.textContent = signOnly ? 'Please sign in the box.' : 'Have the customer sign, or tick “not available to sign”.'; err.classList.remove('hidden'); return; }
+    if (!noSig && pad.isEmpty()) { err.textContent = signOnly ? 'Please sign in the box.' : 'Have the customer sign in the box.'; err.classList.remove('hidden'); return; }
     $('[data-go]', el).disabled = true;
     try {
+      // Signature first: completing checks that the customer signed.
+      if (!noSig && !signedHere) { await POST(`/api/service_calls/${c.id}/signature`, { name, image: pad.toDataURL() }); signedHere = true; }
       if (!signOnly) {
+        const approve = !c.signature_waived && $('[data-nosig]', el)?.checked && pad.isEmpty() ? `${$('#cd_override', el).value.trim() || 'Customer not available to sign'}` : $('#cd_override', el).value.trim();
         await R.update('service_calls', c.id, {
           status: 'completed', labor_hours: $('#cd_hours', el).value, resolution: $('#cd_res', el).value,
-          no_parts_used: !!$('[data-noparts]', el)?.checked, override_reason: $('#cd_override', el).value.trim() || undefined,
+          no_parts_used: !!$('[data-noparts]', el)?.checked, override_reason: approve || undefined,
         });
       }
-      if (!noSig) await POST(`/api/service_calls/${c.id}/signature`, { name, image: pad.toDataURL() });
       close();
       toast(signOnly ? 'Signature saved' : noSig ? 'Job completed' : 'Job completed and signed');
       onDone?.();

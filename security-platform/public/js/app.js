@@ -1,4 +1,4 @@
-import { html, mount, $, $$, toast, initials, esc, installGlobalHandlers, icon } from './ui.js';
+import { html, mount, $, $$, toast, initials, esc, installGlobalHandlers, icon, setCurrentRole } from './ui.js';
 import { api, GET, POST } from './api.js';
 import { G, ROLE_INFO } from './schema.js';
 import { installDialer } from './dial.js';
@@ -104,6 +104,7 @@ async function boot() {
     if (s.needsSetup) return renderSetup();
     if (!s.user) return renderLogin();
     state.user = s.user;
+    setCurrentRole(s.user.role);
     state.settings = await GET('/api/settings');
     renderShell();
   } catch (e) {

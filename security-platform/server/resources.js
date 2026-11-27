@@ -268,6 +268,8 @@ function cleanInput(def, body, isCreate, user) {
   const data = {};
   for (const f of def.fields) {
     if (f.readonly) continue;
+    // Fields only some roles may set (e.g. approving a job without a signature) are ignored for everyone else.
+    if (f.roles && user && !f.roles.includes(user.role)) continue;
     if (f.type === 'secret') {
       if (body[`${f.name}__clear`]) data[f.name] = null;
       else if (body[f.name]) data[f.name] = encrypt(String(body[f.name]));
@@ -398,6 +400,10 @@ function enforceCompletionRules(db, call, existing, user, body, data) {
     const n = kind => existing ? db.prepare('SELECT COUNT(*) AS n FROM job_photos WHERE service_call_id = ? AND kind = ?').get(existing.id, kind).n : 0;
     if (!n('before')) missing.push('a “before” photo');
     if (!n('after')) missing.push('an “after” photo');
+  }
+  const sigExempt = String(s.signature_exempt_types || '').split(',').map(x => x.trim()).filter(Boolean);
+  if (s.require_signature === '1' && !call.signature_waived && !sigExempt.includes(call.call_type) && !existing?.signed_by) {
+    missing.push('the customer’s signature (or have an owner/admin approve “Customer won’t be on site”)');
   }
   if (s.require_parts === '1' && call.call_type !== 'estimate') {
     const parts = existing ? db.prepare('SELECT COUNT(*) AS n FROM service_call_parts WHERE service_call_id = ?').get(existing.id).n : 0;
@@ -662,6 +668,14 @@ const HOOKS = {
         }
       }
       if (merged.status === 'new' && merged.technician_id && merged.scheduled_start) data.status = 'scheduled';
+      if ('signature_waived' in data && !!data.signature_waived !== !!existing?.signature_waived) {
+        if (!['owner', 'admin'].includes(user?.role)) throw new HttpError(403, 'Only an owner or administrator can approve completing a job without the customer’s signature');
+        data.signature_waived_by = data.signature_waived ? user.name : null;
+      }
+      if (isCreate && !data.signature_waived && db.prepare('SELECT no_signature_needed FROM customers WHERE id = ?').get(data.customer_id)?.no_signature_needed) {
+        data.signature_waived = 1;
+        data.signature_waived_by = 'Customer setting (nobody usually on site)';
+      }
       if (data.status === 'completed' && existing?.status !== 'completed') enforceCompletionRules(db, { ...existing, ...data }, existing, user, body, data);
       if (data.status === 'completed' && !existing?.completed_at) data.completed_at = nowLocal();
       if (data.status && data.status !== 'completed' && existing?.completed_at) data.completed_at = null;

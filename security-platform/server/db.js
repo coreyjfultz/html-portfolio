@@ -39,7 +39,7 @@ export const DEFAULT_SETTINGS = {
   twilio_sid: '', twilio_token: '', twilio_from: '',
   notify_on_schedule: '1', notify_on_way: '1', notify_tech_invites: '1',
   proposal_next_number: '1001',
-  require_photos: '1', require_parts: '1', photo_exempt_types: 'estimate',
+  require_photos: '1', require_parts: '1', photo_exempt_types: 'estimate', require_signature: '1', signature_exempt_types: 'estimate',
   inspection_next_number: '1001', inspector_license: '',
   truck_count_day: '5', truck_count_reminders: '1', inventory_manager_id: '', readiness_required: '1', readiness_spares: '1',
   alert_email: '1', alert_sms: '0', alert_phone: '',

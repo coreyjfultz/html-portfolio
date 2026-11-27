@@ -236,12 +236,16 @@ export function readForm(form, fields) {
  * Open a create/edit form for any resource defined in schema.js.
  * opts: { record, defaults, hide: [fieldNames], title, onSaved(row), allowDelete }
  */
+// The signed-in user's role, so forms can leave out fields they may not set (fields with `roles`).
+let currentRole = null;
+export const setCurrentRole = r => { currentRole = r; };
+
 export async function openForm(resource, opts = {}) {
   const def = RESOURCES[resource];
   const record = opts.record || null;
   const isEdit = !!record?.id;
   const hide = new Set(opts.hide || []);
-  const fields = def.fields.filter(f => !f.hidden && !hide.has(f.name) && !(f.readonly && !isEdit));
+  const fields = def.fields.filter(f => !f.hidden && !hide.has(f.name) && !(f.readonly && !isEdit) && (!f.roles || f.roles.includes(currentRole)));
   const values = {};
   for (const f of def.fields) {
     values[f.name] = isEdit ? record[f.name] : (opts.defaults?.[f.name] ?? fieldDefault(f) ?? null);
