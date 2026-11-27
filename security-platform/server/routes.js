@@ -13,6 +13,8 @@ import { callToEvent, buildCalendar } from './calendar.js';
 import { decodeImage, saveImage, sendImage, removeImage } from './media.js';
 import { sendForSignature, duplicate, publicView, byToken, markViewed, sign, decline, signingUrl } from './proposals.js';
 import { registerPortalRoutes, invite as portalInvite } from './portal.js';
+import { registerTruckStockRoutes } from './truckstock.js';
+import { openAlerts, resolveAlert } from './alerts.js';
 import { putOnTest, clearTest, markConfirmed, logEvent, ingestSignals, stationInfo, CONNECTORS } from './monitoring.js';
 import { stripeConfig, checkoutForInvoice, checkoutForSetup, listMethods, removeMethod, setDefaultMethod, chargeSaved, payLink, handleWebhook } from './payments.js';
 
@@ -373,6 +375,13 @@ export function buildRoutes() {
 
   // ------------------------------------------------------------ customer portal
   registerPortalRoutes(r);
+
+  // ------------------------------------------------------------ truck stock, job materials, start-of-day check
+  registerTruckStockRoutes(r);
+
+  // ------------------------------------------------------------ alerts for the owner / office
+  r('GET', '/api/alerts', G.staff, ({ db, user }) => openAlerts(db, user.role));
+  r('POST', '/api/alerts/:id/resolve', G.staff, ({ db, params, user }) => { resolveAlert(db, params.id, user); return { ok: true }; });
   r('POST', '/api/customers/:id/portal-invite', G.customers, ({ db, params, body, user }) => portalInvite(db, Number(params.id), user, { email: body.email }));
   r('GET', '/api/customers/:id/portal-users', G.customers, ({ db, params }) =>
     db.prepare('SELECT id, name, email, email_verified, active, last_login, created_at FROM portal_users WHERE customer_id = ? ORDER BY id').all(Number(params.id)));

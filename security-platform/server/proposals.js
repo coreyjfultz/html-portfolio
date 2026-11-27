@@ -1,5 +1,6 @@
 // Proposals & agreements: building them, sending a signing link, electronic
 // signature with an audit trail, and what happens automatically once signed.
+import { materialsFromProposal } from './truckstock.js';
 import crypto from 'node:crypto';
 import { getSettings, nextNumber, tx } from './db.js';
 import { HttpError, registerHooks, create, get, list, round2, nowLocal, todayLocal, addDays, setStage } from './resources.js';
@@ -191,6 +192,7 @@ function afterSigned(db, id) {
     }, sys);
     db.prepare('UPDATE proposals SET service_call_id = ? WHERE id = ?').run(call.id, id);
     out.service_call_id = call.id;
+    materialsFromProposal(db, id, call.id);
   }
   if (p.deposit_percent > 0 && p.total > 0) {
     const amount = round2(p.total * p.deposit_percent / 100);

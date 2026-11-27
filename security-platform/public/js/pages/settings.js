@@ -16,7 +16,7 @@ const SETTINGS = [
 export async function render(view, _, query) {
   const tab = query.tab || 'company';
   mount(view, html`<div class="page-head"><div><h1>Settings</h1><div class="sub">Company, users and data</div></div></div>
-    <div class="tabs">${[['company', 'Company & billing'], ['payments', 'Payments'], ['notifications', 'Texts & email'], ['calendars', 'Calendars'], ['receiving', 'Receiving'], ['users', 'Users & logins'], ['audit', 'Activity log'], ['data', 'Backup & data']].map(([k, l]) => html`<button class="${k === tab ? 'on' : ''}" data-tab="${k}">${l}</button>`)}</div>
+    <div class="tabs">${[['company', 'Company & billing'], ['payments', 'Payments'], ['notifications', 'Texts & email'], ['calendars', 'Calendars'], ['receiving', 'Receiving'], ['field', 'Field rules'], ['users', 'Users & logins'], ['audit', 'Activity log'], ['data', 'Backup & data']].map(([k, l]) => html`<button class="${k === tab ? 'on' : ''}" data-tab="${k}">${l}</button>`)}</div>
     <div data-pane></div>`);
   $$('[data-tab]', view).forEach(b => b.addEventListener('click', () => { location.hash = `#/settings?tab=${b.dataset.tab}`; }));
   const pane = $('[data-pane]', view);
@@ -182,6 +182,32 @@ export async function render(view, _, query) {
     });
   }
 
+  if (tab === 'field') {
+    const [s, users] = await Promise.all([GET('/api/settings'), GET('/api/users')]);
+    mount(pane, settingsCards(s, [
+      { title: 'Completing a job', fields: [
+        ['require_photos', 'Require at least one “before” and one “after” photo', 'check'],
+        ['photo_exempt_types', 'Job types that don’t need photos (comma-separated)', 'text', 'e.g. estimate, warranty'],
+        ['require_parts', 'Require the parts used to be recorded, or “No parts used” ticked', 'check'],
+      ], note: 'Owners and administrators can still complete a job without them by giving a reason, which is saved on the job.' },
+      { title: 'Truck stock', fields: [
+        ['truck_count_day', 'Weekly truck count day', 'select', ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'].map((d, i) => [String(i), d])],
+        ['truck_count_reminders', 'Text each tech a reminder on count day; flag trucks that are overdue', 'check'],
+        ['inventory_manager_id', 'Inventory manager (also gets count results)', 'select', [['', '— Owner only —'], ...users.filter(u => u.active).map(u => [String(u.id), `${u.name} (${u.role})`])]],
+      ] },
+      { title: 'Start-of-day check', fields: [
+        ['readiness_required', 'Technicians must confirm their equipment before starting their first job', 'check'],
+        ['readiness_spares', 'Spares to carry beyond what the jobs need', 'number'],
+      ], note: 'Only an owner or administrator can let a technician start without a completed check (Truck stock → Start-of-day checks).' },
+      { title: 'Alerts to the owner', fields: [
+        ['alert_email', 'Email alerts to the owner(s)', 'check'],
+        ['alert_sms', 'Also text important alerts', 'check'],
+        ['alert_phone', 'Owner mobile for alert texts', 'tel'],
+      ], note: 'Alerts: truck count differences and missing tools, techs short on equipment, clock-ins away from the office.' },
+    ]));
+    wireSettingsCards(pane);
+  }
+
   if (tab === 'users') {
     const [users, techs] = await Promise.all([GET('/api/users'), R.list('technicians')]);
     const techOpts = [{ value: '', label: '— not a technician —' }, ...techs.map(t => ({ value: t.id, label: t.name }))];
@@ -269,4 +295,31 @@ export async function account(view) {
     try { await POST('/api/auth/password', { current: f.current.value, password: f.password.value }); toast('Password updated'); f.reset(); }
     catch (err) { toast(err.message, 'error'); }
   });
+}
+
+// Small helper for settings tabs that are just a few switches and fields.
+export function settingsCards(s, cards) {
+  const field = ([k, label, type, opts]) => {
+    if (type === 'check') return html`<label class="row"><input type="checkbox" name="${k}" ${s[k] === '1' ? raw('checked') : ''}> <span>${label}</span></label>`;
+    if (type === 'select') return html`<div class="field"><label for="st_${k}">${label}</label><select id="st_${k}" name="${k}">${opts.map(([v, l]) => html`<option value="${v}" ${String(s[k] ?? '') === v ? raw('selected') : ''}>${l}</option>`)}</select></div>`;
+    if (type === 'secret') return html`<div class="field"><label for="st_${k}">${label}</label><input id="st_${k}" name="${k}" type="password" autocomplete="off" placeholder="${s[k] ? '•••••••• (saved — leave blank to keep)' : ''}"></div>`;
+    return html`<div class="field"><label for="st_${k}">${label}</label><input id="st_${k}" name="${k}" type="${type || 'text'}" value="${s[k] ?? ''}" ${type === 'number' ? raw('step="any"') : ''} placeholder="${typeof opts === 'string' ? opts : ''}" autocomplete="off"></div>`;
+  };
+  return html`<div class="grid g2">${cards.map(c => html`<div class="card ${c.wide ? 'span2' : ''}" ${c.wide ? raw('style="grid-column:1/-1"') : ''}><div class="card-head"><h2>${c.title}</h2></div><div class="card-body">
+    ${c.intro || ''}<form class="stack" data-settings style="gap:12px">${c.fields.map(field)}
+    ${c.note ? html`<p class="small muted" style="margin:0">${c.note}</p>` : ''}
+    <div><button class="btn primary" type="submit">Save</button></div></form>${c.extra || ''}</div></div>`)}</div>`;
+}
+export function wireSettingsCards(pane, onSaved) {
+  $$('[data-settings]', pane).forEach(f => f.addEventListener('submit', async e => {
+    e.preventDefault();
+    const body = {};
+    for (const el of f.elements) {
+      if (!el.name) continue;
+      if (el.type === 'checkbox') body[el.name] = el.checked ? '1' : '0';
+      else if (el.type === 'password') { if (el.value) body[el.name] = el.value; }
+      else body[el.name] = el.value;
+    }
+    try { state.settings = await PUT('/api/settings', body); toast('Saved'); onSaved?.(); } catch (err) { toast(err.message, 'error'); }
+  }));
 }

@@ -95,6 +95,7 @@ const SCOPE_SQL = {
   monitoring_zones: '(SELECT customer_id FROM monitoring_accounts m WHERE m.id = t.account_id)',
   monitoring_contacts: '(SELECT customer_id FROM monitoring_accounts m WHERE m.id = t.account_id)',
   service_call_parts: '(SELECT customer_id FROM service_calls s WHERE s.id = t.service_call_id)',
+  job_materials: '(SELECT customer_id FROM service_calls s WHERE s.id = t.service_call_id)',
 };
 export const isScoped = user => user?.role === 'technician';
 function scopeExpr(name) {

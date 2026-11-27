@@ -2,6 +2,8 @@ import { html, mount, $, money, num, fmtDate, badge, relDays, dataTable, openFor
 import { R, GET } from '../api.js';
 import { can, refresh } from '../app.js';
 import { transferStock, countStock, movesTable } from './inventory.js';
+import { truckCard } from './truckstock.js';
+import { state } from '../app.js';
 
 const due = d => d ? html`<span style="${d < new Date().toISOString().slice(0, 10) ? 'color:var(--bad);font-weight:600' : ''}">${fmtDate(d)}</span><div class="small muted">${relDays(d)}</div>` : '—';
 
@@ -57,6 +59,7 @@ export async function detail(view, [id]) {
             ...(office ? [{ label: 'Value', render: s => money(s.qty * (s.unit_cost || 0)), cls: 'num' }] : []),
             { label: '', cls: 'actions-cell', render: s => html`${office ? html`<button class="btn sm ghost" data-cnt="${s.item_id}">Count</button>` : ''}` },
           ] })}</div></div>
+      <div class="card" style="grid-column:1/-1" data-truck></div>
       ${office ? html`<div class="card span2" style="grid-column:1/-1"><div class="card-head"><h2>Vehicle expenses</h2>
           <button class="btn sm" data-exp>+ Expense</button></div><div class="card-body flush">${dataTable({
         rows: expenses, empty: 'No expenses recorded for this vehicle.',
@@ -67,6 +70,7 @@ export async function detail(view, [id]) {
       <div class="card" style="grid-column:1/-1"><div class="card-head"><h2>Stock movements</h2></div><div class="card-body flush">${movesTable(moves, true)}</div></div>
     </div>`);
   $('[data-edit]', view)?.addEventListener('click', () => openForm('vehicles', { record: v, onSaved: refresh, onDeleted: () => { location.hash = '#/vehicles'; } }));
+  truckCard($('[data-truck]', view), v, { mine: !!state.user.technician_id && v.assigned_technician_id === state.user.technician_id });
   $('[data-load]', view).addEventListener('click', () => transferStock(items, null, refresh, { from: 0, to: v.id }));
   $('[data-unload]', view).addEventListener('click', () => transferStock(items, onBoard[0]?.item_id, refresh, { from: v.id, to: 0 }));
   $('[data-exp]', view)?.addEventListener('click', () => openForm('expenses', { defaults: { vehicle_id: v.id, category: 'Vehicle maintenance' }, onSaved: refresh }));

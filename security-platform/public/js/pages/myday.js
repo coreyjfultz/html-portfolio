@@ -2,6 +2,7 @@ import { html, mount, $, fmtTime, fmtDateTime, badge, typeBadge, num, dataTable,
 import { R, GET } from '../api.js';
 import { state } from '../app.js';
 import { transferStock } from './inventory.js';
+import { readinessCard, countDialog } from './truckstock.js';
 import { callsTable } from './calls.js';
 
 export async function render(view) {
@@ -20,7 +21,8 @@ export async function render(view) {
     R.list('inventory_items', { active: 1 }),
   ]);
   const truck = vehicles[0];
-  const stock = truck ? await GET('/api/stock', { location_id: truck.id }) : [];
+  const [stock, lastCount] = truck ? await Promise.all([GET('/api/stock', { location_id: truck.id }), GET(`/api/vehicles/${truck.id}/truck-stock`).then(d => d.counts[0])]) : [[], null];
+  const countDue = truck && (!lastCount || (Date.now() - new Date(lastCount.created_at.replace(' ', 'T'))) / 86400e3 >= 7);
   calls.sort((a, b) => (a.scheduled_start || '').localeCompare(b.scheduled_start || ''));
   upcoming.sort((a, b) => a.scheduled_start.localeCompare(b.scheduled_start));
 
@@ -28,6 +30,8 @@ export async function render(view) {
     <div class="page-head"><div><h1>My day</h1><div class="sub">${new Date().toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' })} · ${calls.length} job${calls.length === 1 ? '' : 's'} today</div></div>
       <div class="actions"><button class="btn" data-sync>Add to my phone calendar</button><a class="btn" href="#/calendar">My calendar</a><a class="btn" href="#/calls?new=1">+ Service call</a></div></div>
     <div class="stack">
+      <div class="card hidden" data-ready></div>
+      ${countDue ? html`<div class="banner warn row" style="justify-content:space-between">🧮 Weekly truck count is due for ${truck.unit_name}${lastCount ? '' : ' (never counted)'}. <button class="btn sm primary" data-count>Count my truck</button></div>` : ''}
       ${calls.length ? calls.map(c => html`<a class="card" href="#/calls/${c.id}" style="display:block;color:inherit;text-decoration:none;border-left:5px solid ${c.priority === 'emergency' ? 'var(--bad)' : c.technician_color || 'var(--primary)'}">
           <div class="card-body"><div class="row" style="justify-content:space-between">
             <b style="font-size:16px">${fmtTime(c.scheduled_start)} · ${c.customer_id_label}</b><span>${badge(c.status)} ${c.priority !== 'normal' ? badge(c.priority) : ''}</span></div>
@@ -45,4 +49,6 @@ export async function render(view) {
     </div>`);
   $('[data-sync]', view).addEventListener('click', async () => (await import('./calendar.js')).syncDialog());
   $('[data-load]', view)?.addEventListener('click', () => transferStock(items, null, () => render(view), { from: 0, to: truck.id }));
+  $('[data-count]', view)?.addEventListener('click', () => countDialog(truck, () => render(view)));
+  readinessCard($('[data-ready]', view), techId);
 }

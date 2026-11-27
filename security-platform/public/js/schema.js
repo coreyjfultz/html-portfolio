@@ -278,8 +278,41 @@ export const RESOURCES = {
       { name: 'unit_cost', label: 'Unit cost', type: 'money', list: true },
       { name: 'unit_price', label: 'Sell price', type: 'money', list: true },
       { name: 'reorder_level', label: 'Reorder when total below', type: 'number', default: 0 },
+      { name: 'truck_min', label: 'Standard truck stock (per vehicle)', type: 'number', default: 0, help: 'Every truck should carry at least this many. 0 = not standard truck stock.' },
+      { name: 'truck_max', label: 'Most to keep on a truck', type: 'number', help: 'Keeps extras low: more than this gets flagged to go back to the warehouse. Blank = standard + 1.' },
       { name: 'vendor_skus', label: 'Distributor part #s', type: 'text', full: true, help: 'Other part numbers this item appears under on supplier invoices, comma-separated. Learned automatically when you match an invoice line.' },
       { name: 'active', label: 'Active', type: 'checkbox', default: 1 },
+      { name: 'notes', label: 'Notes', type: 'textarea', full: true },
+    ],
+  },
+
+  // Per-vehicle exceptions to the standard truck stock (e.g. the fire truck carries more pull stations).
+  truck_par: {
+    label: 'Truck stock exceptions', singular: 'Truck stock exception', labelExpr: "'exception'",
+    read: ALL, write: G.billing, order: 'id',
+    fields: [
+      { name: 'vehicle_id', label: 'Vehicle', type: 'ref', ref: 'vehicles', required: true, onDelete: 'cascade', list: true },
+      { name: 'item_id', label: 'Item', type: 'ref', ref: 'inventory_items', required: true, onDelete: 'cascade', list: true },
+      { name: 'min_qty', label: 'Keep at least', type: 'number', required: true, default: 1, list: true, help: '0 = this truck does not carry it' },
+      { name: 'max_qty', label: 'Most to keep', type: 'number', list: true, help: 'Blank = at least + 1' },
+    ],
+  },
+
+  // Tools & equipment the company owns (ladders, meters, drills). Counted weekly with the truck.
+  tools: {
+    label: 'Tools', singular: 'Tool', labelExpr: "name || CASE WHEN COALESCE(tag,'') <> '' THEN ' #' || tag ELSE '' END",
+    read: ALL, write: G.billing, order: 'name', search: ['name', 'tag', 'serial', 'category', 'notes'],
+    fields: [
+      { name: 'name', label: 'Tool', type: 'text', required: true, list: true },
+      { name: 'tag', label: 'Asset tag', type: 'text', list: true },
+      { name: 'category', label: 'Category', type: 'select', options: ['hand tools', 'power tools', 'meters & testers', 'ladders & lifts', 'fire service', 'network & camera', 'safety', 'other'], default: 'hand tools', list: true },
+      { name: 'vehicle_id', label: 'Kept on vehicle', type: 'ref', ref: 'vehicles', onDelete: 'set null', list: true, help: 'Blank = warehouse / shop' },
+      { name: 'qty', label: 'Qty', type: 'number', default: 1, list: true },
+      { name: 'status', label: 'Status', type: 'select', options: ['in service', 'needs repair', 'missing', 'retired'], default: 'in service', list: true },
+      { name: 'serial', label: 'Serial #', type: 'text' },
+      { name: 'purchase_date', label: 'Purchased', type: 'date' },
+      { name: 'cost', label: 'Cost', type: 'money' },
+      { name: 'last_counted', label: 'Last counted', type: 'date', readonly: true, list: true },
       { name: 'notes', label: 'Notes', type: 'textarea', full: true },
     ],
   },
@@ -494,6 +527,22 @@ export const RESOURCES = {
       { name: 'signed_by', label: 'Signed off by', type: 'text', readonly: true },
       { name: 'signed_at', label: 'Signed', type: 'datetime', readonly: true },
       { name: 'signature_key', label: 'Signature image', type: 'text', readonly: true, hidden: true },
+    ],
+  },
+
+  // Equipment planned for a job: picked from the warehouse onto the tech's truck before the day starts.
+  job_materials: {
+    label: 'Job materials', singular: 'Material', labelExpr: "'material'",
+    read: ALL, write: ALL, order: 'id',
+    fields: [
+      { name: 'service_call_id', label: 'Service call', type: 'ref', ref: 'service_calls', required: true, onDelete: 'cascade' },
+      { name: 'item_id', label: 'Item', type: 'ref', ref: 'inventory_items', required: true, list: true },
+      { name: 'qty', label: 'Qty needed', type: 'number', required: true, default: 1, list: true },
+      { name: 'status', label: 'Status', type: 'select', options: ['needed', 'checked out', 'returned'], default: 'needed', list: true, readonly: true },
+      { name: 'checked_out_qty', label: 'Checked out', type: 'number', default: 0, readonly: true },
+      { name: 'checked_out_to', label: 'Checked out to', type: 'location', readonly: true },
+      { name: 'checked_out_by', label: 'Checked out by', type: 'text', readonly: true },
+      { name: 'notes', label: 'Notes', type: 'text' },
     ],
   },
 

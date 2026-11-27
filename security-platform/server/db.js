@@ -40,6 +40,8 @@ export const DEFAULT_SETTINGS = {
   notify_on_schedule: '1', notify_on_way: '1', notify_tech_invites: '1',
   proposal_next_number: '1001',
   require_photos: '1', require_parts: '1', photo_exempt_types: 'estimate',
+  truck_count_day: '5', truck_count_reminders: '1', inventory_manager_id: '', readiness_required: '1', readiness_spares: '1',
+  alert_email: '1', alert_sms: '0', alert_phone: '',
   stripe_secret: '', stripe_webhook_secret: '', stripe_ach: '1',
   qbo_client_id: '', qbo_client_secret: '', qbo_environment: 'sandbox', qbo_realm_id: '', qbo_company_name: '',
   qbo_access: '', qbo_refresh: '', qbo_access_expires: '', qbo_item_id: '', qbo_tax_item_id: '', qbo_auto_sync: '1', qbo_last_sync: '',
@@ -180,6 +182,42 @@ function migrate(db) {
       created_at TEXT NOT NULL DEFAULT (datetime('now','localtime'))
     );
     CREATE INDEX IF NOT EXISTS idx_grants_user ON tech_access_grants(user_id, expires_at);
+    -- Weekly truck counts: what the tech found vs. what the system expected.
+    CREATE TABLE IF NOT EXISTS truck_counts (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      vehicle_id INTEGER NOT NULL REFERENCES vehicles(id) ON DELETE CASCADE,
+      user_id INTEGER, user_name TEXT,
+      lines INTEGER NOT NULL DEFAULT 0, variance_lines INTEGER NOT NULL DEFAULT 0,
+      variance_units REAL NOT NULL DEFAULT 0, variance_value REAL NOT NULL DEFAULT 0,
+      missing_tools INTEGER NOT NULL DEFAULT 0, notes TEXT,
+      reviewed_by TEXT, reviewed_at TEXT,
+      created_at TEXT NOT NULL DEFAULT (datetime('now','localtime'))
+    );
+    CREATE INDEX IF NOT EXISTS idx_truck_counts_vehicle ON truck_counts(vehicle_id, created_at);
+    CREATE TABLE IF NOT EXISTS truck_count_lines (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      count_id INTEGER NOT NULL REFERENCES truck_counts(id) ON DELETE CASCADE,
+      item_id INTEGER, tool_id INTEGER, name TEXT,
+      expected REAL, counted REAL, unit_cost REAL, condition TEXT
+    );
+    -- Start-of-day check: the tech confirms they have what today's jobs need.
+    CREATE TABLE IF NOT EXISTS readiness_checks (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      technician_id INTEGER NOT NULL REFERENCES technicians(id) ON DELETE CASCADE,
+      day TEXT NOT NULL, status TEXT NOT NULL CHECK (status IN ('ready','short','approved')),
+      missing TEXT, user_name TEXT, approved_by TEXT, reason TEXT,
+      created_at TEXT NOT NULL DEFAULT (datetime('now','localtime'))
+    );
+    CREATE INDEX IF NOT EXISTS idx_readiness ON readiness_checks(technician_id, day);
+    -- Things the owner/office should look at (inventory variance, clock-ins away from the office…).
+    CREATE TABLE IF NOT EXISTS alerts (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      kind TEXT NOT NULL, severity TEXT NOT NULL DEFAULT 'warn', title TEXT NOT NULL, body TEXT, link TEXT,
+      roles TEXT NOT NULL DEFAULT 'owner,admin',
+      resolved_at TEXT, resolved_by TEXT,
+      created_at TEXT NOT NULL DEFAULT (datetime('now','localtime'))
+    );
+    CREATE INDEX IF NOT EXISTS idx_alerts_open ON alerts(resolved_at, created_at);
     CREATE TABLE IF NOT EXISTS monitoring_events (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       account_id INTEGER NOT NULL REFERENCES monitoring_accounts(id) ON DELETE CASCADE,

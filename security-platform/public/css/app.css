@@ -597,3 +597,17 @@ table.t tr.click:hover td { background: #f8faff; }
 .checklist .ok .mark { background: var(--good-bg, #dcfce7); color: var(--good, #15803d); }
 .checklist .todo .mark { background: var(--warn-bg, #fef3c7); color: var(--warn, #b45309); }
 .checklist .todo { color: var(--text); }
+
+/* Truck counts, start-of-day check, alerts */
+.count-grid { display: grid; gap: 6px; }
+.count-line { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 8px 10px; border: 1px solid var(--border); border-radius: 10px; }
+.count-line > span { display: flex; flex-direction: column; }
+.count-line input, .count-line select { width: 110px; flex: none; }
+.ready-line { display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap; padding: 8px 10px; border: 1px solid var(--border); border-radius: 10px; }
+.seg { display: inline-flex; gap: 4px; }
+.seg label { display: inline-flex; align-items: center; gap: 4px; padding: 6px 10px; border: 1px solid var(--border); border-radius: 8px; cursor: pointer; font-size: 13px; }
+.seg label:has(input:checked) { border-color: var(--primary); background: var(--primary-soft, rgba(37,99,235,.08)); }
+.alert-row { display: flex; justify-content: space-between; gap: 12px; align-items: flex-start; padding: 10px 12px; border-radius: 10px; border: 1px solid var(--border); border-left: 4px solid var(--warn); }
+.alert-row.bad { border-left-color: var(--bad); }
+.alert-row.info { border-left-color: var(--info); }
+@media (max-width: 640px) { .count-line input, .count-line select { width: 90px; } .alert-row { flex-direction: column; } }

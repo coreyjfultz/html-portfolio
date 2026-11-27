@@ -5,6 +5,7 @@ import { create, update, adjustStock, todayLocal, addDays, addMonths } from './r
 import { hashPassword } from './security.js';
 import { ingest, processInvoice } from './receiving.js';
 import { sendForSignature } from './proposals.js';
+import { submitCount, countSheet } from './truckstock.js';
 import { logEvent, putOnTest } from './monitoring.js';
 
 const db = openDb();
@@ -65,6 +66,8 @@ for (const [key, sku, name, category, cost, price, reorder] of [
   ['cat6', 'CBL-CAT6-1K', 'Cat6 cable, 1000 ft', 'cable & wire', 115, 210, 4],
   ['bat', 'BAT-12V7', '12V 7Ah backup battery', 'power & batteries', 16, 39, 20],
 ]) items[key] = C('inventory_items', { sku, name, category, unit_cost: cost, unit_price: price, reorder_level: reorder });
+// Standard truck stock: what every truck carries (a spare or two, not a pile of extras).
+for (const [k, min, max] of [['bat', 4, 6], ['door', 8, 12], ['pir', 3, 4], ['smoke', 3, 4], ['cat6', 1, 1], ['cam4k', 2, 3]]) update(db, 'inventory_items', items[k].id, { truck_min: min, truck_max: max }, sys);
 
 const stockPlan = { cam4k: [24, 4, 6, 0], cam5mp: [8, 2, 4, 0], nvr8: [4, 0, 1, 0], nvr16: [1, 0, 1, 0], hdd4: [6, 0, 2, 0], panel: [5, 1, 0, 2],
   door: [60, 10, 0, 20], pir: [12, 2, 0, 6], smoke: [30, 12, 0, 2], pull: [4, 3, 0, 0], horn: [6, 6, 0, 0], ext10: [6, 2, 0, 6], ext5: [10, 0, 0, 4], cat6: [3, 1, 2, 1], bat: [25, 6, 2, 8] };
@@ -249,6 +252,24 @@ putOnTest(db, m4.id, { minutes: 240, reason: 'Smoke detector replacement in Oper
   sendForSignature(db, p1.id, sys, { email: false });
   const p2 = C('proposals', { customer_id: com2.id, kind: 'monitoring agreement', title: 'Access control expansion — Building C', intro: 'Add two card readers with door strikes at Building C entrances, tied into the existing access control cloud account.', monthly_amount: 20, monthly_description: 'Additional access control doors', term_months: 36 });
   C('proposal_items', { proposal_id: p2.id, description: 'Card reader + strike + REX, installed', qty: 2, unit_price: 1150, taxable: 1 });
+// Tools, a past weekly count and materials picked for an upcoming install.
+for (const [name, tag, category, v, cost, status] of [
+  ['8 ft fiberglass ladder', 'L-01', 'ladders & lifts', v1, 189, 'in service'], ['28 ft extension ladder', 'L-02', 'ladders & lifts', v2, 420, 'in service'],
+  ['Fluke multimeter', 'M-01', 'meters & testers', v1, 260, 'in service'], ['Smoke detector tester (aerosol pole kit)', 'F-01', 'fire service', v1, 340, 'in service'],
+  ['Cable tester / toner', 'N-01', 'network & camera', v2, 140, 'in service'], ['Hammer drill', 'P-01', 'power tools', v2, 230, 'needs repair'],
+  ['Impact driver', 'P-02', 'power tools', v3, 160, 'in service'], ['Fish tape 100 ft', 'H-01', 'hand tools', v3, 55, 'in service'],
+  ['Camera test monitor', 'N-02', 'network & camera', null, 310, 'in service'], ['Scissor lift (rental return)', 'S-01', 'ladders & lifts', null, 0, 'retired'],
+]) C('tools', { name, tag, category, vehicle_id: v?.id ?? null, cost, status, purchase_date: addMonths(today, -18) });
+{
+  const jenUser = { id: db.prepare("SELECT id FROM users WHERE email = 'jen@demo.local'").get()?.id, name: 'Jen Park', role: 'technician', technician_id: jen.id };
+  const truck2 = db.prepare('SELECT * FROM vehicles WHERE id = ?').get(v2.id);
+  const toolsOn = db.prepare("SELECT id FROM tools WHERE vehicle_id = ? AND status <> 'retired'").all(v2.id);
+  submitCount(db, truck2, { items: countSheet(db, truck2).items.map((r, i, all) => ({ item_id: r.item_id, counted: Math.max(0, r.expected - (r === all.find(x => x.expected > 0) ? 1 : 0)) })), tools: toolsOn.map(t => ({ tool_id: t.id, condition: 'ok' })), notes: 'One short — maybe left at the Olsen job' }, jenUser);
+  db.prepare("UPDATE truck_counts SET created_at = datetime('now','localtime','-3 days')").run();
+  const install = db.prepare("SELECT id FROM service_calls WHERE call_type = 'installation' AND status IN ('scheduled','new') ORDER BY scheduled_start LIMIT 1").get();
+  if (install) for (const [k, q] of [['cam4k', 4], ['nvr8', 1], ['hdd4', 1], ['cat6', 1]]) C('job_materials', { service_call_id: install.id, item_id: items[k].id, qty: q });
+}
+
 });
 
 // A demo customer-portal login (Tom & Linda Becker)
