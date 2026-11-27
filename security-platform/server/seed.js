@@ -8,6 +8,7 @@ import { sendForSignature } from './proposals.js';
 import { submitCount, countSheet } from './truckstock.js';
 import { createReport, completeReport } from './inspections.js';
 import { allItems } from '../public/js/inspections.js';
+import { VEHICLE_ITEMS } from '../public/js/vehicle-checks.js';
 import { logEvent, putOnTest } from './monitoring.js';
 
 const db = openDb();
@@ -317,6 +318,16 @@ db.prepare("UPDATE service_calls SET signature_waived = 1, signature_waived_by =
     const job = C('service_calls', { customer_id: rosie.id, title: 'Annual extinguisher inspection', call_type: 'inspection', system_type: 'extinguisher', technician_id: mike.id, scheduled_start: `${today}T07:00`, duration_hours: 1, allow_conflict: true, notify: false });
     createReport(db, { customer_id: rosie.id, report_type: 'extinguishers', service_call_id: job.id }, mikeUser);
   }
+}
+
+// Vehicle checks: tire targets, Jen's truck checked this morning, Mike's yesterday with a problem.
+{
+  db.prepare("UPDATE vehicles SET tire_psi = CASE WHEN unit_name LIKE 'Truck%' THEN 65 ELSE 55 END").run();
+  const ok = Object.fromEntries(VEHICLE_ITEMS.map(i => [i.id, i.kind === 'tires' ? { psi: { fl: 55, fr: 55, rl: 56, rr: 55 }, r: 'ok' } : { r: 'ok', note: '' }]));
+  const ins = db.prepare('INSERT INTO vehicle_checks (vehicle_id, user_id, user_name, technician_id, odometer, items, photos, issues, status, created_at) VALUES (?,?,?,?,?,?,?,?,?,?)');
+  ins.run(v2.id, null, 'Jen Park', jen.id, 77462, JSON.stringify(ok), '[]', 0, 'ok', `${today} 07:12:00`);
+  const bad = { ...ok, tire_psi: { psi: { fl: 65, fr: 64, rl: 58, rr: 65 }, r: 'issue', note: '' }, wipers: { r: 'issue', note: 'Driver-side wiper blade streaking' } };
+  ins.run(v1.id, null, 'Mike Alvarez', mike.id, 48190, JSON.stringify(bad), '[]', 2, 'issues', `${day(-1)} 07:05:00`);
 }
 
 // Map points around Springfield, OH for customers/sites, and live truck positions.

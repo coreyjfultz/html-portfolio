@@ -18,6 +18,7 @@ import { registerTimeClockRoutes } from './timeclock.js';
 import { registerPhoneRoutes, onCallFeedEvents } from './phone.js';
 import { registerTrackingRoutes } from './tracking.js';
 import { registerInspectionRoutes } from './inspections.js';
+import { registerVehicleCheckRoutes } from './vehiclechecks.js';
 import { requestOrigin } from './net.js';
 import { runBackup, listBackups } from './backup.js';
 import { openAlerts, resolveAlert } from './alerts.js';
@@ -395,6 +396,9 @@ export function buildRoutes() {
 
   // ------------------------------------------------------------ fire inspection reports
   registerInspectionRoutes(r);
+
+  // ------------------------------------------------------------ vehicle checklist
+  registerVehicleCheckRoutes(r);
 
   // ------------------------------------------------------------ alerts for the owner / office
   r('GET', '/api/alerts', G.staff, ({ db, user }) => openAlerts(db, user.role));

@@ -667,3 +667,7 @@ table.t tr.click:hover td { background: #f8faff; }
 .ir-form .seg label { position: relative; min-width: 56px; justify-content: center; padding: 8px 12px; }
 .ir-form .seg { flex-wrap: wrap; }
 @media (max-width: 760px) { .ir-dev { grid-template-columns: 1fr 1fr; } .ir-dev .seg { grid-column: 1 / -1; } .ir-dev .ir-addr { grid-column: auto; } }
+
+.tire-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; }
+.tire-grid label { display: grid; gap: 4px; }
+@media (max-width: 520px) { .tire-grid { grid-template-columns: 1fr 1fr; } }

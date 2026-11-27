@@ -461,4 +461,49 @@ test('vehicle tracking (Samsara / push feed), address lookup, drive times, and t
   }
 });
 
+test('vehicle checklist: every item answered, problems need a note (and photos for damage), alerts the office, gates the first job', async () => {
+  const JPG = Buffer.from([0xff, 0xd8, 0xff, 0xe0, ...Buffer.alloc(200)]).toString('base64');
+  await owner.put(`/api/r/vehicles/${ids.truck}`, { tire_psi: 65, mileage: 40000 });
+  db.prepare('DELETE FROM vehicle_checks').run();
+  let st = (await tech.get(`/api/vehicles/${ids.truck}/checks`)).data;
+  assert.equal(st.due, true);
+  assert.equal((await tech.get(`/api/vehicles/${ids.truck2}/checks`)).status, 403, "not someone else's truck");
+
+  // Can't start a job until the truck is checked (start-of-day equipment check already done)
+  db.prepare('DELETE FROM readiness_checks WHERE technician_id = ?').run(ids.tech);
+  db.prepare("INSERT INTO readiness_checks (technician_id, day, status, user_name) VALUES (?, ?, 'ready', 'Tess')").run(ids.tech, today());
+  const job = (await owner.post('/api/r/service_calls', { customer_id: ids.cust, title: 'Vehicle-check gate', technician_id: ids.tech, scheduled_start: `${today()}T23:45`, duration_hours: 0.1, allow_conflict: true })).data;
+  let r = await tech.post(`/api/service_calls/${job.id}/on-my-way`, {});
+  assert.equal(r.data.code, 'readiness_required');
+  assert.match(r.data.error, /vehicle check on Truck 1/);
+
+  const { VEHICLE_ITEMS } = await import('../public/js/vehicle-checks.js');
+  const items = Object.fromEntries(VEHICLE_ITEMS.map(i => [i.id, i.kind === 'tires' ? { psi: { fl: 65, fr: 64, rl: 66, rr: 65 } } : { r: 'ok' }]));
+  assert.equal((await tech.post(`/api/vehicles/${ids.truck}/checks`, { items: { oil: { r: 'ok' } } })).status, 400, 'everything must be answered');
+  assert.match((await tech.post(`/api/vehicles/${ids.truck}/checks`, { items: { ...items, oil: { r: 'issue' } } })).data.error, /Say what’s wrong: Engine oil/);
+  assert.match((await tech.post(`/api/vehicles/${ids.truck}/checks`, { items: { ...items, damage: { r: 'issue', note: 'Dent rear bumper' } } })).data.error, /photo of the damage/);
+  assert.match((await tech.post(`/api/vehicles/${ids.truck}/checks`, { items, odometer: 39000 })).data.error, /can’t be lower/);
+  r = await tech.post(`/api/vehicles/${ids.truck}/checks`, {
+    items: { ...items, tire_psi: { psi: { fl: 65, fr: 52, rl: 66, rr: 65 } }, damage: { r: 'issue', note: 'Dent rear bumper' } },
+    photos: [JPG], odometer: 41234,
+  });
+  assert.equal(r.status, 200);
+  assert.equal(r.data.status, 'issues');
+  assert.equal(r.data.issues.length, 2);
+  assert.match(r.data.issues[0], /Front right 52 psi/);
+  assert.equal(db.prepare('SELECT mileage FROM vehicles WHERE id = ?').get(ids.truck).mileage, 41234, 'mileage updated');
+  const alert = (await owner.get('/api/alerts')).data.find(a => a.kind === 'vehicle_check');
+  assert.match(alert.title, /Truck 1: 2 problems/);
+  assert.equal(alert.severity, 'bad', 'damage is serious');
+  st = (await tech.get(`/api/vehicles/${ids.truck}/checks`)).data;
+  assert.equal(st.due, false);
+  assert.equal((await tech.call('GET', st.checks[0].photos[0], undefined, { raw: true })).status, 200);
+  assert.equal((await tech.post(`/api/service_calls/${job.id}/on-my-way`, {})).status, 200, 'checked → can go');
+  await owner.post(`/api/vehicle-checks/${st.checks[0].id}/review`);
+  assert.ok(!(await owner.get('/api/alerts')).data.some(a => a.kind === 'vehicle_check'));
+  const board = (await owner.get('/api/vehicle-checks/today')).data;
+  assert.equal(board.find(v => v.vehicle_id === ids.truck).due, false);
+  assert.equal(board.find(v => v.vehicle_id === ids.truck2).due, true);
+});
+
 export { owner, tech, ids, db, client, today, notifyIdle };

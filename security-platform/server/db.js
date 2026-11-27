@@ -41,6 +41,7 @@ export const DEFAULT_SETTINGS = {
   proposal_next_number: '1001',
   require_photos: '1', require_parts: '1', photo_exempt_types: 'estimate', require_signature: '1', signature_exempt_types: 'estimate',
   inspection_next_number: '1001', inspector_license: '',
+  vehicle_check_frequency: 'daily', vehicle_check_required: '1', vehicle_check_photos: 'damage',
   truck_count_day: '5', truck_count_reminders: '1', inventory_manager_id: '', readiness_required: '1', readiness_spares: '1',
   alert_email: '1', alert_sms: '0', alert_phone: '',
   office_address: '', office_lat: '', office_lng: '', office_radius_m: '300', clock_alert: '1', clock_alert_out: '0', clock_allow_jobsite: '1',
@@ -282,6 +283,17 @@ function migrate(db) {
       updated_at TEXT
     );
     CREATE INDEX IF NOT EXISTS idx_inspections_customer ON inspection_reports(customer_id, inspection_date);
+    -- Technician's vehicle checklist (oil, tires, lights, damage, clean).
+    CREATE TABLE IF NOT EXISTS vehicle_checks (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      vehicle_id INTEGER NOT NULL REFERENCES vehicles(id) ON DELETE CASCADE,
+      user_id INTEGER, user_name TEXT, technician_id INTEGER,
+      odometer INTEGER, items TEXT NOT NULL DEFAULT '{}', photos TEXT NOT NULL DEFAULT '[]',
+      issues INTEGER NOT NULL DEFAULT 0, status TEXT NOT NULL, notes TEXT,
+      reviewed_by TEXT, reviewed_at TEXT,
+      created_at TEXT NOT NULL DEFAULT (datetime('now','localtime'))
+    );
+    CREATE INDEX IF NOT EXISTS idx_vehicle_checks ON vehicle_checks(vehicle_id, created_at);
     -- Latest GPS position per vehicle, from the tracking provider.
     CREATE TABLE IF NOT EXISTS vehicle_positions (
       vehicle_id INTEGER PRIMARY KEY REFERENCES vehicles(id) ON DELETE CASCADE,

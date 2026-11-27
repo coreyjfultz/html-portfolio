@@ -34,6 +34,7 @@ export async function render(view) {
     <div class="stack">
       <div class="card"><div class="card-body" data-clock></div></div>
       ${myShift ? html`<div class="banner ${myShift === oncall.current ? 'warn' : ''}">📟 ${myShift === oncall.current ? 'You’re' : 'Next up: you’re'} ${myShift.technician_id === techId ? 'on call' : 'the on-call backup'} ${myShift === oncall.current ? `until ${fmtDateTime(myShift.ends_at)}` : `from ${fmtDateTime(myShift.starts_at)}`}. <a href="#/phone">Schedule</a></div>` : ''}
+      ${truck ? html`<div class="card" data-vcheck></div>` : ''}
       <div class="card hidden" data-ready></div>
       ${countDue ? html`<div class="banner warn row" style="justify-content:space-between">🧮 Weekly truck count is due for ${truck.unit_name}${lastCount ? '' : ' (never counted)'}. <button class="btn sm primary" data-count>Count my truck</button></div>` : ''}
       ${calls.length ? calls.map(c => html`<a class="card" href="#/calls/${c.id}" style="display:block;color:inherit;text-decoration:none;border-left:5px solid ${c.priority === 'emergency' ? 'var(--bad)' : c.technician_color || 'var(--primary)'}">
@@ -55,5 +56,16 @@ export async function render(view) {
   $('[data-load]', view)?.addEventListener('click', () => transferStock(items, null, () => render(view), { from: 0, to: truck.id }));
   $('[data-count]', view)?.addEventListener('click', () => countDialog(truck, () => render(view)));
   readinessCard($('[data-ready]', view), techId);
+  if (truck) drawVehicleCheck($('[data-vcheck]', view), truck, () => render(view));
   import('./timeclock.js').then(m => m.clockWidget($('[data-clock]', view)));
+}
+
+async function drawVehicleCheck(card, truck, onDone) {
+  const d = await GET(`/api/vehicles/${truck.id}/checks`).catch(() => null);
+  if (!d || d.frequency === 'off') { card.classList.add('hidden'); return; }
+  const last = d.checks[0];
+  mount(card, html`<div class="card-head"><div><h2>${d.due ? '🚚' : '✅'} Vehicle check — ${truck.unit_name}</h2>
+      <div class="small muted">${d.due ? `${d.frequency === 'weekly' ? 'Weekly' : 'Daily'} check before your first job: oil, tires, lights, walk-around, clean truck.` : `Done ${last ? fmtDateTime(last.created_at.replace(' ', 'T')) : ''}${last?.issues ? ` — ${last.issues} problem(s) reported` : ' — all OK'}`}</div></div>
+      ${d.due ? html`<button class="btn primary" data-vc>Start check</button>` : ''}</div>`);
+  $('[data-vc]', card)?.addEventListener('click', async () => (await import('./vehiclecheck.js')).vehicleCheckDialog(truck, onDone));
 }

@@ -289,6 +289,7 @@ export const RESOURCES = {
       { name: 'assigned_technician_id', label: 'Assigned technician', type: 'ref', ref: 'technicians', list: true, onDelete: 'set null' },
       { name: 'status', label: 'Status', type: 'select', options: ['in service', 'out of service', 'sold'], default: 'in service', list: true },
       { name: 'mileage', label: 'Current mileage', type: 'number' },
+      { name: 'tire_psi', label: 'Tire pressure target (psi)', type: 'number', help: 'From the sticker in the driver’s door. Vehicle checks flag tires more than 5 psi under it.' },
       { name: 'tracker_id', label: 'GPS tracker / vehicle ID', type: 'text', help: 'The vehicle’s ID in your tracking system (e.g. Samsara). Blank = match by unit name.' },
       { name: 'tracking_url', label: 'Tracking page link', type: 'text', help: 'Link to this vehicle in your tracking provider (live location, trips).' },
       { name: 'camera_url', label: 'Dash cam link', type: 'text', help: 'Link to this vehicle’s dash cam / live view in your camera or tracking provider.' },

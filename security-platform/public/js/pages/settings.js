@@ -198,6 +198,11 @@ export async function render(view, _, query) {
         ['truck_count_reminders', 'Text each tech a reminder on count day; flag trucks that are overdue', 'check'],
         ['inventory_manager_id', 'Inventory manager (also gets count results)', 'select', [['', '— Owner only —'], ...users.filter(u => u.active).map(u => [String(u.id), `${u.name} (${u.role})`])]],
       ] },
+      { title: 'Vehicle checklist', fields: [
+        ['vehicle_check_frequency', 'How often techs check their truck', 'select', [['daily', 'Every day'], ['weekly', 'Once a week'], ['off', 'Off']]],
+        ['vehicle_check_required', 'Must be done before starting the first job', 'check'],
+        ['vehicle_check_photos', 'Photos', 'select', [['damage', 'Only when there’s damage'], ['always', 'Every check: front, back, left and right']]],
+      ], note: 'Oil, tire pressures (set each truck’s target on the vehicle), lights, damage walk-around, clean truck. Problems alert the owner/admins.' },
       { title: 'Start-of-day check', fields: [
         ['readiness_required', 'Technicians must confirm their equipment before starting their first job', 'check'],
         ['readiness_spares', 'Spares to carry beyond what the jobs need', 'number'],
