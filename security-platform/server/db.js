@@ -1,4 +1,5 @@
 import { DatabaseSync } from 'node:sqlite';
+import { randomBytes } from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -25,7 +26,14 @@ export const DEFAULT_SETTINGS = {
   invoice_next_number: '1001',
   call_next_number: '1001',
   invoice_footer: 'Thank you for your business!',
+  // Supplier invoice intake
+  auto_receive: '1',
+  receiving_update_costs: '1',
+  trusted_vendor_domains: '',
+  inbound_token: '',
 };
+// Settings that are never sent to non-admin users or editable through PUT /api/settings.
+export const PRIVATE_SETTINGS = new Set(['inbound_token']);
 
 function columnSql(f) {
   let sql = `"${f.name}" ${SQL_TYPES[f.type] || 'TEXT'}`;
@@ -121,6 +129,8 @@ function migrate(db) {
 
   const ins = db.prepare('INSERT OR IGNORE INTO settings(key, value) VALUES (?, ?)');
   for (const [k, v] of Object.entries(DEFAULT_SETTINGS)) ins.run(k, v);
+  // Secret for the inbound-email webhook URL.
+  db.prepare("UPDATE settings SET value = ? WHERE key = 'inbound_token' AND (value IS NULL OR value = '')").run(randomBytes(24).toString('base64url'));
 }
 
 export function getSettings(db) {

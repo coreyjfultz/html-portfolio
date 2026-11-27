@@ -235,7 +235,7 @@ export async function openForm(resource, opts = {}) {
   const record = opts.record || null;
   const isEdit = !!record?.id;
   const hide = new Set(opts.hide || []);
-  const fields = def.fields.filter(f => !hide.has(f.name) && !(f.readonly && !isEdit));
+  const fields = def.fields.filter(f => !f.hidden && !hide.has(f.name) && !(f.readonly && !isEdit));
   const values = {};
   for (const f of def.fields) {
     values[f.name] = isEdit ? record[f.name] : (opts.defaults?.[f.name] ?? fieldDefault(f) ?? null);

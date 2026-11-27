@@ -33,7 +33,8 @@ export async function render(view) {
       <a class="kpi ${overdueMaint.length ? 'alert' : ''}" href="#/maintenance"><div class="label">Maintenance overdue</div><div class="value">${overdueMaint.length}</div><div class="hint">${d.maintenance.length - overdueMaint.length} more due in 30 days</div></a>
     </div>
 
-    ${office && (d.drafts || d.uninvoicedCalls) ? html`<div class="note" style="margin-bottom:16px">
+    ${office && (d.drafts || d.uninvoicedCalls || d.receivingReview) ? html`<div class="note" style="margin-bottom:16px">
+      ${d.receivingReview ? html`📥 ${d.receivingReview} supplier invoice${d.receivingReview > 1 ? 's need' : ' needs'} a quick check before stock is added. <a href="#/receiving">Review</a>. ` : ''}
       ${d.drafts ? html`📝 ${d.drafts} draft invoice${d.drafts > 1 ? 's' : ''} waiting to be sent. <a href="#/invoices?status=draft">Review</a>. ` : ''}
       ${d.uninvoicedCalls ? html`🔧 ${d.uninvoicedCalls} completed billable call${d.uninvoicedCalls > 1 ? 's' : ''} not invoiced yet. <a href="#/calls?status=completed&uninvoiced=1">Invoice them</a>.` : ''}
     </div>` : ''}

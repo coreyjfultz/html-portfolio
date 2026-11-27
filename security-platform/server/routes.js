@@ -4,7 +4,9 @@ import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
 import { RESOURCES, MAINTENANCE } from '../public/js/schema.js';
-import { getSettings, DEFAULT_SETTINGS, tx, DATA_DIR } from './db.js';
+import { getSettings, DEFAULT_SETTINGS, PRIVATE_SETTINGS, tx, DATA_DIR } from './db.js';
+import { ingest, processInvoice, receive, saveReview, parseInboundEmail, filePath } from './receiving.js';
+import { aiConfigured } from './extract.js';
 import {
   HttpError, list, get, create, update, adjustStock, recalcInvoice, round2, todayLocal, addMonths, addDays,
 } from './resources.js';
@@ -145,10 +147,14 @@ export function buildRoutes() {
   });
 
   // ------------------------------------------------------------ settings
-  r('GET', '/api/settings', ALL, ({ db }) => getSettings(db));
+  r('GET', '/api/settings', ALL, ({ db, user }) => {
+    const s = getSettings(db);
+    if (user.role !== 'admin') for (const k of PRIVATE_SETTINGS) delete s[k];
+    return s;
+  });
   r('PUT', '/api/settings', ADMIN, ({ db, body, user }) => {
     const up = db.prepare('INSERT INTO settings(key, value) VALUES (?,?) ON CONFLICT(key) DO UPDATE SET value = excluded.value');
-    for (const k of Object.keys(DEFAULT_SETTINGS)) if (k in body) up.run(k, String(body[k] ?? ''));
+    for (const k of Object.keys(DEFAULT_SETTINGS)) if (k in body && !PRIVATE_SETTINGS.has(k)) up.run(k, String(body[k] ?? ''));
     audit(db, user, 'update', 'settings', null);
     return getSettings(db);
   });
@@ -190,6 +196,7 @@ export function buildRoutes() {
       out.monthExpenses = round2(db.prepare(`SELECT COALESCE(SUM(amount),0) AS s FROM expenses WHERE substr(date,1,7) = ?`).get(m).s);
       out.monthlyBilled = !!db.prepare(`SELECT 1 FROM invoices WHERE kind = 'monthly' AND period = ? AND status <> 'void' LIMIT 1`).get(m);
       out.drafts = db.prepare(`SELECT COUNT(*) AS n FROM invoices WHERE status = 'draft'`).get().n;
+      out.receivingReview = db.prepare(`SELECT COUNT(*) AS n FROM purchase_invoices WHERE status IN ('needs review','error')`).get().n;
       out.uninvoicedCalls = db.prepare(`SELECT COUNT(*) AS n FROM service_calls WHERE status = 'completed' AND billable = 1 AND invoice_id IS NULL`).get().n;
     }
     return out;
@@ -386,6 +393,81 @@ export function buildRoutes() {
     });
   });
 
+  // ------------------------------------------------------------ supplier invoices (receiving)
+  r('GET', '/api/receiving/info', OFFICE, ({ db, user }) => {
+    const s = getSettings(db);
+    return {
+      ai: aiConfigured(), auto_receive: s.auto_receive === '1', update_costs: s.receiving_update_costs === '1',
+      trusted_vendor_domains: s.trusted_vendor_domains,
+      inbound_path: user.role === 'admin' ? `/api/inbound/email/${s.inbound_token}` : null,
+      counts: Object.fromEntries(db.prepare('SELECT status, COUNT(*) AS n FROM purchase_invoices GROUP BY status').all().map(r => [r.status, r.n])),
+    };
+  });
+
+  r('POST', '/api/receiving/token', ADMIN, ({ db, user }) => {
+    db.prepare("UPDATE settings SET value = ? WHERE key = 'inbound_token'").run(crypto.randomBytes(24).toString('base64url'));
+    audit(db, user, 'regenerate inbound email address', 'settings', null);
+    return { ok: true };
+  });
+
+  r('POST', '/api/receiving/upload', OFFICE, ({ db, body, user }) => {
+    if (!Array.isArray(body.files) || !body.files.length) throw new HttpError(400, 'Choose a file to upload');
+    const ids = ingest(db, { source: 'upload', files: body.files, user });
+    if (!ids.length) throw new HttpError(400, 'Upload a PDF, photo (JPG/PNG), or CSV file');
+    queueProcessing(db, ids);
+    return { ids };
+  });
+
+  r('GET', '/api/receiving/:id/file', OFFICE, ({ db, params, res }) => {
+    const row = db.prepare('SELECT file_key, file_type, file_name FROM purchase_invoices WHERE id = ?').get(Number(params.id));
+    if (!row) throw new HttpError(404, 'Not found');
+    const p = filePath(row);
+    res.writeHead(200, {
+      'Content-Type': row.file_type === 'text/csv' || row.file_type === 'text/plain' ? 'text/plain; charset=utf-8' : row.file_type,
+      'Content-Disposition': `inline; filename="${String(row.file_name).replace(/[^\w. -]/g, '_')}"`,
+      'Cache-Control': 'private, no-store',
+      // Allow our own page to show it in a frame; nothing else.
+      'X-Frame-Options': 'SAMEORIGIN',
+      'Content-Security-Policy': "default-src 'none'; img-src 'self' data:; style-src 'unsafe-inline'; frame-ancestors 'self'",
+    });
+    fs.createReadStream(p).pipe(res);
+    return undefined;
+  });
+
+  r('PUT', '/api/receiving/:id', OFFICE, ({ db, params, body, user }) => saveReview(db, Number(params.id), body, user));
+
+  r('POST', '/api/receiving/:id/receive', OFFICE, ({ db, params, body, user }) =>
+    receive(db, Number(params.id), user, { record_expense: body.record_expense !== false, allowDuplicate: !!body.allow_duplicate }));
+
+  r('POST', '/api/receiving/:id/reread', OFFICE, ({ db, params, user }) => {
+    const row = db.prepare('SELECT status FROM purchase_invoices WHERE id = ?').get(Number(params.id));
+    if (!row) throw new HttpError(404, 'Not found');
+    if (row.status === 'received') throw new HttpError(409, 'Already received');
+    db.prepare("UPDATE purchase_invoices SET status = 'processing', review_note = NULL WHERE id = ?").run(Number(params.id));
+    audit(db, user, 're-read', 'purchase_invoices', Number(params.id));
+    queueProcessing(db, [Number(params.id)]);
+    return { ok: true };
+  });
+
+  r('POST', '/api/receiving/:id/reject', OFFICE, ({ db, params, user }) => {
+    const n = db.prepare("UPDATE purchase_invoices SET status = 'rejected' WHERE id = ? AND status <> 'received'").run(Number(params.id)).changes;
+    if (!n) throw new HttpError(409, 'Received invoices cannot be rejected');
+    audit(db, user, 'reject', 'purchase_invoices', Number(params.id));
+    return { ok: true };
+  });
+
+  // Inbound email webhook (Postmark inbound, or any service / Zapier / Power Automate posting JSON).
+  // Authenticated by the secret token in the URL instead of a login.
+  r('POST', '/api/inbound/email/:token', null, ({ db, params, body }) => {
+    const expected = Buffer.from(getSettings(db).inbound_token || '');
+    const given = Buffer.from(String(params.token || ''));
+    if (!expected.length || expected.length !== given.length || !crypto.timingSafeEqual(expected, given)) throw new HttpError(404, 'Not found');
+    const email = parseInboundEmail(body || {});
+    const ids = ingest(db, { source: 'email', ...email });
+    queueProcessing(db, ids);
+    return { ok: true, received: ids.length };
+  });
+
   // ------------------------------------------------------------ reports
   r('GET', '/api/reports/pnl', OFFICE, ({ db, query }) => {
     const to = /^\d{4}-\d{2}$/.test(query.to || '') ? query.to : todayLocal().slice(0, 7);
@@ -543,6 +625,16 @@ export function buildRoutes() {
 
   return routes;
 }
+
+// Read supplier invoices one at a time in the background.
+let processingChain = Promise.resolve();
+export function queueProcessing(db, ids) {
+  for (const id of ids) {
+    processingChain = processingChain.then(() => processInvoice(db, id)).catch(e => console.error('processInvoice', id, e));
+  }
+  return processingChain;
+}
+export const processingIdle = () => processingChain;
 
 export function maintenanceDue(db, days = 60, customerId) {
   const today = todayLocal();

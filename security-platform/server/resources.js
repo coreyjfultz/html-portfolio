@@ -1,7 +1,9 @@
 // Generic, schema-driven CRUD with business-rule hooks.
 import { RESOURCES, MAINTENANCE, fieldDefault } from '../public/js/schema.js';
 import { encrypt, decrypt, audit } from './security.js';
-import { getSettings, nextNumber, tx } from './db.js';
+import { getSettings, nextNumber, tx, DATA_DIR } from './db.js';
+import fs from 'node:fs';
+import path from 'node:path';
 
 export class HttpError extends Error {
   constructor(status, message) { super(message); this.status = status; }
@@ -425,6 +427,14 @@ const HOOKS = {
     },
     afterDelete(db, row, { user }) {
       adjustStock(db, { itemId: row.item_id, locationId: row.location_id, delta: row.qty, kind: 'returned from job', serviceCallId: row.service_call_id, userId: user?.id, allowNegative: true });
+    },
+  },
+  purchase_invoices: {
+    beforeDelete(db, row) {
+      if (row.status === 'received') throw new HttpError(409, 'Received supplier invoices are kept for your records and cannot be deleted.');
+    },
+    afterDelete(db, row) {
+      if (row.file_key) fs.rmSync(path.join(DATA_DIR, 'invoices', path.basename(row.file_key)), { force: true });
     },
   },
   camera_systems: { beforeSave: (db, d, o) => applyMaintenanceDefaults('camera_systems', d, o.existing, o.body) },

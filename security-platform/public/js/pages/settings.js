@@ -1,4 +1,4 @@
-import { html, mount, $, $$, dataTable, promptForm, toast, badge, loading } from '../ui.js';
+import { html, raw, mount, $, $$, dataTable, promptForm, toast, badge, loading, confirmDialog } from '../ui.js';
 import { GET, PUT, POST, R } from '../api.js';
 import { state, refresh } from '../app.js';
 
@@ -13,7 +13,7 @@ const SETTINGS = [
 export async function render(view, _, query) {
   const tab = query.tab || 'company';
   mount(view, html`<div class="page-head"><div><h1>Settings</h1><div class="sub">Company, users and data</div></div></div>
-    <div class="tabs">${[['company', 'Company & billing'], ['users', 'Users & logins'], ['audit', 'Activity log'], ['data', 'Backup & data']].map(([k, l]) => html`<button class="${k === tab ? 'on' : ''}" data-tab="${k}">${l}</button>`)}</div>
+    <div class="tabs">${[['company', 'Company & billing'], ['receiving', 'Receiving'], ['users', 'Users & logins'], ['audit', 'Activity log'], ['data', 'Backup & data']].map(([k, l]) => html`<button class="${k === tab ? 'on' : ''}" data-tab="${k}">${l}</button>`)}</div>
     <div data-pane></div>`);
   $$('[data-tab]', view).forEach(b => b.addEventListener('click', () => { location.hash = `#/settings?tab=${b.dataset.tab}`; }));
   const pane = $('[data-pane]', view);
@@ -30,6 +30,39 @@ export async function render(view, _, query) {
       state.settings = await PUT('/api/settings', data);
       toast('Settings saved');
       $('.sidebar .brand span').textContent = state.settings.company_name;
+    });
+  }
+
+  if (tab === 'receiving') {
+    const [s, info] = await Promise.all([GET('/api/settings'), GET('/api/receiving/info')]);
+    const url = `${location.origin}${info.inbound_path}`;
+    mount(pane, html`<div class="grid g2">
+      <div class="card"><div class="card-head"><h2>Automatic receiving</h2></div><div class="card-body"><form class="stack" data-form style="gap:14px">
+        <label class="row"><input type="checkbox" name="auto_receive" ${s.auto_receive === '1' ? raw('checked') : ''}> <span><b>Add stock automatically</b> when every line on an invoice matches a part # you already stock</span></label>
+        <label class="row"><input type="checkbox" name="receiving_update_costs" ${s.receiving_update_costs === '1' ? raw('checked') : ''}> <span>Update each item's unit cost to the price on the latest invoice</span></label>
+        <div class="field"><label for="tvd">Trusted distributor email domains</label>
+          <input id="tvd" name="trusted_vendor_domains" value="${s.trusted_vendor_domains}" placeholder="adiglobal.com, anixter.com, wesco.com">
+          <span class="help">Emailed invoices are only received automatically when they come from one of these domains. Anything else waits for review, so a fake email can't change your stock.</span></div>
+        <div><button class="btn primary" type="submit">Save</button></div></form></div></div>
+      <div class="card"><div class="card-head"><h2>Reading PDFs & photos</h2></div><div class="card-body">
+        ${info.ai ? html`<p><span class="badge good">On</span> PDFs, photos and emails are read with Claude (AI).</p>`
+          : html`<p><span class="badge warn">Not set up</span> Add a Claude API key to the server as <span class="mono">ANTHROPIC_API_KEY</span> and restart it. Until then, CSV files are still read automatically, and PDFs/photos can be entered by hand on the review screen.</p>`}
+        <p class="small muted">Get a key at console.anthropic.com. A typical one-page invoice costs a few cents to read.</p></div></div>
+      <div class="card" style="grid-column:1/-1"><div class="card-head"><h2>Email intake</h2></div><div class="card-body">
+        <p>Distributor invoices can flow in by email. Use an inbound-email service (for example Postmark's free "Inbound" stream) or an automation (Zapier, Make, or Microsoft Power Automate) to send each email to this private address:</p>
+        <div class="row"><input readonly value="${url}" class="mono" data-url style="flex:1;min-width:260px"><button class="btn" data-copy>Copy</button><button class="btn danger" data-regen>Make a new address</button></div>
+        <p class="small muted">Then add a rule in your mailbox that forwards emails from your distributors to that service. Full steps are in the README under “Supplier invoices”. Keep this address private: anyone who has it can send documents into your Receiving inbox (they still can't change stock unless they also come from a trusted domain).</p>
+      </div></div></div>`);
+    $('[data-form]', pane).addEventListener('submit', async e => {
+      e.preventDefault();
+      const f = e.target;
+      state.settings = await PUT('/api/settings', { auto_receive: f.auto_receive.checked ? '1' : '0', receiving_update_costs: f.receiving_update_costs.checked ? '1' : '0', trusted_vendor_domains: f.trusted_vendor_domains.value });
+      toast('Receiving settings saved');
+    });
+    $('[data-copy]', pane).addEventListener('click', () => navigator.clipboard?.writeText(url).then(() => toast('Copied')));
+    $('[data-regen]', pane).addEventListener('click', async () => {
+      if (!(await confirmDialog('Make a new private email address? The old one stops working immediately, so update your email service afterwards.', { okLabel: 'Make new address', danger: true }))) return;
+      await POST('/api/receiving/token'); toast('New address created'); refresh();
     });
   }
 

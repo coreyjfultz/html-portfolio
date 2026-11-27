@@ -3,6 +3,7 @@
 import { openDb, DB_PATH, tx } from './db.js';
 import { create, update, adjustStock, todayLocal, addDays, addMonths } from './resources.js';
 import { hashPassword } from './security.js';
+import { ingest, processInvoice } from './receiving.js';
 
 const db = openDb();
 if (db.prepare('SELECT COUNT(*) AS n FROM customers').get().n > 0) {
@@ -207,5 +208,17 @@ C('payments', { invoice_id: inst.id, date: day(-6), amount: 1500, method: 'card'
 db.prepare('UPDATE service_calls SET invoice_id = ? WHERE id = ?').run(inst.id, a.id);
 
 });
+
+// Supplier invoices: one received automatically, one waiting for review.
+db.prepare("UPDATE settings SET value = 'adiglobal.com, anixter.com' WHERE key = 'trusted_vendor_domains'").run();
+const csv1 = 'Part #,Description,Qty Shipped,Unit Price\nBAT-12V7,12V 7Ah battery,24,15.80\nSNS-PIR,PIR motion detector,10,21.50\n';
+const [r1] = ingest(db, { source: 'email', fromEmail: 'invoices@adiglobal.com', subject: 'ADI Invoice 447901', files: [{ name: 'ADI-447901.csv', type: 'text/csv', data: Buffer.from(csv1) }] });
+db.prepare("UPDATE purchase_invoices SET vendor = 'ADI Global', invoice_number = '447901', invoice_date = ? WHERE id = ?").run(day(-6), r1);
+await processInvoice(db, r1);
+const csv2 = 'Item Number,Description,Qty Shipped,Unit Price\nFA-HS-W,Horn/strobe wall white,6,40.25\nSYS-RP2,System Sensor RP2 smoke detector,12,36.10\n';
+const [r2] = ingest(db, { source: 'email', fromEmail: 'ar@anixter.com', subject: 'Anixter invoice 99120', files: [{ name: 'anixter-99120.csv', type: 'text/csv', data: Buffer.from(csv2) }] });
+db.prepare("UPDATE purchase_invoices SET vendor = 'Anixter', invoice_number = '99120', invoice_date = ? WHERE id = ?").run(day(-1), r2);
+await processInvoice(db, r2);
+
 console.log(`Demo data loaded into ${DB_PATH}`);
 console.log('Sign in with admin@demo.local / demo1234 (also office@demo.local, jen@demo.local)');

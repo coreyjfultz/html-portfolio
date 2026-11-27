@@ -79,13 +79,15 @@ export function createServer(db) {
     try {
       // CSRF defence: state-changing API calls must come from our own JS (custom
       // header cannot be sent cross-site without a CORS preflight, which we never allow).
-      if (req.method !== 'GET' && req.headers['x-requested-with'] !== 'SecureOps') throw new HttpError(403, 'Missing request header');
+      const inbound = pathname.startsWith('/api/inbound/');
+      if (req.method !== 'GET' && !inbound && req.headers['x-requested-with'] !== 'SecureOps') throw new HttpError(403, 'Missing request header');
 
       const cookies = parseCookies(req.headers.cookie);
       const token = cookies.sid;
       const user = sessionUser(db, token);
       const query = Object.fromEntries(url.searchParams);
-      const body = ['POST', 'PUT', 'PATCH'].includes(req.method) ? await readBody(req) : {};
+      const big = inbound || pathname === '/api/receiving/upload';
+      const body = ['POST', 'PUT', 'PATCH'].includes(req.method) ? await readBody(req, big ? 40_000_000 : 1_000_000) : {};
       const https = secureCookies || req.headers['x-forwarded-proto'] === 'https';
       const setCookie = t => res.setHeader('Set-Cookie', t
         ? `sid=${t}; HttpOnly; Path=/; SameSite=Lax; Max-Age=${14 * 86400}${https ? '; Secure' : ''}`
