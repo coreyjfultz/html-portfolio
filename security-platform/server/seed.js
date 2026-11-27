@@ -165,7 +165,7 @@ const call = (data, parts = []) => {
   parts.forEach(([k, qty]) => C('service_call_parts', { service_call_id: sc.id, item_id: items[k].id, qty }));
   return sc;
 };
-const done = (sc, hours, resolution) => update(db, 'service_calls', sc.id, { status: 'completed', labor_hours: hours, resolution }, sys);
+const done = (sc, hours, resolution) => update(db, 'service_calls', sc.id, { status: 'completed', labor_hours: hours, resolution, override_reason: 'Demo data' }, sys);
 
 const a = call({ customer_id: res3.id, title: 'Install 8-camera system + NVR', call_type: 'installation', system_type: 'camera', technician_id: jen.id, scheduled_start: at(-7, '08:00'), duration_hours: 7 }, [['cam4k', 6], ['cam5mp', 2], ['nvr16', 1], ['hdd4', 2], ['cat6', 1]]);
 done(a, 7.5, 'Installed 8 cameras, NVR, configured EZView for customer. Walked through app.');

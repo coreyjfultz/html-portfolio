@@ -384,6 +384,37 @@ function checkSite(db, data, existing) {
   }
 }
 
+// ---------------------------------------------------------------- job completion rules
+/**
+ * A job can't be completed without before & after photos and either recorded parts or
+ * an explicit "no parts used". Owners/admins can override with a written reason.
+ */
+function enforceCompletionRules(db, call, existing, user, body, data) {
+  const s = getSettings(db);
+  const exempt = String(s.photo_exempt_types || '').split(',').map(x => x.trim()).filter(Boolean);
+  const missing = [];
+  if (s.require_photos === '1' && !exempt.includes(call.call_type)) {
+    const n = kind => existing ? db.prepare('SELECT COUNT(*) AS n FROM job_photos WHERE service_call_id = ? AND kind = ?').get(existing.id, kind).n : 0;
+    if (!n('before')) missing.push('a “before” photo');
+    if (!n('after')) missing.push('an “after” photo');
+  }
+  if (s.require_parts === '1' && call.call_type !== 'estimate') {
+    const parts = existing ? db.prepare('SELECT COUNT(*) AS n FROM service_call_parts WHERE service_call_id = ?').get(existing.id).n : 0;
+    if (!parts && !body?.no_parts_used) missing.push('the parts used (or tick “No parts used”)');
+    if (!parts && body?.no_parts_used) data.no_parts_used = 1;
+  }
+  if (!missing.length) return;
+  const reason = String(body?.override_reason || '').trim();
+  if (reason && ['owner', 'admin'].includes(user?.role)) {
+    data.completion_override = `${user.name}: ${reason}`.slice(0, 300);
+    return;
+  }
+  const e = new HttpError(400, `Before completing this job, add ${missing.join(', ')}.`);
+  e.code = 'completion_rules';
+  e.canOverride = ['owner', 'admin'].includes(user?.role);
+  throw e;
+}
+
 // ---------------------------------------------------------------- scheduling conflicts
 const toMinutes = dt => { const d = new Date(dt.length === 16 ? dt + ':00' : dt); return d.getTime() / 60000; };
 const fmtWhen = (start, end) => {
@@ -606,6 +637,7 @@ const HOOKS = {
         }
       }
       if (merged.status === 'new' && merged.technician_id && merged.scheduled_start) data.status = 'scheduled';
+      if (data.status === 'completed' && existing?.status !== 'completed') enforceCompletionRules(db, { ...existing, ...data }, existing, user, body, data);
       if (data.status === 'completed' && !existing?.completed_at) data.completed_at = nowLocal();
       if (data.status && data.status !== 'completed' && existing?.completed_at) data.completed_at = null;
     },

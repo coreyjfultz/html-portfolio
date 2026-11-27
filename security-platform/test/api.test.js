@@ -51,6 +51,8 @@ test('first-run setup creates the admin, and only once', async () => {
   const again = await client().post('/api/auth/setup', { name: 'X', email: 'x@example.com', password: 'whatever12' });
   assert.equal(again.status, 409);
   assert.equal((await admin.get('/api/auth/state')).data.user.role, 'owner', 'the first account is the owner');
+  // Photo/parts completion rules are covered in features.test.js; keep these tests focused.
+  await admin.put('/api/settings', { require_photos: '0', require_parts: '0' });
 });
 
 test('rejects bad logins and unauthenticated access', async () => {

@@ -39,6 +39,7 @@ export const DEFAULT_SETTINGS = {
   twilio_sid: '', twilio_token: '', twilio_from: '',
   notify_on_schedule: '1', notify_on_way: '1', notify_tech_invites: '1',
   proposal_next_number: '1001',
+  require_photos: '1', require_parts: '1', photo_exempt_types: 'estimate',
   stripe_secret: '', stripe_webhook_secret: '', stripe_ach: '1',
   qbo_client_id: '', qbo_client_secret: '', qbo_environment: 'sandbox', qbo_realm_id: '', qbo_company_name: '',
   qbo_access: '', qbo_refresh: '', qbo_access_expires: '', qbo_item_id: '', qbo_tax_item_id: '', qbo_auto_sync: '1', qbo_last_sync: '',

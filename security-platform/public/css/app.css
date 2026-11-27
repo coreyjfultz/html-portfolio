@@ -589,3 +589,11 @@ table.t tr.click:hover td { background: #f8faff; }
 }
 
 .page-head h1 .mono { font-size: inherit; letter-spacing: -.01em; }
+
+/* Job completion checklist */
+.checklist { list-style: none; margin: 0 0 12px; padding: 10px 12px; border: 1px solid var(--border); border-radius: 10px; display: grid; gap: 6px; }
+.checklist li { display: flex; align-items: center; gap: 8px; font-size: 14px; }
+.checklist .mark { width: 20px; height: 20px; border-radius: 50%; display: inline-grid; place-items: center; font-size: 12px; font-weight: 700; }
+.checklist .ok .mark { background: var(--good-bg, #dcfce7); color: var(--good, #15803d); }
+.checklist .todo .mark { background: var(--warn-bg, #fef3c7); color: var(--warn, #b45309); }
+.checklist .todo { color: var(--text); }

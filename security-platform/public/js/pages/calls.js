@@ -113,7 +113,9 @@ export async function detail(view, [id]) {
         <dt>Problem / request</dt><dd style="white-space:pre-wrap">${c.description || '—'}</dd>
         ${c.status === 'completed' ? html`<dt>Completed</dt><dd>${fmtDateTime(c.completed_at)}</dd>
           <dt>Labor</dt><dd>${c.labor_hours ?? 0} h${office ? html` × ${money(c.labor_rate)}` : ''}</dd>
-          <dt>Work performed</dt><dd style="white-space:pre-wrap">${c.resolution || '—'}</dd>` : ''}
+          <dt>Work performed</dt><dd style="white-space:pre-wrap">${c.resolution || '—'}</dd>
+          ${c.no_parts_used ? html`<dt>Parts</dt><dd>Tech confirmed no parts were used</dd>` : ''}
+          ${c.completion_override ? html`<dt>Rule override</dt><dd>${badge('override', 'warn')} ${c.completion_override}</dd>` : ''}` : ''}
         <dt>Billable</dt><dd>${c.billable ? 'Yes' : 'No (warranty / estimate / no charge)'}</dd>
         ${c.signed_by ? html`<dt>Customer sign-off</dt><dd><div class="sig-box"><img src="/api/service_calls/${c.id}/signature?v=${encodeURIComponent(c.signed_at)}" alt="Signature of ${c.signed_by}"></div>
           <div class="small muted">${c.signed_by} · ${fmtDateTime(c.signed_at)}</div></dd>` : ''}
@@ -163,7 +165,7 @@ export async function detail(view, [id]) {
   $('[data-sign]', view)?.addEventListener('click', () => completeDialog(c, cust, { signOnly: true, onDone: reload }));
   drawPhotos($('[data-photos-card]', view), c);
   drawMonitoring($('[data-mon-card]', view), c, reload);
-  $('[data-complete]', view)?.addEventListener('click', () => completeDialog(c, cust, { office, onDone: reload }));
+  $('[data-complete]', view)?.addEventListener('click', () => completeDialog(c, cust, { office, partsCount: parts.length, onDone: reload }));
   $('[data-invoice]', view)?.addEventListener('click', async () => {
     const r = await POST(`/api/service_calls/${id}/invoice`);
     toast('Draft invoice created');
@@ -210,11 +212,21 @@ async function drawPhotos(card, c) {
 }
 
 // ------------------------------------------------------------------ completion + signature
-function completeDialog(c, cust, { signOnly = false, office = false, onDone } = {}) {
+async function completeDialog(c, cust, { signOnly = false, office = false, partsCount = 0, onDone } = {}) {
+  const photos = signOnly ? [] : await GET(`/api/service_calls/${c.id}/photos`).catch(() => []);
+  const nPhotos = kind => photos.filter(p => p.kind === kind).length;
+  const check = (ok, label) => html`<li class="${ok ? 'ok' : 'todo'}"><span class="mark">${ok ? '✓' : '!'}</span> ${label}</li>`;
   const { el, close } = openModal({
     title: signOnly ? 'Customer sign-off' : 'Complete job',
     body: html`<div class="err-box hidden" data-err></div>
-      ${signOnly ? '' : html`<div class="form-grid">
+      ${signOnly ? '' : html`<ul class="checklist">
+          ${check(nPhotos('before') > 0, `“Before” photos (${nPhotos('before')})`)}
+          ${check(nPhotos('after') > 0, `“After” photos (${nPhotos('after')})`)}
+          ${check(partsCount > 0, partsCount ? `Parts recorded (${partsCount})` : 'Parts recorded')}
+        </ul>
+        ${partsCount ? '' : html`<label class="row small" style="margin:-4px 0 12px"><input type="checkbox" data-noparts> No parts or equipment were used on this job</label>`}
+        <div class="field hidden" data-override style="margin-bottom:12px"><label for="cd_override">Override reason (recorded on the job)</label><input id="cd_override" type="text" placeholder="e.g. Customer would not allow photos inside"></div>
+        <div class="form-grid">
         <div class="field"><label for="cd_hours">Labor hours</label><input id="cd_hours" type="number" step="0.25" value="${c.labor_hours ?? c.duration_hours ?? 1}"></div>
         <div class="field"></div>
         <div class="field full"><label for="cd_res">Work performed (shown to the customer)</label><textarea id="cd_res">${c.resolution || ''}</textarea></div></div>`}
@@ -236,12 +248,27 @@ function completeDialog(c, cust, { signOnly = false, office = false, onDone } = 
     if (!noSig && pad.isEmpty()) { err.textContent = signOnly ? 'Please sign in the box.' : 'Have the customer sign, or tick “not available to sign”.'; err.classList.remove('hidden'); return; }
     $('[data-go]', el).disabled = true;
     try {
-      if (!signOnly) await R.update('service_calls', c.id, { status: 'completed', labor_hours: $('#cd_hours', el).value, resolution: $('#cd_res', el).value });
+      if (!signOnly) {
+        await R.update('service_calls', c.id, {
+          status: 'completed', labor_hours: $('#cd_hours', el).value, resolution: $('#cd_res', el).value,
+          no_parts_used: !!$('[data-noparts]', el)?.checked, override_reason: $('#cd_override', el).value.trim() || undefined,
+        });
+      }
       if (!noSig) await POST(`/api/service_calls/${c.id}/signature`, { name, image: pad.toDataURL() });
       close();
       toast(signOnly ? 'Signature saved' : noSig ? 'Job completed' : 'Job completed and signed');
       onDone?.();
-    } catch (e) { err.textContent = e.message; err.classList.remove('hidden'); $('[data-go]', el).disabled = false; }
+    } catch (e) {
+      err.textContent = e.message; err.classList.remove('hidden'); $('[data-go]', el).disabled = false;
+      if (e.code === 'completion_rules') {
+        if (e.canOverride) {
+          $('[data-override]', el).classList.remove('hidden');
+          err.textContent += ' As an administrator you can complete it anyway with a reason.';
+          $('[data-go]', el).textContent = 'Complete anyway';
+          $('#cd_override', el).focus();
+        } else err.textContent += ' Close this, add them on the job page, then complete again (or ask the office to override).';
+      }
+    }
   });
 }
 

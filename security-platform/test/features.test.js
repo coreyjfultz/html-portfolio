@@ -40,6 +40,7 @@ const stageOf = id => db.prepare('SELECT stage FROM customers WHERE id = ?').get
 
 test('setup', async () => {
   assert.equal((await owner.post('/api/auth/setup', { name: 'Owner', email: 'owner@example.com', password: 'password123', company_name: 'Test Co' })).status, 200);
+  await owner.put('/api/settings', { require_photos: '0', require_parts: '0' }); // switched on in their own test
   ids.tech = (await owner.post('/api/r/technicians', { name: 'Tess', email: 'tess@example.com' })).data.id;
   ids.tech2 = (await owner.post('/api/r/technicians', { name: 'Bo' })).data.id;
 });
@@ -695,6 +696,40 @@ test('alarm monitoring: import existing alarm systems into monitoring accounts',
   assert.equal(acct.account_number, 'A-777');
   assert.equal(acct.station_id_label, 'Central Station A');
   assert.equal((await owner.post('/api/monitoring/import-alarm-systems')).data.created, 0, 'running it again adds nothing');
+});
+
+test('a job can only be completed with before/after photos and parts (or "no parts used"); admins can override', async () => {
+  await owner.put('/api/settings', { require_photos: '1', require_parts: '1' });
+  try {
+    const JPGX = Buffer.from([0xff, 0xd8, 0xff, 0xe0, ...Buffer.alloc(100)]).toString('base64');
+    const today = new Date().toISOString().slice(0, 10);
+    const job = (await owner.post('/api/r/service_calls', { customer_id: ids.cafe, title: 'Rules job', technician_id: ids.tech, scheduled_start: `${today}T22:30`, duration_hours: 0.25, allow_conflict: true })).data;
+    const tech = client();
+    await tech.post('/api/auth/login', { email: 'tess-login@example.com', password: 'password123' });
+    let r = await tech.put(`/api/r/service_calls/${job.id}`, { status: 'completed' });
+    assert.equal(r.status, 400);
+    assert.equal(r.data.code, 'completion_rules');
+    assert.match(r.data.error, /“before” photo.*“after” photo.*parts used/);
+    assert.equal(r.data.canOverride, false);
+    assert.equal((await tech.put(`/api/r/service_calls/${job.id}`, { status: 'completed', override_reason: 'trust me' })).status, 400, 'technicians cannot override');
+    await tech.post(`/api/service_calls/${job.id}/photos`, { kind: 'before', data: JPGX });
+    await tech.post(`/api/service_calls/${job.id}/photos`, { kind: 'after', data: JPGX });
+    r = await tech.put(`/api/r/service_calls/${job.id}`, { status: 'completed' });
+    assert.match(r.data.error, /parts used/);
+    r = await tech.put(`/api/r/service_calls/${job.id}`, { status: 'completed', no_parts_used: true });
+    assert.equal(r.status, 200);
+    assert.equal(r.data.no_parts_used, 1);
+    // Admin override is recorded
+    const job2 = (await owner.post('/api/r/service_calls', { customer_id: ids.cafe, title: 'Override job' })).data;
+    const ov = await owner.put(`/api/r/service_calls/${job2.id}`, { status: 'completed', override_reason: 'Customer refused photos inside the vault' });
+    assert.equal(ov.status, 200);
+    assert.match(ov.data.completion_override, /Owner: Customer refused photos/);
+    // Site surveys don't need photos or parts
+    const est = (await owner.post('/api/r/service_calls', { customer_id: ids.cafe, title: 'Survey', call_type: 'estimate' })).data;
+    assert.equal((await owner.put(`/api/r/service_calls/${est.id}`, { status: 'completed' })).status, 200);
+  } finally {
+    await owner.put('/api/settings', { require_photos: '0', require_parts: '0' });
+  }
 });
 
 export { owner, ids, db, base };
