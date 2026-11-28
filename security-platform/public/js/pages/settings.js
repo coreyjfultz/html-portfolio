@@ -408,6 +408,10 @@ async function hrPane(pane) {
       ['pto_default_personal', 'Personal hours per year (default)', 'number'],
       ['pto_allow_negative', 'Let people request more than they have left', 'check'],
     ], note: 'Set different amounts or carryover for a person on the Time off page (Balances → Set).' },
+    { title: 'Who handles time-off requests', intro: html`<p class="small muted" style="margin-top:0">Each request goes to the person’s supervisor (set under Users → Reports to; see <a href="#/team">Our team</a>). Anyone without a supervisor goes to owners and admins.</p>`, fields: [
+      ['timeoff_notify_managers', 'Owners and admins also get every request (phone notification + email)', 'check'],
+      ['timeoff_managers_decide', 'Owners and admins can approve or deny any request (off = supervisors only)', 'check'],
+    ] },
     { title: 'Pay & benefits (optional add-on)', fields: [
       ['addon_pay', 'Turn on “My pay & benefits” for everyone', 'check'],
       ['payroll_provider', 'Payroll provider', 'select', [['quickbooks', 'QuickBooks Payroll (Workforce)'], ['gusto', 'Gusto'], ['adp', 'ADP'], ['paychex', 'Paychex'], ['other', 'Other']]],

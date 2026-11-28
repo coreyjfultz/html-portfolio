@@ -80,7 +80,10 @@ test('time off goes to the supervisor, who approves it; others can’t', async (
   const id = req.data.id;
   // The lead is told
   assert.match(db.prepare('SELECT title FROM push_notes WHERE user_id = ? ORDER BY id DESC').get(ids.lead).title, /Tess Tech asked for time off/);
-  assert.match(db.prepare("SELECT title FROM alerts WHERE kind = 'time_off' ORDER BY id DESC").get().title, /for Lee to approve/);
+  assert.match(db.prepare("SELECT title FROM alerts WHERE kind = 'time_off' ORDER BY id DESC").get().title, /Lee is their supervisor/);
+  // Owners/admins get every request too (on by default)
+  assert.match(db.prepare('SELECT title FROM push_notes WHERE user_id = ? ORDER BY id DESC').get(ids.owner).title, /Tess Tech asked for time off/);
+  assert.match(db.prepare('SELECT title FROM push_notes WHERE user_id = ? ORDER BY id DESC').get(ids.al).title, /Tess Tech asked for time off/);
   // The lead sees it with can_decide; a peer doesn't see it; Tess can't approve her own
   const leadList = (await lead.get('/api/time-off')).data;
   assert.ok(leadList.find(x => x.id === id).can_decide);
@@ -110,6 +113,26 @@ test('time off goes to the supervisor, who approves it; others can’t', async (
   const t2 = await tess.post('/api/time-off', { kind: 'personal', start_date: day(50), end_date: day(50) });
   assert.equal((await lead.post(`/api/time-off/${t2.data.id}/cancel`)).status, 200);
   assert.equal((await bo.post(`/api/time-off/${t2.data.id}/cancel`)).status, 403);
+});
+
+test('settings: supervisors only — owners/admins not told and can’t decide (unless no supervisor)', async () => {
+  await owner.put('/api/settings', { timeoff_notify_managers: '0', timeoff_managers_decide: '0' });
+  const before = db.prepare('SELECT COUNT(*) AS n FROM push_notes WHERE user_id = ?').get(ids.al).n;
+  const req = await tess.post('/api/time-off', { kind: 'personal', start_date: day(60), end_date: day(60) });
+  assert.equal(db.prepare('SELECT COUNT(*) AS n FROM push_notes WHERE user_id = ?').get(ids.al).n, before); // admin not told
+  assert.match(db.prepare('SELECT title FROM push_notes WHERE user_id = ? ORDER BY id DESC').get(ids.lead).title, /Tess Tech asked/); // supervisor is
+  assert.equal((await al.post(`/api/time-off/${req.data.id}/decide`, { decision: 'approve' })).status, 403);
+  assert.ok(!(await al.get('/api/time-off')).data.find(x => x.id === req.data.id).can_decide);
+  // The owner is above Tess in the chart, so can still decide
+  assert.ok((await owner.get('/api/time-off')).data.find(x => x.id === req.data.id).can_decide);
+  // Someone with no supervisor always goes to owners/admins
+  await owner.put(`/api/users/${ids.bo}`, { supervisor_id: '' });
+  const bReq = await bo.post('/api/time-off', { kind: 'personal', start_date: day(61), end_date: day(61) });
+  assert.match(db.prepare('SELECT title FROM push_notes WHERE user_id = ? ORDER BY id DESC').get(ids.al).title, /Bo Tech asked/);
+  assert.equal((await al.post(`/api/time-off/${bReq.data.id}/decide`, { decision: 'approve' })).status, 200);
+  await owner.put(`/api/users/${ids.bo}`, { supervisor_id: ids.lead });
+  await owner.put('/api/settings', { timeoff_notify_managers: '1', timeoff_managers_decide: '1' });
+  assert.equal((await al.post(`/api/time-off/${req.data.id}/decide`, { decision: 'approve' })).status, 200);
 });
 
 test('supervisors see and help with their team’s tasks', async () => {

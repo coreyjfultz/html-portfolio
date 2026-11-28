@@ -48,6 +48,7 @@ export const DEFAULT_SETTINGS = {
   task_email: '1',
   app_calls_enabled: '1', app_call_relay: 'none', app_call_stun: 'stun:stun.l.google.com:19302', turn_urls: '', turn_secret: '',
   assistant_enabled: '0', assistant_daily_limit: '25', assistant_effort: 'medium',
+  timeoff_notify_managers: '1', timeoff_managers_decide: '1',
   workday_hours: '8', pto_default_vacation: '80', pto_default_sick: '40', pto_default_personal: '16', pto_allow_negative: '0', holiday_blocks: '1',
   survey_enabled: '1', survey_delay_hours: '2', survey_min_days: '30', survey_skip_types: 'estimate', survey_alert_below: '3', review_url: '',
   truck_count_day: '5', truck_count_reminders: '1', inventory_manager_id: '', readiness_required: '1', readiness_spares: '1',

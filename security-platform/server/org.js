@@ -3,6 +3,7 @@
 // can still do everything.
 import { G } from '../public/js/schema.js';
 import { HttpError } from './resources.js';
+import { getSettings } from './db.js';
 import { onlineUserIds } from './chat.js';
 
 const MANAGE = G.manage;
@@ -22,10 +23,14 @@ export function supervisorOf(db, uid) {
     WHERE u.id = ? AND s.active = 1`).get(uid) || null;
 }
 
-/** Can `user` approve/deny time off for `targetId`? Your own requests go up the chain (owners excepted). */
+/** Can `user` approve/deny time off for `targetId`? Your own requests go up the chain (owners excepted).
+ *  Owners/admins can decide anyone's unless Settings limits that to supervisors; people with no
+ *  supervisor always go to owners/admins. */
 export function canApprove(db, user, targetId) {
   if (targetId === user.id) return user.role === 'owner';
-  return MANAGE.includes(user.role) || isAbove(db, user.id, targetId);
+  if (isAbove(db, user.id, targetId)) return true;
+  if (!MANAGE.includes(user.role)) return false;
+  return getSettings(db).timeoff_managers_decide !== '0' || !supervisorOf(db, targetId);
 }
 
 /** Setting someone's supervisor: must be an active person, and not themselves or someone under them. */
@@ -52,7 +57,7 @@ export function registerOrgRoutes(r) {
     const team = reportIds(db, user.id);
     const direct = db.prepare('SELECT id, name, role, job_title FROM users WHERE supervisor_id = ? AND active = 1 ORDER BY name').all(user.id);
     const pendingIds = MANAGE.includes(user.role)
-      ? db.prepare("SELECT id FROM time_off WHERE status = 'pending' AND user_id <> ?").all(user.id).map(x => x.id)
+      ? db.prepare("SELECT id, user_id FROM time_off WHERE status = 'pending' AND user_id <> ?").all(user.id).filter(x => canApprove(db, user, x.user_id)).map(x => x.id)
       : team.length ? db.prepare(`SELECT id FROM time_off WHERE status = 'pending' AND user_id IN (${team.map(() => '?').join(',')})`).all(...team).map(x => x.id) : [];
     return { supervisor: supervisorOf(db, user.id), direct_reports: direct, team_ids: team, is_supervisor: team.length > 0, pending_time_off: pendingIds.length };
   });

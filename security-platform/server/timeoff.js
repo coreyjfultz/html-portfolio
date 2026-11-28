@@ -148,17 +148,24 @@ export function registerTimeOffRoutes(r) {
     audit(db, user, byManager ? 'add time off' : 'request time off', 'users', forUser.id, `${kind} ${fmt(start, end, allDay)}`);
     if (!byManager) {
       const c = clashes(db, x);
-      // The person's supervisor decides (owners/admins can too and see every request).
+      // The person's supervisor decides. Owners/admins also get every request unless Settings says
+      // supervisors only (people with no supervisor always go to them).
+      const s = getSettings(db);
       const sup = supervisorOf(db, forUser.id);
-      if (sup) {
-        notifyPush(db, [sup.id], { title: `${forUser.name} asked for time off`, body: `${fmt(start, end, allDay)} (${kind})`, url: `/#/time-off?req=${id}`, tag: `timeoff-${id}` });
-        if (sup.email && mailConfig(db).ok) queue(() => sendEmail(db, { to: sup.email, subject: `Time off request: ${forUser.name}, ${fmt(start, end, allDay)}`, text: `${forUser.name} asked for time off (${kind}): ${fmt(start, end, allDay)}.${x.note ? `\n\n“${x.note}”` : ''}\n\nApprove or deny it in SecureOps → Time off.\n\n${getSettings(db).company_name}`, related: { type: 'time_off', id } }));
+      const what = `${fmt(start, end, allDay)} (${kind})`;
+      const tellPerson = p => {
+        notifyPush(db, [p.id], { title: `${forUser.name} asked for time off`, body: what, url: `/#/time-off?req=${id}`, tag: `timeoff-${id}` });
+        if (p.email && mailConfig(db).ok) queue(() => sendEmail(db, { to: p.email, subject: `Time off request: ${forUser.name}, ${fmt(start, end, allDay)}`, text: `${forUser.name} asked for time off: ${what}.${x.note ? `\n\n“${x.note}”` : ''}${sup && p.id !== sup.id ? `\n\nTheir supervisor, ${sup.name}, was asked too.` : ''}\n\nApprove or deny it in SecureOps → Time off.\n\n${s.company_name}`, related: { type: 'time_off', id } }));
+      };
+      if (sup) tellPerson(sup);
+      if (!sup || s.timeoff_notify_managers !== '0') {
+        for (const m of db.prepare("SELECT id, name, email FROM users WHERE active = 1 AND role IN ('owner','admin') AND id <> ?").all(forUser.id)) if (m.id !== sup?.id) tellPerson(m);
+        raiseAlert(db, {
+          kind: 'time_off', severity: 'info', title: `${forUser.name} requested time off: ${what}${sup ? ` · ${sup.name.split(' ')[0]} is their supervisor` : ''}`,
+          body: `${x.note ? `“${x.note}”\n` : ''}${c.jobs.length ? `${c.jobs.length} job(s) already booked then.` : 'No jobs booked then.'}${c.oncall.length ? ` On call during part of it.` : ''}`,
+          link: `#/time-off?req=${id}`, roles: 'owner,admin', notify: false,
+        });
       }
-      raiseAlert(db, {
-        kind: 'time_off', severity: 'info', title: `${forUser.name} requested time off: ${fmt(start, end, allDay)} (${kind})${sup ? ` · for ${sup.name.split(' ')[0]} to approve` : ''}`,
-        body: `${x.note ? `“${x.note}”\n` : ''}${c.jobs.length ? `${c.jobs.length} job(s) already booked then.` : 'No jobs booked then.'}${c.oncall.length ? ` On call during part of it.` : ''}`,
-        link: `#/time-off?req=${id}`, roles: 'owner,admin',
-      });
     }
     return { ...x, when: fmt(start, end, allDay), clashes: clashes(db, x) };
   });
