@@ -776,3 +776,26 @@ table.t tr.click:hover td { background: #f8faff; }
 .assistant-fb { margin-top: 6px; gap: 4px; }
 .assistant-ask { flex-wrap: nowrap; }
 .assistant-ask input { flex: 1; min-width: 0; }
+
+/* Tasks */
+.card-body.tight { padding: 6px 14px; }
+.task-list { display: flex; flex-direction: column; }
+.task-row { display: flex; align-items: flex-start; gap: 10px; padding: 10px 0; border-bottom: 1px solid var(--border); }
+.task-row:last-child { border-bottom: 0; }
+.task-check { flex: none; width: 26px; height: 26px; margin-top: 1px; border-radius: 50%; border: 2px solid var(--border-strong); background: var(--surface); color: var(--good); display: grid; place-items: center; cursor: pointer; padding: 0; }
+.task-check:hover { border-color: var(--good); }
+.task-check.static { border: 0; color: var(--text-3); cursor: default; }
+.task-check .ico-svg { width: 24px; height: 24px; }
+.task-main { flex: 1; min-width: 0; text-align: left; background: none; border: 0; padding: 0; color: inherit; font: inherit; cursor: pointer; display: flex; flex-direction: column; gap: 2px; overflow-wrap: anywhere; }
+.task-title { font-weight: 600; }
+.task-meta .ico-svg { width: 13px; height: 13px; vertical-align: -2px; }
+.task-row.done .task-title { text-decoration: line-through; color: var(--text-3); font-weight: 500; }
+.task-row.done .task-check { border-color: var(--good); }
+.task-row .late, .lib-group.late { color: var(--bad); font-weight: 600; }
+.nav-badge.soft { background: var(--primary); }
+.day-picks { gap: 4px; flex-wrap: wrap; }
+.day-pick { display: inline-flex; }
+.day-pick input { position: absolute; opacity: 0; pointer-events: none; }
+.day-pick span { padding: 6px 9px; border: 1px solid var(--border-strong); border-radius: 8px; font-size: 13px; cursor: pointer; user-select: none; }
+.day-pick input:checked + span { background: var(--primary); border-color: var(--primary); color: #fff; }
+.day-pick input:focus-visible + span { outline: 2px solid var(--primary); outline-offset: 2px; }

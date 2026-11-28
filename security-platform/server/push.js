@@ -44,8 +44,14 @@ function vapidHeader(db, endpoint) {
 }
 
 /** Wake up the given users' devices. Failures are quiet; dead subscriptions are removed. */
-export function notifyPush(db, userIds) {
+// `note` (optional) is what the phone should show; the service worker fetches it after the
+// (empty) push arrives. Without a note the push is treated as a chat message.
+export function notifyPush(db, userIds, note) {
   if (!userIds?.length) return;
+  if (note) {
+    const ins = db.prepare('INSERT INTO push_notes (user_id, title, body, url, tag) VALUES (?,?,?,?,?)');
+    for (const uid of userIds) ins.run(uid, String(note.title).slice(0, 120), String(note.body || '').slice(0, 240), note.url || '/', note.tag || null);
+  }
   const subs = db.prepare(`SELECT * FROM push_subscriptions WHERE user_id IN (${userIds.map(() => '?').join(',')})`).all(...userIds);
   for (const sub of subs) {
     if (!allowedEndpoint(sub.endpoint)) continue;
@@ -58,6 +64,13 @@ export function notifyPush(db, userIds) {
 }
 
 export function registerPushRoutes(r) {
+  // The newest note from the last 10 minutes that hasn't been shown yet.
+  r('GET', '/api/push/latest', G.all, ({ db, user }) => {
+    const n = db.prepare("SELECT id, title, body, url, tag FROM push_notes WHERE user_id = ? AND shown = 0 AND created_at >= datetime('now','localtime','-10 minutes') ORDER BY id DESC LIMIT 1").get(user.id);
+    if (n) db.prepare('UPDATE push_notes SET shown = 1 WHERE id = ?').run(n.id);
+    db.prepare("DELETE FROM push_notes WHERE created_at < datetime('now','localtime','-30 days')").run();
+    return n || null;
+  });
   r('GET', '/api/push/key', G.all, ({ db }) => ({ key: vapidKeys(db).publicKey }));
   r('POST', '/api/push/subscribe', G.all, ({ db, user, body }) => {
     const endpoint = String(body.endpoint || '');

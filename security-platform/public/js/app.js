@@ -21,6 +21,7 @@ const NAV = [
   { href: '#/', label: 'Dashboard', ico: 'layout-dashboard' },
   { href: '#/myday', label: 'My Day', ico: 'sun', roles: ['technician'] },
   { href: '#/timeclock', label: 'Time clock', ico: 'clock' },
+  { href: '#/tasks', label: 'Tasks', ico: 'list-checks', badge: 'tasks' },
   { href: '#/chat', label: 'Team chat', ico: 'message-circle', badge: 'chat' },
   { href: '#/time-off', label: 'Time off', ico: 'tree-palm' },
   { href: '#/my-pay', label: 'My pay & benefits', ico: 'banknote', when: s => s.addon_pay === '1' },
@@ -66,6 +67,7 @@ const ROUTES = [
   [/^chat-records$/, 'chatrecords'],
   [/^time-off$/, 'timeoff'],
   [/^my-pay$/, 'mypay'],
+  [/^tasks$/, 'tasks'],
   [/^library$/, 'library'],
   [/^support$/, 'library', 'support'],
   [/^chat\/(\d+)$/, 'chat'],
@@ -182,7 +184,7 @@ function renderShell() {
     <aside class="sidebar">
       ${brand(state.settings.company_name)}
       <nav class="nav">${nav.map(n => n.section === undefined
-        ? html`<a href="${n.href}" data-nav="${n.href}">${icon(n.ico)}${n.label}${n.badge === 'chat' ? html`<span class="nav-badge" data-chat-badge hidden></span>` : ''}</a>`
+        ? html`<a href="${n.href}" data-nav="${n.href}">${icon(n.ico)}${n.label}${n.badge === 'chat' ? html`<span class="nav-badge" data-chat-badge hidden></span>` : n.badge === 'tasks' ? html`<span class="nav-badge" data-task-badge hidden></span>` : ''}</a>`
         : n.section ? html`<div class="section">${n.section}</div>` : '')}</nav>
     </aside>
     <div class="main">
@@ -241,6 +243,7 @@ function setupSearch() {
 }
 
 let routeSeq = 0;
+let taskBadgeAt = 0;
 async function route() {
   const path = location.hash.replace(/^#\/?/, '').split('?')[0].replace(/\/$/, '');
   const view = $('#view');
@@ -257,6 +260,7 @@ async function route() {
     if (my !== routeSeq) return;
     window.scrollTo(0, 0);
     await page[fn](view, m.slice(1), queryParams());
+    if (mod !== 'tasks' && Date.now() - taskBadgeAt > 60e3) { taskBadgeAt = Date.now(); import('./pages/tasks.js').then(t => t.updateTaskBadge()).catch(() => {}); }
   } catch (e) {
     console.error(e);
     mount(view, html`<div class="card"><div class="empty">⚠️ ${e.message}</div></div>`);

@@ -169,6 +169,7 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
     setInterval(() => m.geocodeMissing(db).catch(e => console.error('geocode', e)), 10 * 60e3).unref();
   });
   // Customer satisfaction surveys a couple of hours after each job.
+  import('./tasks.js').then(m => { const tick = () => { try { m.runRecurring(db); m.taskReminders(db); } catch (e) { console.error('tasks', e); } }; tick(); setInterval(tick, 15 * 60e3).unref(); });
   import('./surveys.js').then(m => setInterval(() => { try { m.sendDueSurveys(db); } catch (e) { console.error('surveys', e); } }, 5 * 60e3).unref());
   // Nightly backups (database + uploaded files), kept for BACKUP_KEEP days.
   import('./backup.js').then(m => m.scheduleBackups(db));

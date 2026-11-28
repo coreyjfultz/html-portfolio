@@ -45,6 +45,7 @@ export const DEFAULT_SETTINGS = {
   require_serials: '1', require_serial_photos: '1',
   vapid_public: '', vapid_private: '',
   addon_pay: '0', payroll_provider: 'quickbooks', payroll_portal_url: '', payroll_label: '', payroll_contact: '', payroll_note: '',
+  task_email: '1',
   assistant_enabled: '0', assistant_daily_limit: '25', assistant_effort: 'medium',
   workday_hours: '8', pto_default_vacation: '80', pto_default_sick: '40', pto_default_personal: '16', pto_allow_negative: '0', holiday_blocks: '1',
   survey_enabled: '1', survey_delay_hours: '2', survey_min_days: '30', survey_skip_types: 'estimate', survey_alert_below: '3', review_url: '',
@@ -368,6 +369,38 @@ function migrate(db) {
       created_at TEXT NOT NULL DEFAULT (datetime('now','localtime'))
     );
     CREATE INDEX IF NOT EXISTS idx_employee_docs ON employee_documents(user_id);
+    -- Tasks for people (one-time, or made from a repeating series).
+    CREATE TABLE IF NOT EXISTS task_series (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      title TEXT NOT NULL, notes TEXT, assigned_to INTEGER REFERENCES users(id) ON DELETE SET NULL,
+      priority TEXT NOT NULL DEFAULT 'normal', location TEXT, customer_id INTEGER REFERENCES customers(id) ON DELETE SET NULL,
+      freq TEXT NOT NULL, every_n INTEGER NOT NULL DEFAULT 1, weekdays TEXT, month_day INTEGER,
+      starts_on TEXT NOT NULL, ends_on TEXT, next_date TEXT, active INTEGER NOT NULL DEFAULT 1,
+      created_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+      created_at TEXT NOT NULL DEFAULT (datetime('now','localtime'))
+    );
+    CREATE TABLE IF NOT EXISTS tasks (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      title TEXT NOT NULL, notes TEXT,
+      assigned_to INTEGER REFERENCES users(id) ON DELETE SET NULL,
+      created_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+      due_date TEXT, priority TEXT NOT NULL DEFAULT 'normal', location TEXT,
+      customer_id INTEGER REFERENCES customers(id) ON DELETE SET NULL,
+      series_id INTEGER REFERENCES task_series(id) ON DELETE SET NULL,
+      status TEXT NOT NULL DEFAULT 'open', done_at TEXT, done_by INTEGER REFERENCES users(id) ON DELETE SET NULL, done_note TEXT,
+      created_at TEXT NOT NULL DEFAULT (datetime('now','localtime')), updated_at TEXT
+    );
+    CREATE INDEX IF NOT EXISTS idx_tasks_assignee ON tasks(assigned_to, status, due_date);
+    CREATE INDEX IF NOT EXISTS idx_tasks_creator ON tasks(created_by, status);
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_tasks_series_date ON tasks(series_id, due_date) WHERE series_id IS NOT NULL;
+    -- What a phone notification should say (the push itself carries no text).
+    CREATE TABLE IF NOT EXISTS push_notes (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      title TEXT NOT NULL, body TEXT, url TEXT, tag TEXT, shown INTEGER NOT NULL DEFAULT 0,
+      created_at TEXT NOT NULL DEFAULT (datetime('now','localtime'))
+    );
+    CREATE INDEX IF NOT EXISTS idx_push_notes_user ON push_notes(user_id, shown, created_at);
     -- Questions asked of the help assistant (owners can review what it was asked and said).
     CREATE TABLE IF NOT EXISTS assistant_log (
       id INTEGER PRIMARY KEY AUTOINCREMENT,

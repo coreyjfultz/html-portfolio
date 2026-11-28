@@ -1,6 +1,6 @@
 // Caches the app shell so it opens instantly and survives flaky signal in the field.
 // API data is never cached: it always comes live from the server.
-const CACHE = 'secureops-v11';
+const CACHE = 'secureops-v13';
 const SHELL = ['/', '/css/app.css', '/js/app.js', '/js/ui.js', '/js/api.js', '/js/schema.js', '/icons/icon.svg', '/icons/sprite.svg', '/fonts/inter-latin-wght-normal.woff2', '/manifest.webmanifest'];
 
 self.addEventListener('install', e => {
@@ -24,6 +24,10 @@ self.addEventListener('push', e => {
   e.waitUntil((async () => {
     const wins = await self.clients.matchAll({ type: 'window', includeUncontrolled: true });
     if (wins.some(w => w.visibilityState === 'visible')) return; // the open app already shows it
+    const hdr = { credentials: 'same-origin', headers: { 'X-Requested-With': 'SecureOps' } };
+    let note = null;
+    try { note = await (await fetch('/api/push/latest', hdr)).json(); } catch { /* offline */ }
+    if (note?.title) return self.registration.showNotification(note.title, { body: note.body || '', tag: note.tag || 'note', renotify: true, icon: '/icons/icon-192.png', badge: '/icons/icon-192.png', data: { url: note.url || '/' } });
     let u = null;
     try { u = await (await fetch('/api/chat/unread', { credentials: 'same-origin', headers: { 'X-Requested-With': 'SecureOps' } })).json(); } catch { /* offline */ }
     if (!u?.total) return self.registration.showNotification('SecureOps', { body: 'You have a new message', tag: 'chat', icon: '/icons/icon-192.png', data: { url: '/#/chat' } });

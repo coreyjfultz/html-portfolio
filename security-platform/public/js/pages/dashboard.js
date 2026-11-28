@@ -27,6 +27,7 @@ export async function render(view) {
     ${d.emergencies ? html`<div class="err-box">🚨 ${d.emergencies} open emergency call${d.emergencies > 1 ? 's' : ''}. <a href="#/calls?priority=emergency">View</a></div>` : ''}
 
     <div class="card" style="margin-bottom:16px"><div class="card-body" data-clock></div></div>
+    <div class="card hidden" style="margin-bottom:16px" data-mytasks></div>
     ${outToday.length ? html`<div class="banner" style="margin-bottom:16px">🌴 Out today: ${outToday.map((x, i) => html`${i ? ', ' : ''}<b>${x.user_name}</b>${x.all_day ? '' : ` (${x.when.split(' ').slice(-1)[0]})`}`)} · <a href="#/time-off">Time off</a></div>` : ''}
     ${alerts.length ? html`<div class="card" style="margin-bottom:16px"><div class="card-head"><h2>Alerts (${alerts.length})</h2></div><div class="card-body stack" style="gap:8px">${alerts.slice(0, 6).map(a => alertRow(a))}${alerts.length > 6 ? html`<div class="small muted">…and ${alerts.length - 6} more</div>` : ''}</div></div>` : ''}
 
@@ -88,4 +89,5 @@ export async function render(view) {
     </div>`);
   if (alerts.length) wireAlerts(view, () => render(view));
   import('./timeclock.js').then(m => m.clockWidget($('[data-clock]', view)));
+  import('./tasks.js').then(m => m.myTasksCard($('[data-mytasks]', view)));
 }

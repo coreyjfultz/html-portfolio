@@ -38,6 +38,7 @@ export async function render(view) {
       ${myOff.map(x => html`<div class="banner good">🌴 Time off approved: ${x.when} <a href="#/time-off">Details</a></div>`)}
       ${soonHol ? html`<div class="banner">🎉 ${soonHol.name}: ${new Date(soonHol.date + 'T12:00').toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' })} — office closed</div>` : ''}
       ${myShift ? html`<div class="banner ${myShift === oncall.current ? 'warn' : ''}">📟 ${myShift === oncall.current ? 'You’re' : 'Next up: you’re'} ${myShift.technician_id === techId ? 'on call' : 'the on-call backup'} ${myShift === oncall.current ? `until ${fmtDateTime(myShift.ends_at)}` : `from ${fmtDateTime(myShift.starts_at)}`}. <a href="#/phone">Schedule</a></div>` : ''}
+      <div class="card hidden" data-mytasks></div>
       ${truck ? html`<div class="card" data-vcheck></div>` : ''}
       <div class="card hidden" data-ready></div>
       ${countDue ? html`<div class="banner warn row" style="justify-content:space-between">🧮 Weekly truck count is due for ${truck.unit_name}${lastCount ? '' : ' (never counted)'}. <button class="btn sm primary" data-count>Count my truck</button></div>` : ''}
@@ -57,6 +58,7 @@ export async function render(view) {
         }) : html`<div class="empty">No vehicle assigned to you.</div>`}</div></div>
     </div>`);
   $('[data-sync]', view).addEventListener('click', async () => (await import('./calendar.js')).syncDialog());
+  import('./tasks.js').then(m => m.myTasksCard($('[data-mytasks]', view)));
   $('[data-load]', view)?.addEventListener('click', () => transferStock(items, null, () => render(view), { from: 0, to: truck.id }));
   $('[data-count]', view)?.addEventListener('click', () => countDialog(truck, () => render(view)));
   readinessCard($('[data-ready]', view), techId);

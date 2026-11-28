@@ -13,6 +13,7 @@ import { createReport, completeReport } from './inspections.js';
 import * as chatApi from './chat.js';
 import * as hrApi from './hr.js';
 import { allItems } from '../public/js/inspections.js';
+import { runRecurring } from './tasks.js';
 import { VEHICLE_ITEMS } from '../public/js/vehicle-checks.js';
 import { logEvent, putOnTest } from './monitoring.js';
 
@@ -430,6 +431,23 @@ db.prepare("UPDATE service_calls SET signature_waived = 1, signature_waived_by =
     fs.writeFileSync(path.join(dir, key), pdf(title), { mode: 0o600 });
     db.prepare('INSERT INTO employee_documents (user_id, kind, title, period, file_key, file_name, content_type, size, uploaded_by) VALUES (?,?,?,?,?,?,?,?,?)').run(jenId, kind, title, period, key, `${title}.pdf`, 'application/pdf', 400, 'Ann Accounting');
   }
+}
+
+// Tasks for people (one-time and repeating).
+{
+  const U2 = e => db.prepare('SELECT id FROM users WHERE email = ?').get(e).id;
+  const [own, adm, mk, sm, acct] = ['owner@demo.local', 'admin@demo.local', 'mike@demo.local', 'sam@demo.local', 'accounting@demo.local'].map(U2);
+  const t = db.prepare('INSERT INTO tasks (title, notes, assigned_to, created_by, due_date, priority, location, status, done_at, done_by) VALUES (?,?,?,?,?,?,?,?,?,?)');
+  t.run('Pick up 6 IQ4 panels and 2 boxes of 18/4', 'Order #ADI-55821 is on will-call under our account.', mk, adm, today, 'high', 'ADI Dayton will-call', 'open', null, null);
+  t.run('Return the wrong NVR to Amazon', 'Label is printed and on the shop table. Drop at the UPS Store.', mk, own, day(-1), 'normal', 'UPS Store, Main St', 'open', null, null);
+  t.run('Swap the ladder rack bolts on Truck 2', null, sm, adm, day(2), 'normal', null, 'open', null, null);
+  t.run('Get a quote for the shop alarm battery', null, adm, mk, null, 'low', null, 'open', null, null);
+  t.run('Drop the signed contract off at Rosie\'s Diner', null, sm, own, day(-1), 'normal', null, 'done', `${day(-1)} 15:20:00`, sm);
+  const sr = db.prepare('INSERT INTO task_series (title, notes, assigned_to, priority, location, freq, every_n, weekdays, month_day, starts_on, next_date, created_by) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)');
+  sr.run('Deposit checks at the bank', 'Fifth Third, Main St branch. Log deposits in Payments.', acct, 'normal', 'Fifth Third Bank', 'weekly', 1, '2,5', null, day(-14), day(-14), own);
+  sr.run('Wash and vacuum your truck', null, mk, 'low', null, 'weekly', 1, '5', null, day(-14), day(-14), adm);
+  sr.run('Check the shop fire extinguishers', 'Monthly visual check; initial the tags.', sm, 'normal', 'Shop', 'monthly', 1, null, 1, day(-60), day(-60), own);
+  runRecurring(db);
 }
 
 // Training library and support contacts.
