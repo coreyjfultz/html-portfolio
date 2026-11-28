@@ -570,6 +570,23 @@ export const RESOURCES = {
     ],
   },
 
+  // Pay & benefits add-on: the company's benefit plans (everyone can read; owner/accounting edit).
+  benefit_plans: {
+    label: 'Benefit plans', singular: 'Benefit plan', labelExpr: 'name',
+    read: ALL, write: ['owner', 'accounting'], order: 'sort, name',
+    fields: [
+      { name: 'name', label: 'Plan', type: 'text', required: true, list: true, help: 'e.g. Blue Cross PPO, 401(k) with match' },
+      { name: 'kind', label: 'Type', type: 'select', options: ['health', 'dental', 'vision', 'life', 'disability', 'retirement', 'HSA / FSA', 'other'], default: 'health', list: true },
+      { name: 'provider', label: 'Provider', type: 'text', list: true },
+      { name: 'summary', label: 'What’s covered / company contribution', type: 'textarea', full: true },
+      { name: 'member_phone', label: 'Member services phone', type: 'tel' },
+      { name: 'website', label: 'Member website', type: 'text' },
+      { name: 'group_number', label: 'Group #', type: 'text' },
+      { name: 'enrollment', label: 'Enrollment (when / how)', type: 'text', full: true },
+      { name: 'sort', label: 'Order', type: 'number', default: 0, hidden: true },
+    ],
+  },
+
   // Equipment installed at a customer: serial numbers, where it is, warranty, photos of labels.
   installed_equipment: {
     label: 'Installed equipment', singular: 'Equipment', labelExpr: "COALESCE(NULLIF(description,''), 'Equipment') || CASE WHEN COALESCE(serial_number,'') <> '' THEN ' S/N ' || serial_number ELSE '' END",

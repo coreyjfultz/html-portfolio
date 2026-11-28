@@ -382,7 +382,10 @@ export function wireSettingsCards(pane, onSaved) {
       else if (el.type === 'password') { if (el.value) body[el.name] = el.value; }
       else body[el.name] = el.value;
     }
-    try { state.settings = await PUT('/api/settings', body); toast('Saved'); onSaved?.(); } catch (err) { toast(err.message, 'error'); }
+    try {
+      state.settings = await PUT('/api/settings', body); toast('Saved'); onSaved?.();
+      if ('addon_pay' in body) location.reload();
+    } catch (err) { toast(err.message, 'error'); }
   }));
 }
 
@@ -396,6 +399,14 @@ async function hrPane(pane) {
       ['pto_default_personal', 'Personal hours per year (default)', 'number'],
       ['pto_allow_negative', 'Let people request more than they have left', 'check'],
     ], note: 'Set different amounts or carryover for a person on the Time off page (Balances → Set).' },
+    { title: 'Pay & benefits (optional add-on)', fields: [
+      ['addon_pay', 'Turn on “My pay & benefits” for everyone', 'check'],
+      ['payroll_provider', 'Payroll provider', 'select', [['quickbooks', 'QuickBooks Payroll (Workforce)'], ['gusto', 'Gusto'], ['adp', 'ADP'], ['paychex', 'Paychex'], ['other', 'Other']]],
+      ['payroll_portal_url', 'Employee payroll site (blank = the provider’s usual sign-in page)', 'text', 'https://workforce.intuit.com'],
+      ['payroll_label', 'Name to show for “Other”', 'text'],
+      ['payroll_contact', 'Payroll questions go to', 'text', 'e.g. Ann in accounting, ext. 204'],
+      ['payroll_note', 'Note for employees (pay schedule, how to sign up…)', 'text'],
+    ], note: 'Pay stubs, W-2s, direct deposit and W-4 changes stay in your payroll provider’s own employee site; this links to it. Benefit plans and private documents (owner/accounting post them) are managed on the My pay & benefits page.' },
     { title: 'Holidays', fields: [['holiday_blocks', 'Ask before booking a job on a company holiday (emergencies excepted)', 'check']],
       extra: html`<div class="stack" style="gap:6px;margin-top:12px">${hols.length ? hols.map(h => html`<div class="row" style="justify-content:space-between"><span><b>${h.name}</b> <span class="muted">${new Date(h.date + 'T12:00').toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric', year: 'numeric' })}</span></span><button class="btn sm ghost danger" data-delhol="${h.id}">Remove</button></div>`) : html`<div class="muted">No holidays yet.</div>`}</div>
         <div class="row" style="margin-top:12px"><button class="btn sm" data-preset="${new Date().getFullYear()}">Add US holidays for ${new Date().getFullYear()}…</button><button class="btn sm" data-preset="${new Date().getFullYear() + 1}">…for ${new Date().getFullYear() + 1}</button><button class="btn sm ghost" data-addhol>+ Other holiday</button></div>` },

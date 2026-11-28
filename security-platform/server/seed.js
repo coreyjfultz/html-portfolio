@@ -1,7 +1,9 @@
+import path from 'node:path';
+import fs from 'node:fs';
 import crypto from 'node:crypto';
 // Loads realistic DEMO data so you can try the system. Refuses to run if the
 // database already has customers. Usage: npm run seed
-import { openDb, DB_PATH, tx } from './db.js';
+import { openDb, DB_PATH, DATA_DIR, tx } from './db.js';
 import { create, update, adjustStock, todayLocal, addDays, addMonths } from './resources.js';
 import { hashPassword } from './security.js';
 import { ingest, processInvoice } from './receiving.js';
@@ -407,6 +409,27 @@ db.prepare("UPDATE service_calls SET signature_waived = 1, signature_waived_by =
   for (const t of db.prepare('SELECT * FROM time_off').all()) db.prepare('UPDATE time_off SET hours = ? WHERE id = ?').run(requestHours(db, t), t.id);
   db.prepare('INSERT INTO pto_allowances (user_id, year, vacation, sick, personal, carry_vacation, carry_sick, carry_personal) VALUES (?,?,?,?,?,?,?,?)').run(U('mike@demo.local'), yr, 120, 40, 16, 16, 8, 0);
   db.prepare('INSERT INTO alerts (kind, severity, title, body, link) VALUES (?,?,?,?,?)').run('time_off', 'info', `Mike Alvarez requested time off (personal)`, '“Kid’s school play”', `#/time-off?req=${req}`);
+}
+
+// Pay & benefits add-on (on in the demo so it can be seen; it's off on a fresh install).
+{
+  db.prepare("UPDATE settings SET value = '1' WHERE key = 'addon_pay'").run();
+  db.prepare("UPDATE settings SET value = 'Ann in accounting · (555) 555-0104' WHERE key = 'payroll_contact'").run();
+  db.prepare("UPDATE settings SET value = 'Paid every other Friday by direct deposit. Your Workforce invite comes by email after your first paycheck.' WHERE key = 'payroll_note'").run();
+  for (const [name, kind, provider, summary, phone, site, enroll] of [
+    ['Medical — PPO', 'health', 'Anthem Blue Cross', 'Company pays 80% of employee premium, 50% for dependents. $1,500 deductible.', '800-555-0110', 'https://www.anthem.com', 'Open enrollment every November; new hires within 30 days'],
+    ['Dental', 'dental', 'Delta Dental', 'Two cleanings a year covered 100%.', '800-555-0120', 'https://www.deltadental.com', 'With medical'],
+    ['401(k)', 'retirement', 'Guideline', 'Company matches 100% of the first 3% you put in.', '888-555-0130', 'https://www.guideline.com', 'Any time after 90 days'],
+  ]) C('benefit_plans', { name, kind, provider, summary, member_phone: phone, website: site, enrollment: enroll });
+  const dir = path.join(DATA_DIR, 'hrdocs');
+  fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
+  const pdf = t => Buffer.from(`%PDF-1.4\n1 0 obj<</Type/Catalog/Pages 2 0 R>>endobj 2 0 obj<</Type/Pages/Kids[3 0 R]/Count 1>>endobj 3 0 obj<</Type/Page/Parent 2 0 R/MediaBox[0 0 612 300]/Contents 4 0 R/Resources<</Font<</F1 5 0 R>>>>>>endobj 4 0 obj<</Length ${44 + t.length}>>stream\nBT /F1 18 Tf 40 240 Td (DEMO - ${t}) Tj ET\nendstream endobj 5 0 obj<</Type/Font/Subtype/Type1/BaseFont/Helvetica>>endobj\ntrailer<</Root 1 0 R>>\n%%EOF\n`);
+  const jenId = db.prepare("SELECT id FROM users WHERE email = 'jen@demo.local'").get().id;
+  for (const [kind, title, period] of [['pay stub', 'Pay stub — Nov 13', day(-15)], ['pay stub', 'Pay stub — Nov 27', day(-1)], ['W-2', 'W-2 2025', `${Number(today.slice(0, 4)) - 1}-12-31`]]) {
+    const key = crypto.randomBytes(16).toString('hex') + '.pdf';
+    fs.writeFileSync(path.join(dir, key), pdf(title), { mode: 0o600 });
+    db.prepare('INSERT INTO employee_documents (user_id, kind, title, period, file_key, file_name, content_type, size, uploaded_by) VALUES (?,?,?,?,?,?,?,?,?)').run(jenId, kind, title, period, key, `${title}.pdf`, 'application/pdf', 400, 'Ann Accounting');
+  }
 }
 
 // Map points around Springfield, OH for customers/sites, and live truck positions.

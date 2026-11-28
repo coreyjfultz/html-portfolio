@@ -23,6 +23,7 @@ const NAV = [
   { href: '#/timeclock', label: 'Time clock', ico: 'clock' },
   { href: '#/chat', label: 'Team chat', ico: 'message-circle', badge: 'chat' },
   { href: '#/time-off', label: 'Time off', ico: 'tree-palm' },
+  { href: '#/my-pay', label: 'My pay & benefits', ico: 'banknote', when: s => s.addon_pay === '1' },
   { section: 'Customers' },
   { href: '#/customers', label: 'Customers', ico: 'users' },
   { href: '#/pipeline', label: 'Pipeline', ico: 'kanban', roles: G.staff },
@@ -62,6 +63,7 @@ const ROUTES = [
   [/^chat$/, 'chat'],
   [/^chat-records$/, 'chatrecords'],
   [/^time-off$/, 'timeoff'],
+  [/^my-pay$/, 'mypay'],
   [/^chat\/(\d+)$/, 'chat'],
   [/^customers$/, 'customers', 'list'],
   [/^pipeline$/, 'pipeline'],
@@ -171,7 +173,7 @@ function renderSetup() {
 
 function renderShell() {
   const role = state.user.role;
-  const nav = NAV.filter(n => !n.roles || n.roles.includes(role));
+  const nav = NAV.filter(n => (!n.roles || n.roles.includes(role)) && (!n.when || n.when(state.settings || {})));
   mount(root, html`<div class="app">
     <aside class="sidebar">
       ${brand(state.settings.company_name)}

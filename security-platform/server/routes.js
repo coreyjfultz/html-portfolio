@@ -24,6 +24,7 @@ import { registerChatRoutes } from './chat.js';
 import { registerPushRoutes } from './push.js';
 import { registerTimeOffRoutes, timeOffEvents, holidayEvents } from './timeoff.js';
 import { registerHrRoutes } from './hr.js';
+import { registerPayRoutes } from './pay.js';
 import { requestOrigin } from './net.js';
 import { runBackup, listBackups } from './backup.js';
 import { openAlerts, resolveAlert } from './alerts.js';
@@ -416,6 +417,7 @@ export function buildRoutes() {
   // ------------------------------------------------------------ time off
   registerTimeOffRoutes(r);
   registerHrRoutes(r);
+  registerPayRoutes(r);
 
   // ------------------------------------------------------------ alerts for the owner / office
   r('GET', '/api/alerts', G.staff, ({ db, user }) => openAlerts(db, user.role));

@@ -11,7 +11,7 @@ import { fileURLToPath } from 'node:url';
 import { DATA_DIR, DB_PATH, openDb } from './db.js';
 
 export const BACKUP_DIR = process.env.BACKUP_DIR || path.join(DATA_DIR, 'backups');
-const FILE_DIRS = ['photos', 'signatures', 'branding', 'invoices'];
+const FILE_DIRS = ['photos', 'signatures', 'branding', 'invoices', 'hrdocs'];
 const keep = () => Math.max(1, Number(process.env.BACKUP_KEEP) || 14);
 const stamp = (d = new Date()) => {
   const p = n => String(n).padStart(2, '0');

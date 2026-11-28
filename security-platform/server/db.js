@@ -44,6 +44,8 @@ export const DEFAULT_SETTINGS = {
   vehicle_check_frequency: 'daily', vehicle_check_required: '1', vehicle_check_photos: 'damage',
   require_serials: '1', require_serial_photos: '1',
   vapid_public: '', vapid_private: '',
+  addon_pay: '0', payroll_provider: 'quickbooks', payroll_portal_url: '', payroll_label: '', payroll_contact: '', payroll_note: '',
+  addon_pay: '0', payroll_provider: 'quickbooks', payroll_portal_url: '', payroll_label: '', payroll_contact: '', payroll_note: '',
   workday_hours: '8', pto_default_vacation: '80', pto_default_sick: '40', pto_default_personal: '16', pto_allow_negative: '0', holiday_blocks: '1',
   survey_enabled: '1', survey_delay_hours: '2', survey_min_days: '30', survey_skip_types: 'estimate', survey_alert_below: '3', review_url: '',
   truck_count_day: '5', truck_count_reminders: '1', inventory_manager_id: '', readiness_required: '1', readiness_spares: '1',
@@ -357,6 +359,24 @@ function migrate(db) {
     CREATE TABLE IF NOT EXISTS company_holidays (
       id INTEGER PRIMARY KEY AUTOINCREMENT, date TEXT NOT NULL UNIQUE, name TEXT NOT NULL, paid INTEGER NOT NULL DEFAULT 1
     );
+    -- Pay & benefits add-on: private documents posted for one employee (pay stubs, W-2s…).
+    CREATE TABLE IF NOT EXISTS employee_documents (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      kind TEXT NOT NULL, title TEXT NOT NULL, period TEXT, file_key TEXT NOT NULL, file_name TEXT, content_type TEXT, size INTEGER,
+      uploaded_by TEXT, viewed_at TEXT,
+      created_at TEXT NOT NULL DEFAULT (datetime('now','localtime'))
+    );
+    CREATE INDEX IF NOT EXISTS idx_employee_docs ON employee_documents(user_id);
+    -- Pay & benefits add-on: private documents posted for one employee (pay stubs, W-2s…).
+    CREATE TABLE IF NOT EXISTS employee_documents (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      kind TEXT NOT NULL, title TEXT NOT NULL, period TEXT, file_key TEXT NOT NULL, file_name TEXT, content_type TEXT, size INTEGER,
+      uploaded_by TEXT, viewed_at TEXT,
+      created_at TEXT NOT NULL DEFAULT (datetime('now','localtime'))
+    );
+    CREATE INDEX IF NOT EXISTS idx_employee_docs ON employee_documents(user_id);
     -- Yearly time-off allowances per person (hours); blank = company defaults.
     CREATE TABLE IF NOT EXISTS pto_allowances (
       user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE, year INTEGER NOT NULL,
