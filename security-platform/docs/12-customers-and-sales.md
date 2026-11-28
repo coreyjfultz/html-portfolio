@@ -47,13 +47,26 @@ Opening a customer shows a header (name, type, stage, phone/email buttons, direc
 | **Monitoring** | Central-station accounts, zones, call list, activity ([14](14-monitoring-systems-and-fire.md)). |
 | **Service calls** | All service calls, past and upcoming. |
 | **Proposals** | Proposals and agreements for this customer. |
-| **Billing** | Invoices, payments, saved payment methods, recurring monthly charges. |
+| **Site survey** | Photos taken on a site visit, marked up to show where equipment goes, with notes ([below](#site-survey-photos)). Sales, owners, admins and accounting. |
+| **Billing** | Invoices, payments, saved payment methods, recurring charges (monthly, quarterly, every 6 months or yearly). |
 
 Fire inspection reports for the customer are listed under **Fire inspections** (menu) and on their systems.
 
-### Recurring monthly charges
+### Recurring charges (monthly, quarterly, every 6 months, yearly)
 
-Under **Billing → Recurring charges**: description ("Alarm monitoring", "Camera service plan"), **monthly amount**, taxable yes/no, active yes/no. Every active charge is billed each month when someone clicks **Run monthly billing** ([16](16-billing-and-accounting.md#monthly-billing)). A signed agreement with a monthly fee adds its charge automatically.
+Under **Billing → Recurring charges**:
+
+| Field | Notes |
+|---|---|
+| Description | "Alarm monitoring", "Camera service plan", "Cloud video storage"… |
+| **Monthly rate** | Always the price **per month**, even for charges billed less often. |
+| **Billed** | **Monthly**, **Every 3 months (quarterly)**, **Every 6 months** or **Yearly (annually)**. |
+| **First billed in (YYYY-MM)** | For quarterly, 6-month and yearly charges: the first month it's billed; it's then billed every 3 / 6 / 12 months after. Blank = this month. |
+| Taxable, active | Tax applies if taxable; inactive charges are never billed. |
+
+Example: monitoring at **$40/month, billed quarterly, first billed in 2026-01** is invoiced **$120** in January, April, July and October, with the line *"Alarm monitoring — January 2026 to March 2026 (3 months × $40.00)"*. Nothing is billed in the other months.
+
+The **monthly billing run** picks up whatever is due that month ([16](16-billing-and-accounting.md#monthly-billing)). A signed agreement with a monthly fee adds its charge automatically, with the billing frequency chosen on the proposal and starting the month it's signed.
 
 ### Parent accounts (one owner, several businesses)
 
@@ -121,6 +134,39 @@ Stages only ever move **forward** automatically:
 5. **Terms & conditions:** pre-filled from Settings → Company; adjust for this customer if needed.
 6. **Preview** shows exactly what the customer will see, with your logo.
 
+### Billing frequency on the proposal
+
+**Bill the monthly fee:** Monthly, Every 3 months (quarterly), Every 6 months or Yearly. The fee is still entered **per month**; the proposal shows the customer both, e.g. *"$40.00/month"* with *"Billed quarterly: $120.00 every 3 months"* under it. When signed, the recurring charge is created with that frequency. Offer yearly billing as an option (some companies give a discount: lower the monthly fee for yearly customers).
+
+### Product photos on the proposal
+
+Inventory items can have a photo ([15](15-inventory-trucks-and-fleet.md#items---new-item)). With **Show product photos on the proposal** ticked (default), each line item from inventory shows a small picture of the product, so the customer sees what a "4MP turret camera" actually looks like. Untick it for a text-only proposal. Lines without a photo just show the text.
+
+### Site survey photos
+
+The person putting the quote together can take pictures on the site visit of **where things will go**, draw on them, and write notes, all from the phone.
+
+**Where:** the customer's **Site survey** tab (all photos for that customer), or the **Site survey photos** card on a proposal (photos for that proposal).
+
+**Taking one:**
+
+1. **📷 Take photo** opens the phone's camera (or **Upload** for photos already taken, several at once).
+2. The **markup** screen opens:
+   - **Draw**: freehand, e.g. circle where the camera mounts, trace the wire path;
+   - **Arrow**: drag from start to point, e.g. pointing at the outlet;
+   - **Label**: tap and type a short label right on the picture ("Cam 1", "Panel", "Run through attic");
+   - **5 colors**, **Undo**, **Clear** (back to the original photo).
+3. Give it a **title** ("Front entry — camera 1") and **notes** ("Mount above the door at 9 ft. Outlet inside the coat closet. Needs 24 ft ladder.").
+4. **Save photo.**
+
+**On the proposal:** in the proposal's card, tick **On proposal** for the photos the customer should see. They print in a **Site survey** section of the proposal, with the title and notes, so the customer sees exactly where each device goes. Photos left unticked stay internal (for the installers and your own notes).
+
+**Editing:** **Mark up / edit** re-opens the markup on the photo (title and notes too). **Delete** removes it.
+
+**Signed proposals:** once signed, the photos shown on it are **locked** (they're part of the signed document and its fingerprint): they can't be edited, removed or unticked. Other photos can still be added to the customer.
+
+**Who:** sales, owners and administrators add and edit; accounting can view. Technicians and HR don't see survey photos. Installers can be shown them by the office, or use the job's notes.
+
 ### Sending and signing
 
 - **Send** emails the customer a private link to review and sign (it needs email set up). Status goes *Draft → Sent*, and *Viewed* the first time they open it.
@@ -134,7 +180,7 @@ Stages only ever move **forward** automatically:
 ### What happens automatically when it's signed
 
 1. The customer moves to **Accepted** in the pipeline.
-2. If there's a **monthly fee**, a recurring charge is added and the customer is marked **Active**.
+2. If there's a **monthly fee**, a recurring charge is added (with the proposal's billing frequency, first billed this month) and the customer is marked **Active**.
 3. For proposals and installation agreements with line items, an **installation service call** is created (status *New*, 4 hours, with the items listed) and the equipment is added to that job's **materials** list, ready to check out to a truck ([13](13-service-calls-and-scheduling.md#job-materials)).
 4. If there's a **deposit %**, a **deposit invoice** is created and marked sent.
 

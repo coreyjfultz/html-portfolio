@@ -12,7 +12,7 @@ This guide covers invoices (one-off, from jobs and monthly), payments (cash, che
 
 | Kind | Comes from |
 |---|---|
-| **Monthly** | **Run monthly billing**: every active recurring charge (monitoring, service plans). |
+| **Monthly** | **Run monthly billing**: every recurring charge due that month (monitoring, service plans), whether billed monthly, quarterly, every 6 months or yearly. |
 | **Service** | A completed service call (**Create invoice** on the job). |
 | **Installation** | Installs, and **deposit invoices** created automatically when a proposal is signed. |
 | **Other** | Anything else (**+ New invoice**). |
@@ -38,10 +38,21 @@ Invoice numbers continue from *Next invoice #* in Settings.
 Once a month (the dashboard reminds you): **Invoices → Run monthly billing**.
 
 1. Choose the **billing period** (month).
-2. The list shows every customer with active recurring charges and what they'll be billed (charges are summed per customer, with tax where marked taxable).
+2. The list shows every customer with a recurring charge **due that month** and what they'll be billed (charges are summed per customer, with tax where marked taxable). Charges billed less often are marked, e.g. *"Cloud storage (quarterly)"*; on the invoice the line says what it covers, e.g. *"Cloud storage — January 2026 to March 2026 (3 months × $15.00)"*.
 3. Optionally tick **Create as drafts for review** to check them before sending.
 4. **Create invoices.** Customers already billed for that month are skipped, so running it twice doesn't double-bill.
 5. If drafts: review, then **Mark drafts sent** (or send each).
+
+**How often each charge is billed.** Each recurring charge has a **monthly rate** and a frequency ([12](12-customers-and-sales.md#recurring-charges-monthly-quarterly-every-6-months-yearly)):
+
+| Billed | Invoiced in | Amount on the invoice |
+|---|---|---|
+| Monthly | every month | the monthly rate |
+| Every 3 months (quarterly) | the *first billed* month, then every 3 months | 3 × the monthly rate |
+| Every 6 months | the *first billed* month, then every 6 months | 6 × the monthly rate |
+| Yearly | the *first billed* month each year | 12 × the monthly rate |
+
+In the months between, the charge is skipped (a customer with only a yearly charge doesn't appear). The invoice line says which months it covers. Billing is **in advance**: the January quarterly invoice covers January to March. To change when a quarterly or yearly customer is billed, change *First billed in*. Monthly recurring revenue on the reports always uses the monthly rate, whatever the frequency.
 
 Creating invoices doesn't email them by itself. To deliver them: with Stripe connected, send each customer a **Pay now** link (**Get paid online → Send a "Pay now" link**) — the email contains the invoice amount and a secure payment page; or **Print / PDF** and mail or email the file yourself. Customers using the portal also see new invoices there.
 

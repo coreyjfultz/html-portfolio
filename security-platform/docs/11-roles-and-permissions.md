@@ -15,7 +15,7 @@ Roles are separate from **supervisors** (who reports to whom). A supervisor appr
 | **Sales** | Leads, the pipeline, site surveys, estimates, proposals and agreements. No invoices or financial reports. |
 | **Accounting** | Invoices, payments, expenses, receiving, reports, QuickBooks, pay stubs & benefits. Can see (not edit) proposals. |
 | **Technician** | Their own jobs and schedule, the customers on that schedule (systems, passwords, monitoring), photos, signatures, their truck's inventory. No billing. |
-| **HR** | Everyone's time off, balances and holidays, users and supervisors, pay stubs & benefits, chat records. **No customers, jobs or billing.** |
+| **HR** | Everyone's timesheets, time off, balances and holidays, users and supervisors, pay stubs & benefits, chat records. **No customers, jobs or billing.** |
 
 ### What each built-in role can do
 
@@ -30,6 +30,7 @@ Roles are separate from **supervisors** (who reports to whom). A supervisor appr
 | Monitoring accounts, put on test | ✅ | ✅ | ✅ | ✅ | 🔸 own schedule | ➖ |
 | Pipeline | ✅ | ✅ | ✅ | ✅ | ➖ | ➖ |
 | **Proposals & agreements**: create, send | ✅ | ✅ | ✅ | 👁 | ➖ | ➖ |
+| Site survey photos (take, mark up, put on proposals) | ✅ | ✅ | ✅ | 👁 | ➖ | ➖ |
 | **Service calls**: view / create / update | ✅ | ✅ | ✅ | ✅ | 🔸 own customers | ➖ |
 | Override scheduling conflicts (double booking, travel time, time off, blocked time) | ✅ | ✅ | ➖ | ➖ | ➖ | ➖ |
 | Override job completion rules, pre-approve "no signature" | ✅ | ✅ | ➖ | ➖ | ➖ | ➖ |
@@ -44,9 +45,9 @@ Roles are separate from **supervisors** (who reports to whom). A supervisor appr
 | Own truck: count, load, start-of-day check | — | — | — | — | ✅ | — |
 | Vehicles: view | ✅ | ✅ | ✅ | ✅ | ✅ | ➖ |
 | Vehicles: add / edit | ✅ | ✅ | ➖ | ➖ | ➖ | ➖ |
-| Inventory items & tools: add / edit | ✅ | ✅ | ➖ | ✅ | ➖ | ➖ |
+| Inventory items & tools: add / edit, product photos | ✅ | ✅ | ➖ | ✅ | ➖ | ➖ |
 | Time clock (own) | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
-| Timesheets for everyone | ✅ | ✅ | ➖ | ✅ | ➖ | ➖ |
+| Timesheets for everyone: view, correct, export | ✅ | ✅ | ➖ | ✅ | ➖ | ✅ |
 | Time off: request | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
 | Time off: decide for **everyone**, set balances, holidays | ✅ | ✅ | ➖ | ➖ | ➖ | ✅ |
 | Users & logins, supervisors, job titles | ✅ | ✅ | ➖ | ➖ | ➖ | 🔸 not admin accounts |

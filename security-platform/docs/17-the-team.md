@@ -23,7 +23,7 @@ What happens with the location:
 
 Clock-outs away from the office alert the owner only if *Also alert on clock-outs away* is on (off by default). Set the **office location** in *Settings → Field rules → Time clock*: type the address and click **Look up the address**, or stand in the office and click **Use this device's location**, then save.
 
-### Timesheets (owners, admins, accounting)
+### Timesheets (owners, admins, accounting, HR)
 
 The Time clock page shows **On the clock now** (who's clocked in, since when, where) and **Timesheets** for a date range (**From / To**): per person, total, **regular and overtime hours** (overtime = over **40 hours per week**). Open a person to see **every punch** with times and location badges (office / job site / away / no location, with map links).
 

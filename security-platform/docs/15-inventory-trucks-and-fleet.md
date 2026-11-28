@@ -22,6 +22,8 @@ This guide covers inventory (warehouse and trucks), receiving supplier invoices,
 | **Distributor part #s** | The part numbers your distributors use for this item, comma-separated (e.g. `ADI: 1234-56, Anixter: QX-9`). Supplier invoices match on these. The system adds them by itself as you match invoice lines. |
 | Active, notes | Inactive items disappear from pick lists but keep their history. |
 
+**Product photo:** open an item → **Photo** card → **📷 Add photo** (or **Replace** / **Remove**). Use a clear picture of the product (the manufacturer's product image is ideal). The photo shows as a thumbnail in the inventory list and, if the proposal allows it, next to the item on proposals ([12](12-customers-and-sales.md#product-photos-on-the-proposal)). Owners, administrators and accounting add photos; everyone who sees inventory sees them. Photos are resized automatically.
+
 ### Moving stock
 
 | Button | What it does |

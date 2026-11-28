@@ -39,6 +39,19 @@ A separate Windows program (an `.exe` built with Electron or similar) would only
 
 The installed web app updates itself the moment the server is updated. App Store / Play Store versions are possible later if a customer or IT department requires them (see [02](02-install-devices.md#do-we-need-app-store-or-windows-exe-versions)).
 
+## Handbooks by job
+
+Step-by-step guides written for each person's job: their day, what they can and can't see, and how timecards, time off, inventory, tasks and the rest work from their side.
+
+| I am… | Read |
+|---|---|
+| A **field technician** | [30 — Technician handbook](30-handbook-technician.md) |
+| **HR** | [31 — HR handbook](31-handbook-hr.md) |
+| The **owner** | [32 — Owner handbook](32-handbook-owner.md) |
+| In the **office / dispatch** (administrator) | [33 — Office and dispatch handbook](33-handbook-office-dispatch.md) |
+| In **sales** (quotes, bids, site surveys) | [34 — Sales handbook](34-handbook-sales.md) |
+| In **accounting** | [35 — Accounting handbook](35-handbook-accounting.md) |
+
 ## Words used in these documents
 
 | Word | Meaning |
