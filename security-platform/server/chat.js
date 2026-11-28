@@ -6,6 +6,8 @@ import { getSettings } from './db.js';
 import { HttpError, nowLocal } from './resources.js';
 import { decodeImage, saveImage, sendImage } from './media.js';
 import { notifyPush } from './push.js';
+import { audit } from './security.js';
+import { raiseAlert } from './alerts.js';
 
 const MANAGE = G.manage;
 const isManager = u => MANAGE.includes(u?.role);
@@ -188,6 +190,69 @@ export function registerChatRoutes(r) {
     const m = db.prepare('SELECT * FROM chat_messages WHERE id = ? AND deleted_at IS NULL').get(Number(params.id));
     if (!m?.photo_key) throw new HttpError(404, 'Not found');
     assertMember(db, channelOr404(db, m.channel_id), user);
+    sendImage(res, 'photos', m.photo_key);
+    return undefined;
+  });
+
+  // ---- Incident review: owners/admins can recover any conversation, including direct
+  // messages and deleted messages. They give a reason once per review (30 minutes); every
+  // conversation opened is written to the activity log, and owners are alerted when an
+  // administrator starts a review.
+  const reviews = new Map(); // userId -> { reason, until }
+  const reviewOf = user => {
+    const r = reviews.get(user.id);
+    if (!r || r.until < Date.now()) throw Object.assign(new HttpError(403, 'Start a review with a reason first'), { code: 'review_required' });
+    return r;
+  };
+  r('POST', '/api/chat/records/review', MANAGE, ({ db, user, body }) => {
+    const reason = String(body.reason || '').trim();
+    if (reason.length < 5) throw new HttpError(400, 'Describe the incident or reason for the review');
+    reviews.set(user.id, { reason: reason.slice(0, 300), until: Date.now() + 30 * 60e3 });
+    audit(db, user, 'start chat review', 'chat', null, reason.slice(0, 300));
+    if (user.role !== 'owner') raiseAlert(db, { kind: 'chat_review', severity: 'info', title: `${user.name} started reviewing team chat records`, body: `Reason: ${reason}`, link: '#/settings?tab=audit', roles: 'owner' });
+    return { ok: true, until: new Date(Date.now() + 30 * 60e3).toISOString() };
+  });
+  r('GET', '/api/chat/records/channels', MANAGE, ({ db, user, query }) => {
+    reviewOf(user);
+    const where = [], args = [];
+    if (query.user_id) {
+      const uid = Number(query.user_id);
+      where.push(`(c.kind = 'team' OR EXISTS (SELECT 1 FROM chat_members m WHERE m.channel_id = c.id AND m.user_id = ?) OR EXISTS (SELECT 1 FROM chat_messages x WHERE x.channel_id = c.id AND x.user_id = ?))`);
+      args.push(uid, uid);
+    }
+    const q = String(query.q || '').trim();
+    if (q) { where.push('EXISTS (SELECT 1 FROM chat_messages x WHERE x.channel_id = c.id AND x.body LIKE ?)'); args.push(`%${q}%`); }
+    const rows = db.prepare(`SELECT c.* FROM chat_channels c ${where.length ? 'WHERE ' + where.join(' AND ') : ''} ORDER BY COALESCE(c.last_message_at, c.created_at) DESC LIMIT 300`).all(...args);
+    return rows.map(c => {
+      const people = c.kind === 'team' ? 'Everyone' : db.prepare(`SELECT GROUP_CONCAT(name, ', ') AS n FROM (SELECT DISTINCT u.name FROM users u WHERE u.id IN (SELECT user_id FROM chat_members WHERE channel_id = ? UNION SELECT user_id FROM chat_messages WHERE channel_id = ?) ORDER BY u.name)`).get(c.id, c.id).n;
+      const stats = db.prepare('SELECT COUNT(*) AS n, SUM(CASE WHEN deleted_at IS NOT NULL THEN 1 ELSE 0 END) AS deleted, MAX(created_at) AS last FROM chat_messages WHERE channel_id = ?').get(c.id);
+      return { id: c.id, kind: c.kind, title: c.kind === 'direct' ? 'Direct message' : channelTitle(db, c, { id: 0 }), people, messages: stats.n, deleted: stats.deleted || 0, last: stats.last,
+        matches: q ? db.prepare("SELECT COUNT(*) AS n FROM chat_messages WHERE channel_id = ? AND body LIKE ?").get(c.id, `%${q}%`).n : undefined };
+    });
+  });
+  const transcript = (db, c) => db.prepare('SELECT * FROM chat_messages WHERE channel_id = ? ORDER BY id').all(c.id)
+    .map(m => ({ id: m.id, user_name: m.user_name, body: m.body, photo: m.photo_key ? `/api/chat/records/photos/${m.id}` : null, created_at: m.created_at, deleted_at: m.deleted_at }));
+  r('GET', '/api/chat/records/channels/:id', MANAGE, ({ db, user, params }) => {
+    const rv = reviewOf(user);
+    const c = channelOr404(db, params.id);
+    audit(db, user, 'review chat', 'chat', c.id, rv.reason);
+    const people = db.prepare('SELECT DISTINCT u.name FROM users u WHERE u.id IN (SELECT user_id FROM chat_members WHERE channel_id = ? UNION SELECT user_id FROM chat_messages WHERE channel_id = ?) ORDER BY u.name').all(c.id, c.id).map(x => x.name);
+    return { id: c.id, kind: c.kind, title: c.kind === 'direct' ? `Direct message: ${people.join(' & ')}` : channelTitle(db, c, { id: 0 }), people, messages: transcript(db, c) };
+  });
+  r('GET', '/api/chat/records/channels/:id/export', MANAGE, ({ db, user, params, res }) => {
+    const rv = reviewOf(user);
+    const c = channelOr404(db, params.id);
+    audit(db, user, 'export chat', 'chat', c.id, rv.reason);
+    const cell = v => { const x = String(v ?? ''); return /[",\n]/.test(x) ? `"${x.replace(/"/g, '""')}"` : x; };
+    const lines = ['Sent,From,Message,Photo,Deleted at', ...transcript(db, c).map(m => [m.created_at, m.user_name, m.body, m.photo ? 'yes' : '', m.deleted_at || ''].map(cell).join(','))];
+    res.writeHead(200, { 'Content-Type': 'text/csv; charset=utf-8', 'Content-Disposition': `attachment; filename="chat-${c.id}.csv"`, 'Cache-Control': 'no-store' });
+    res.end(lines.join('\r\n'));
+    return undefined;
+  });
+  r('GET', '/api/chat/records/photos/:id', MANAGE, ({ db, user, params, res }) => {
+    reviewOf(user);
+    const m = db.prepare('SELECT * FROM chat_messages WHERE id = ?').get(Number(params.id));
+    if (!m?.photo_key) throw new HttpError(404, 'Not found');
     sendImage(res, 'photos', m.photo_key);
     return undefined;
   });

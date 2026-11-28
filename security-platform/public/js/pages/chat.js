@@ -21,7 +21,7 @@ export async function render(view, params = []) {
   const push = await pushState().catch(() => 'unsupported');
   mount(view, html`<div class="chat ${openId ? 'has-open' : ''}">
     <aside class="chat-list card">
-      <div class="card-head"><h2>Team chat</h2><button class="btn sm primary" data-new>+ New</button></div>
+      <div class="card-head"><h2>Team chat</h2><div class="row">${['owner', 'admin'].includes(state.user.role) ? html`<a class="btn sm ghost" href="#/chat-records" title="Recover conversations for an incident">Records</a>` : ''}<button class="btn sm primary" data-new>+ New</button></div></div>
       ${push === 'off' ? html`<div class="note small chat-push">🔔 Get a notification on this device for new messages. <button class="btn sm" data-push>Turn on</button></div>`
         : push === 'blocked' ? html`<div class="note small chat-push">Notifications are blocked for this site in your browser settings.</div>` : ''}
       <nav class="chat-chans">${chans.map(c => html`<a href="#/chat/${c.id}" class="chat-chan ${c.id === openId ? 'on' : ''}">
@@ -30,6 +30,7 @@ export async function render(view, params = []) {
           <span class="small muted ellipsis">${c.last ? `${c.last.user_name.split(' ')[0]}: ${c.last.text}` : 'No messages yet'}</span></span>
         ${c.unread ? html`<span class="chat-unread">${c.unread}</span>` : c.muted ? html`<span class="small muted" title="Muted">🔕</span>` : ''}</a>`)}</nav>
       ${push === 'on' ? html`<div class="small muted" style="padding:10px 16px">🔔 Notifications on for this device · <a href="#" data-pushoff>turn off</a></div>` : ''}
+      <div class="small muted chat-policy">Chats are company records. Owners and administrators can review any conversation, including deleted messages, if there’s an incident.</div>
     </aside>
     <section class="chat-main card" data-main>${openId ? '' : html`<div class="empty">Pick a conversation, or start one with “+ New”.</div>`}</section></div>`);
   $('[data-new]', view).addEventListener('click', newDialog);

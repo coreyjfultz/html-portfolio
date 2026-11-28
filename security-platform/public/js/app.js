@@ -59,6 +59,7 @@ const ROUTES = [
   [/^myday$/, 'myday'],
   [/^timeclock$/, 'timeclock'],
   [/^chat$/, 'chat'],
+  [/^chat-records$/, 'chatrecords'],
   [/^chat\/(\d+)$/, 'chat'],
   [/^customers$/, 'customers', 'list'],
   [/^pipeline$/, 'pipeline'],

@@ -146,3 +146,39 @@ test('push notifications: subscribe, signed VAPID push with no message text, dea
     assert.equal(db.prepare('SELECT COUNT(*) AS n FROM push_subscriptions').get().n, 0);
   } finally { delete process.env.PUSH_ALLOW_ANY; fake.close(); }
 });
+
+test('incident review: owners/admins recover any conversation (incl. deleted messages) with a reason; every look is logged', async () => {
+  const admin = client();
+  await owner.post('/api/users', { name: 'Ann Admin', email: 'ann@example.com', password: 'password123', role: 'admin' });
+  await admin.post('/api/auth/login', { email: 'ann@example.com', password: 'password123' });
+  const dm = (await tess.post('/api/chat/channels', { kind: 'direct', user_id: ids['Bo Tech'] })).data.id;
+  const m = (await bo.post(`/api/chat/channels/${dm}/messages`, { body: 'Take the extra cable home, nobody counts it' })).data;
+  await bo.del(`/api/chat/messages/${m.id}`);
+  // Not without a review, not for technicians or sales
+  assert.equal((await owner.get(`/api/chat/records/channels/${dm}`)).data.code, 'review_required');
+  assert.equal((await tess.post('/api/chat/records/review', { reason: 'curious' })).status, 403);
+  assert.equal((await sal.post('/api/chat/records/review', { reason: 'curious' })).status, 403);
+  assert.equal((await admin.post('/api/chat/records/review', { reason: 'x' })).status, 400, 'a real reason is required');
+  assert.equal((await admin.post('/api/chat/records/review', { reason: 'Truck 2 count variance — missing Cat6 cable' })).status, 200);
+  // Find it by text, including the deleted message
+  const found = (await admin.get('/api/chat/records/channels?q=extra%20cable')).data;
+  assert.equal(found.length, 1);
+  assert.equal(found[0].id, dm);
+  assert.match(found[0].people, /Bo Tech, Tess Tech/);
+  const byPerson = (await admin.get(`/api/chat/records/channels?user_id=${ids['Bo Tech']}`)).data;
+  assert.ok(byPerson.some(c => c.id === dm));
+  const t = (await admin.get(`/api/chat/records/channels/${dm}`)).data;
+  assert.match(t.title, /Direct message: Bo Tech & Tess Tech/);
+  const rec = t.messages.find(x => x.id === m.id);
+  assert.equal(rec.body, 'Take the extra cable home, nobody counts it', 'deleted messages are recoverable');
+  assert.ok(rec.deleted_at);
+  const csv = await fetch(`${base}/api/chat/records/channels/${dm}/export`, { headers: { cookie: admin.cookie() } });
+  assert.match(await csv.text(), /Take the extra cable home/);
+  // Logged, and the owner is told an admin is reviewing
+  const log = db.prepare("SELECT action, detail FROM audit_log WHERE user_name = 'Ann Admin' AND action IN ('start chat review','review chat','export chat') ORDER BY id").all();
+  assert.deepEqual(log.map(l => l.action), ['start chat review', 'review chat', 'export chat']);
+  assert.match(log[1].detail, /Truck 2 count variance/);
+  assert.ok((await owner.get('/api/alerts')).data.some(a => a.kind === 'chat_review' && /Ann Admin/.test(a.title)));
+  // The people in the chat still see it as deleted
+  assert.equal((await tess.get(`/api/chat/channels/${dm}/messages`)).data.find(x => x.id === m.id).body, null);
+});
