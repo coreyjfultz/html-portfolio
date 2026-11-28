@@ -112,6 +112,14 @@ export async function settingsPane(pane, { settingsCards, wireSettingsCards }) {
       ['voice_grant_hours', 'Hours the answering tech can see that customer in the app', 'number'],
       ['oncall_notify', 'Email calendar invites and text techs about their on-call shifts', 'check'],
     ], note: 'Technicians can give each tech their own Twilio number on the Technicians page; calls to it ring that tech directly.' },
+    { title: 'In-app calls (team to team)', intro: html`<p class="small muted" style="margin-top:0">Team members can call each other from Team chat over the internet, no phone numbers and no per-minute cost. Most calls connect device to device. Some cell networks and office firewalls block that; a <b>relay server</b> fixes it.</p>`,
+      fields: [
+        ['app_calls_enabled', 'Allow in-app calls', 'check'],
+        ['app_call_relay', 'Relay server', 'select', [['none', 'None (works on most networks)'], ['twilio', 'Twilio (uses the Twilio account above; billed per GB relayed)'], ['custom', 'Our own relay server (coturn)']]],
+        ['turn_urls', 'Own relay addresses (comma-separated)', 'text', 'turn:turn.example.com:3478?transport=udp,turn:turn.example.com:3478?transport=tcp'],
+        ['turn_secret', 'Own relay shared secret', 'secret'],
+        ['app_call_stun', 'Address-lookup (STUN) servers (blank for none)', 'text'],
+      ], note: 'Own relay: see deploy/GO-LIVE.md (“In-app calls relay”). The secret must match the relay’s static-auth-secret.' },
   ]));
   wireSettingsCards(pane, () => settingsPane(pane, { settingsCards, wireSettingsCards }));
   $('[data-copy]', pane)?.addEventListener('click', () => navigator.clipboard?.writeText(setup.incoming_url).then(() => toast('Copied')));

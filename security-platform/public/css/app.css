@@ -805,3 +805,21 @@ table.t tr.click:hover td { background: #f8faff; }
 .cal-task.done { opacity: .55; text-decoration: line-through; }
 .agenda-row.agenda-task { width: 100%; background: none; border: 0; border-bottom: 1px solid var(--border); font: inherit; color: inherit; cursor: pointer; }
 .agenda-row.agenda-task:disabled { cursor: default; }
+
+/* In-app calls */
+.call-ui { position: fixed; inset: 0; z-index: 2000; display: grid; place-items: center; background: rgba(8, 13, 25, .72); backdrop-filter: blur(6px); padding: 16px; }
+.call-card { width: min(360px, 100%); background: #0f1727; color: #fff; border-radius: 24px; padding: 32px 24px 26px; text-align: center; box-shadow: 0 30px 80px rgba(0,0,0,.45); }
+.call-avatar { width: 96px; height: 96px; margin: 0 auto 14px; border-radius: 50%; display: grid; place-items: center; font-size: 34px; font-weight: 700; background: var(--primary); }
+.call-avatar.pulse { animation: callpulse 1.6s ease-out infinite; }
+@keyframes callpulse { 0% { box-shadow: 0 0 0 0 rgba(59,130,246,.55); } 100% { box-shadow: 0 0 0 26px rgba(59,130,246,0); } }
+@media (prefers-reduced-motion: reduce) { .call-avatar.pulse { animation: none; } }
+.call-name { font-size: 22px; font-weight: 700; }
+.call-status { margin-top: 4px; color: #cbd5e1; font-variant-numeric: tabular-nums; min-height: 1.4em; }
+.call-note { margin-top: 10px; color: #fbbf24; }
+.call-actions { display: flex; justify-content: center; gap: 28px; margin: 28px 0 22px; }
+.call-btn { width: 68px; height: 68px; border-radius: 50%; border: 0; font-size: 26px; color: #fff; cursor: pointer; position: relative; background: #334155; }
+.call-btn span { position: absolute; top: 74px; left: 50%; transform: translateX(-50%); font-size: 12px; color: #cbd5e1; white-space: nowrap; }
+.call-btn.answer { background: #16a34a; }
+.call-btn.decline { background: #dc2626; }
+.call-btn.mute.on { background: #f8fafc; color: #0f1727; }
+.call-btn:focus-visible { outline: 3px solid #93c5fd; outline-offset: 3px; }

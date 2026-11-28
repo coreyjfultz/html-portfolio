@@ -21,22 +21,45 @@ export async function render(view, params = []) {
   const push = await pushState().catch(() => 'unsupported');
   mount(view, html`<div class="chat ${openId ? 'has-open' : ''}">
     <aside class="chat-list card">
-      <div class="card-head"><h2>Team chat</h2><div class="row">${['owner', 'admin'].includes(state.user.role) ? html`<a class="btn sm ghost" href="#/chat-records" title="Recover conversations for an incident">Records</a>` : ''}<button class="btn sm primary" data-new>+ New</button></div></div>
+      <div class="card-head"><h2>Team chat</h2><div class="row">${['owner', 'admin'].includes(state.user.role) ? html`<a class="btn sm ghost" href="#/chat-records" title="Recover conversations for an incident">Records</a>` : ''}${state.settings.app_calls_enabled !== '0' ? html`<button class="btn sm" data-calls title="Call someone in the app">📞</button>` : ''}<button class="btn sm primary" data-new>+ New</button></div></div>
       ${push === 'off' ? html`<div class="note small chat-push">🔔 Get a notification on this device for new messages. <button class="btn sm" data-push>Turn on</button></div>`
         : push === 'blocked' ? html`<div class="note small chat-push">Notifications are blocked for this site in your browser settings.</div>` : ''}
-      <nav class="chat-chans">${chans.map(c => html`<a href="#/chat/${c.id}" class="chat-chan ${c.id === openId ? 'on' : ''}">
-        <span class="avatar sm">${KIND_ICON[c.kind] || initials(c.title)}</span>
-        <span class="chat-chan-main"><span class="row" style="justify-content:space-between;gap:6px"><b class="ellipsis">${c.title}</b><span class="small muted">${when(c.last?.at)}</span></span>
-          <span class="small muted ellipsis">${c.last ? `${c.last.user_name.split(' ')[0]}: ${c.last.text}` : 'No messages yet'}</span></span>
-        ${c.unread ? html`<span class="chat-unread">${c.unread}</span>` : c.muted ? html`<span class="small muted" title="Muted">🔕</span>` : ''}</a>`)}</nav>
+      <nav class="chat-chans" data-chans>${chanList(chans, openId)}</nav>
       ${push === 'on' ? html`<div class="small muted" style="padding:10px 16px">🔔 Notifications on for this device · <a href="#" data-pushoff>turn off</a></div>` : ''}
       <div class="small muted chat-policy">Chats are company records. Owners and administrators can review any conversation, including deleted messages, if there’s an incident.</div>
     </aside>
     <section class="chat-main card" data-main>${openId ? '' : html`<div class="empty">Pick a conversation, or start one with “+ New”.</div>`}</section></div>`);
   $('[data-new]', view).addEventListener('click', newDialog);
+  $('[data-calls]', view)?.addEventListener('click', callDialog);
   $('[data-push]', view)?.addEventListener('click', async () => { try { await enablePush(); toast('Notifications on for this device'); render(view, params); } catch (e) { toast(e.message, 'error'); } });
   $('[data-pushoff]', view)?.addEventListener('click', async e => { e.preventDefault(); await disablePush(); render(view, params); });
+  watchList(view, openId);
   if (openId) await conversation($('[data-main]', view), openId, () => render(view, params));
+}
+
+const chanList = (chans, openId) => html`${chans.map(c => html`<a href="#/chat/${c.id}" class="chat-chan ${c.id === openId ? 'on' : ''}">
+        <span class="avatar sm">${KIND_ICON[c.kind] || initials(c.title)}</span>
+        <span class="chat-chan-main"><span class="row" style="justify-content:space-between;gap:6px"><b class="ellipsis">${c.title}</b><span class="small muted">${when(c.last?.at)}</span></span>
+          <span class="small muted ellipsis">${c.last ? `${c.last.user_name.split(' ')[0]}: ${c.last.text}` : 'No messages yet'}</span></span>
+        ${c.unread && c.id !== openId ? html`<span class="chat-unread">${c.unread}</span>` : c.muted ? html`<span class="small muted" title="Muted">🔕</span>` : ''}</a>`)}`;
+
+// Keep the conversation list current while the chat page is open (new messages, new conversations).
+let listOff = null;
+function watchList(view, openId) {
+  listOff?.();
+  let t;
+  const fn = ev => {
+    if (ev.type !== undefined && ev.type !== 'message' && ev.type !== 'read') return;
+    clearTimeout(t);
+    t = setTimeout(async () => {
+      const nav = $('[data-chans]', view);
+      if (!nav || !nav.isConnected) { listOff?.(); return; }
+      mount(nav, chanList(await GET('/api/chat/channels'), openId));
+    }, 400);
+  };
+  listeners.add(fn);
+  listOff = () => { listeners.delete(fn); clearTimeout(t); };
+  window.addEventListener('hashchange', () => listOff?.(), { once: true });
 }
 
 async function conversation(box, id, rerender) {
@@ -49,6 +72,7 @@ async function conversation(box, id, rerender) {
         <div class="small muted ellipsis">${info.kind === 'team' ? 'Everyone in the company' : info.people.map((p, i) => html`${i ? ', ' : ''}${p.name.split(' ')[0]}${info.online.includes(p.id) ? html` <span class="online-dot" title="Online now"></span>` : ''}`)}</div></div>
       <div class="row" style="margin-left:auto">${info.service_call_id ? html`<a class="btn sm" href="#/calls/${info.service_call_id}">Open job</a>` : ''}
         ${info.kind === 'group' ? html`<button class="btn sm ghost" data-members>Members</button>` : ''}
+        ${info.kind === 'direct' && state.settings.app_calls_enabled !== '0' && info.people.find(p => p.id !== me) ? html`<button class="btn sm primary" data-call="${info.people.find(p => p.id !== me).id}" title="Call in the app (no phone number needed)">📞 Call</button>` : ''}
         <button class="btn sm ghost" data-mute title="${info.muted ? 'Unmute' : 'Mute'}">${info.muted ? '🔕' : '🔔'}</button></div></div>
     <div class="chat-msgs" data-msgs></div>
     <form class="chat-compose" data-form><button type="button" class="btn ghost" data-photo aria-label="Attach photo" title="Photo">📷</button>
@@ -117,9 +141,22 @@ async function conversation(box, id, rerender) {
     const files = await pickPhotos();
     for (const f of files) await send({ photo: await resizeImage(f), body: '' });
   });
+  $('[data-call]', box)?.addEventListener('click', async e => { const other = info.people.find(p => p.id === Number(e.currentTarget.dataset.call)); (await import('../call.js')).startCall(other.id, other.name); });
   $('[data-mute]', box).addEventListener('click', async () => { await POST(`/api/chat/channels/${id}/mute`, { muted: !info.muted }); rerender(); });
   $('[data-members]', box)?.addEventListener('click', () => membersDialog(info, rerender));
   if (matchMedia('(pointer:fine)').matches) text.focus();
+}
+
+// Pick someone to call in the app.
+async function callDialog() {
+  const people = await GET('/api/chat/people');
+  const { el, close } = openModal({
+    title: 'Call someone', size: 'sm',
+    body: html`<p class="small muted" style="margin-top:0">Free calls over the internet, phone or computer, no phone numbers. <span class="online-dot"></span> = has the app open now; others get a notification if they’ve turned them on.</p>
+      <div class="stack" style="gap:6px">${people.map(p => html`<button class="btn chat-person" data-callp="${p.id}" data-name="${p.name}"><span class="avatar sm">${initials(p.name)}</span> ${p.name}${p.online ? html` <span class="online-dot" title="Online now"></span>` : ''} <span class="small muted">${p.role}</span><span style="margin-left:auto">📞</span></button>`)}</div>`,
+    foot: html`<button class="btn" data-close>Close</button>`,
+  });
+  $$('[data-callp]', el).forEach(b => b.addEventListener('click', async () => { close(); (await import('../call.js')).startCall(Number(b.dataset.callp), b.dataset.name); }));
 }
 
 async function newDialog() {

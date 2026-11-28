@@ -75,11 +75,35 @@ const shape = m => ({ id: m.id, channel_id: m.channel_id, user_id: m.user_id, us
 
 // ---------------------------------------------------------------- live updates (Server-Sent Events)
 const streams = new Map(); // userId -> Set(res)
-function publish(userIds, event) {
+export function publish(userIds, event) {
   const data = `event: ${event.type}\ndata: ${JSON.stringify(event)}\n\n`;
   for (const id of userIds) for (const res of streams.get(id) || []) res.write(data);
 }
 export const onlineUserIds = () => [...streams.keys()].filter(id => streams.get(id)?.size);
+export const isOnline = id => !!streams.get(id)?.size;
+
+/** The one-to-one conversation between two people (made if it doesn't exist yet). */
+export function directChannel(db, a, b) {
+  const found = db.prepare(`SELECT c.id FROM chat_channels c WHERE kind = 'direct'
+    AND EXISTS (SELECT 1 FROM chat_members WHERE channel_id = c.id AND user_id = ?) AND EXISTS (SELECT 1 FROM chat_members WHERE channel_id = c.id AND user_id = ?)`).get(a, b);
+  if (found) return found.id;
+  const id = Number(db.prepare("INSERT INTO chat_channels (kind, created_by) VALUES ('direct', ?)").run(a).lastInsertRowid);
+  for (const u of [a, b]) db.prepare('INSERT INTO chat_members (channel_id, user_id) VALUES (?,?)').run(id, u);
+  return id;
+}
+
+/** A call note in a conversation ("Missed call", "Call · 3:12"). No push; it's a record. */
+export function logInChat(db, channelId, user, text) {
+  const c = db.prepare('SELECT * FROM chat_channels WHERE id = ?').get(channelId);
+  if (!c) return null;
+  const id = Number(db.prepare('INSERT INTO chat_messages (channel_id, user_id, user_name, body) VALUES (?,?,?,?)').run(c.id, user.id, user.name, text).lastInsertRowid);
+  db.prepare('UPDATE chat_channels SET last_message_at = ? WHERE id = ?').run(nowLocal(), c.id);
+  db.prepare(`INSERT INTO chat_members (channel_id, user_id, last_read_id) VALUES (?,?,?)
+    ON CONFLICT(channel_id, user_id) DO UPDATE SET last_read_id = excluded.last_read_id`).run(c.id, user.id, id);
+  const msg = shape(db.prepare('SELECT * FROM chat_messages WHERE id = ?').get(id));
+  publish(memberIds(db, c), { type: 'message', channel_id: c.id, title: channelTitle(db, c, { id: 0 }), message: { ...msg, call_log: true } });
+  return msg;
+}
 
 export function postMessage(db, c, user, { body, photo }) {
   const text = String(body || '').trim().slice(0, 4000);
@@ -106,18 +130,13 @@ export function registerChatRoutes(r) {
     const chans = listChannels(db, user).filter(c => c.unread && !c.muted);
     return { total: chans.reduce((t, c) => t + c.unread, 0), latest: chans[0] ? { channel_id: chans[0].id, title: chans[0].title, from: chans[0].last?.user_name, text: chans[0].last?.text } : null };
   });
-  r('GET', '/api/chat/people', G.all, ({ db, user }) => db.prepare("SELECT id, name, role FROM users WHERE active = 1 AND id <> ? ORDER BY name").all(user.id));
+  r('GET', '/api/chat/people', G.all, ({ db, user }) => { const on = new Set(onlineUserIds()); return db.prepare("SELECT id, name, role FROM users WHERE active = 1 AND id <> ? ORDER BY name").all(user.id).map(p => ({ ...p, online: on.has(p.id) })); });
 
   r('POST', '/api/chat/channels', G.all, ({ db, user, body }) => {
     if (body.kind === 'direct') {
       const other = db.prepare('SELECT id FROM users WHERE id = ? AND active = 1').get(Number(body.user_id));
       if (!other || other.id === user.id) throw new HttpError(400, 'Choose someone to message');
-      const found = db.prepare(`SELECT c.id FROM chat_channels c WHERE kind = 'direct'
-        AND EXISTS (SELECT 1 FROM chat_members WHERE channel_id = c.id AND user_id = ?) AND EXISTS (SELECT 1 FROM chat_members WHERE channel_id = c.id AND user_id = ?)`).get(user.id, other.id);
-      if (found) return { id: found.id };
-      const id = Number(db.prepare("INSERT INTO chat_channels (kind, created_by) VALUES ('direct', ?)").run(user.id).lastInsertRowid);
-      for (const u of [user.id, other.id]) db.prepare('INSERT INTO chat_members (channel_id, user_id) VALUES (?,?)').run(id, u);
-      return { id };
+      return { id: directChannel(db, user.id, other.id) };
     }
     if (body.kind === 'group') {
       const name = String(body.name || '').trim().slice(0, 60);

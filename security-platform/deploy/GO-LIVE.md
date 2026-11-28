@@ -62,6 +62,15 @@ Add the app's mail server to your domain's SPF record if your provider asks, so 
 4. Settings → Phone & on-call: turn routing on, enter the office phone and hours, then paste the webhook address shown there into the Twilio number's **Voice configuration**.
 5. Build the on-call rotation (On-call & phone → Build rotation).
 
+### In-app calls (team to team)
+
+Team members can call each other from **Team chat** (📞), free, over the internet. Try a call between two phones on cell data (not Wi-Fi). If calls ring but never connect, the network needs a **relay server**; pick one in Settings → Phone & on-call → *In-app calls*:
+
+- **Twilio** — uses the Twilio account above; billed per GB relayed (a few cents per call-hour). Nothing to install.
+- **Your own relay** — free, runs next to the app: follow the steps at the top of `deploy/docker-compose.turn.yml` (set `TURN_SECRET` and `TURN_URLS` in `.env`, open ports 3478 and 49160–49200/UDP, start it with the extra compose file).
+
+Phones need **notifications turned on** (Team chat → Turn on) to hear about calls when the app is closed. iPhones only ring for calls when the app was added to the Home Screen.
+
 ## 8. Payments (Stripe)
 
 Create a Stripe account, start in **test mode** (`sk_test_…`), add the webhook endpoint shown in Settings → Payments, run a test payment, then switch to live keys.

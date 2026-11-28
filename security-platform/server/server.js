@@ -19,7 +19,7 @@ const SECURITY_HEADERS = {
   'X-Content-Type-Options': 'nosniff',
   'Referrer-Policy': 'same-origin',
   'X-Frame-Options': 'DENY',
-  'Permissions-Policy': 'camera=(), microphone=(), geolocation=(self)',
+  'Permissions-Policy': 'camera=(), microphone=(self), geolocation=(self)',
 };
 // Map tiles come from the configured tile server (OpenStreetMap by default).
 let cspCache = { tiles: null, value: '' };

@@ -26,7 +26,7 @@ export function startChat(user) {
     refreshBadge();
     const mine = ev.message.user_id === myId;
     const viewing = location.hash === `#/chat/${ev.channel_id}`;
-    if (mine || viewing) return;
+    if (mine || viewing || ev.message.call_log) return;
     const text = ev.message.body || '📷 Photo';
     toast(`💬 ${ev.message.user_name}: ${text.slice(0, 80)}`);
     // Desktop notice when the tab is in the background (phones get push notifications instead).
@@ -34,6 +34,7 @@ export function startChat(user) {
       try { const n = new Notification(ev.message.user_name, { body: text.slice(0, 140), tag: `chat-${ev.channel_id}`, icon: '/icons/icon-192.png' }); n.onclick = () => { window.focus(); location.hash = `#/chat/${ev.channel_id}`; }; } catch { /* not allowed here */ }
     }
   });
+  source.addEventListener('call', e => { const ev = JSON.parse(e.data); import('./call.js').then(m => m.onCallEvent(ev)); });
   for (const t of ['read', 'deleted']) source.addEventListener(t, e => { const ev = JSON.parse(e.data); listeners.forEach(fn => fn({ ...ev, type: t })); refreshBadge(); });
 }
 export function stopChat() { source?.close(); source = null; }

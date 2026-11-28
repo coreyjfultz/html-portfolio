@@ -27,6 +27,7 @@ import { registerHrRoutes } from './hr.js';
 import { registerPayRoutes } from './pay.js';
 import { registerLibraryRoutes } from './library.js';
 import { registerTaskRoutes, taskFeedEvents } from './tasks.js';
+import { registerCallRoutes } from './calls.js';
 import { requestOrigin } from './net.js';
 import { runBackup, listBackups } from './backup.js';
 import { openAlerts, resolveAlert } from './alerts.js';
@@ -422,6 +423,7 @@ export function buildRoutes() {
   registerPayRoutes(r);
   registerLibraryRoutes(r);
   registerTaskRoutes(r);
+  registerCallRoutes(r);
 
   // ------------------------------------------------------------ alerts for the owner / office
   r('GET', '/api/alerts', G.staff, ({ db, user }) => openAlerts(db, user.role));

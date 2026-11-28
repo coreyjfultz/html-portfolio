@@ -208,6 +208,7 @@ function renderShell() {
   window.onhashchange = route;
   route();
   startChat(state.user);
+  import('./call.js').then(m => m.initCalls(state.user)).catch(() => {});
 }
 
 function setupSearch() {
