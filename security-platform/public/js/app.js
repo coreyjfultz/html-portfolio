@@ -1,6 +1,6 @@
 import { html, mount, $, $$, toast, initials, esc, installGlobalHandlers, icon, setCurrentRole } from './ui.js';
 import { api, GET, POST } from './api.js';
-import { G, ROLE_INFO } from './schema.js';
+import { G, ROLE_INFO, applyRoles, isFieldRole, customerAccess } from './schema.js';
 import { installDialer } from './dial.js';
 import { startChat, stopChat } from './chat-live.js';
 
@@ -13,13 +13,17 @@ export const can = {
   customers: () => G.customers.includes(state.user?.role),
   staff: () => G.staff.includes(state.user?.role),
   owner: () => state.user?.role === 'owner',
-  tech: () => state.user?.role === 'technician',
+  tech: () => isFieldRole(state.user?.role),
+  hr: () => G.hr.includes(state.user?.role),
+  people: () => G.people.includes(state.user?.role),
+  records: () => G.records.includes(state.user?.role),
+  customers_any: () => customerAccess(state.user?.role) !== 'none',
 };
 
 const NAV = [
   { section: null },
   { href: '#/', label: 'Dashboard', ico: 'layout-dashboard' },
-  { href: '#/myday', label: 'My Day', ico: 'sun', roles: ['technician'] },
+  { href: '#/myday', label: 'My Day', ico: 'sun', field: true },
   { href: '#/timeclock', label: 'Time clock', ico: 'clock' },
   { href: '#/tasks', label: 'Tasks', ico: 'list-checks', badge: 'tasks' },
   { href: '#/chat', label: 'Team chat', ico: 'message-circle', badge: 'chat' },
@@ -29,34 +33,34 @@ const NAV = [
   { href: '#/library', label: 'Training library', ico: 'graduation-cap' },
   { href: '#/support', label: 'Support contacts', ico: 'life-buoy' },
   { section: 'Customers' },
-  { href: '#/customers', label: 'Customers', ico: 'users' },
+  { href: '#/customers', label: 'Customers', ico: 'users' , cust: true },
   { href: '#/pipeline', label: 'Pipeline', ico: 'kanban', roles: G.staff },
   { href: '#/proposals', label: 'Proposals', ico: 'file-signature', roles: G.salesOrBilling },
-  { href: '#/monitoring', label: 'Monitoring', ico: 'shield-check' },
-  { href: '#/maintenance', label: 'Maintenance Due', ico: 'alarm-clock' },
-  { href: '#/inspections', label: 'Fire inspections', ico: 'clipboard-check' },
+  { href: '#/monitoring', label: 'Monitoring', ico: 'shield-check' , cust: true },
+  { href: '#/maintenance', label: 'Maintenance Due', ico: 'alarm-clock' , cust: true },
+  { href: '#/inspections', label: 'Fire inspections', ico: 'clipboard-check' , cust: true },
   { section: 'Field work' },
-  { href: '#/calls', label: 'Service Calls', ico: 'wrench' },
+  { href: '#/calls', label: 'Service Calls', ico: 'wrench' , cust: true },
   { href: '#/calendar', label: 'Calendar', ico: 'calendar-days' },
-  { href: '#/schedule', label: 'Dispatch board', ico: 'calendar-range' },
-  { href: '#/map', label: 'Live map', ico: 'map', roles: G.manage },
-  { href: '#/technicians', label: 'Technicians', ico: 'hard-hat' },
-  { href: '#/ratings', label: 'Customer ratings', ico: 'star', roles: G.manage },
-  { href: '#/phone', label: 'On-call & phone', ico: 'phone-call' },
+  { href: '#/schedule', label: 'Dispatch board', ico: 'calendar-range' , cust: true },
+  { href: '#/map', label: 'Live map', ico: 'map', roles: G.manage , cust: true },
+  { href: '#/technicians', label: 'Technicians', ico: 'hard-hat' , cust: true },
+  { href: '#/ratings', label: 'Customer ratings', ico: 'star', roles: G.manage , cust: true },
+  { href: '#/phone', label: 'On-call & phone', ico: 'phone-call' , cust: true },
   { section: 'Billing', roles: G.billing },
   { href: '#/invoices', label: 'Invoices', ico: 'receipt', roles: G.billing },
   { href: '#/payments', label: 'Payments', ico: 'banknote', roles: G.billing },
   { href: '#/expenses', label: 'Expenses', ico: 'credit-card', roles: G.billing },
   { section: 'Operations' },
-  { href: '#/inventory', label: 'Inventory', ico: 'package' },
+  { href: '#/inventory', label: 'Inventory', ico: 'package' , cust: true },
   { href: '#/receiving', label: 'Receiving', ico: 'inbox', roles: G.billing },
   { href: '#/truck-stock', label: 'Truck stock', ico: 'package-check', roles: G.billing },
-  { href: '#/tools', label: 'Tools', ico: 'hammer' },
-  { href: '#/vehicles', label: 'Vehicles', ico: 'truck' },
+  { href: '#/tools', label: 'Tools', ico: 'hammer' , cust: true },
+  { href: '#/vehicles', label: 'Vehicles', ico: 'truck' , cust: true },
   { section: 'Insights', roles: G.billing },
   { href: '#/reports', label: 'Reports', ico: 'chart-line', roles: G.billing },
   { href: '#/accounting', label: 'Accounting', ico: 'book-open', roles: G.billing },
-  { href: '#/settings', label: 'Settings', ico: 'settings', roles: G.manage },
+  { href: '#/settings', label: 'Settings', ico: 'settings', roles: G.settings },
 ];
 
 // path pattern -> [module, export]
@@ -123,6 +127,9 @@ async function boot() {
     if (s.needsSetup) return renderSetup();
     if (!s.user) return renderLogin();
     state.user = s.user;
+    // Custom roles change what each permission group contains; load them before drawing anything.
+    const rr = await GET('/api/roles').catch(() => null);
+    if (rr) applyRoles(rr.roles.filter(x => !x.builtin));
     setCurrentRole(s.user.role);
     state.settings = await GET('/api/settings');
     renderShell();
@@ -181,7 +188,9 @@ function renderSetup() {
 
 function renderShell() {
   const role = state.user.role;
-  const nav = NAV.filter(n => (!n.roles || n.roles.includes(role)) && (!n.when || n.when(state.settings || {})));
+  const noCust = customerAccess(role) === 'none';
+  const nav = NAV.filter(n => (!n.roles || n.roles.includes(role)) && (!n.when || n.when(state.settings || {})) && (!n.field || isFieldRole(role)) && !(n.cust && noCust))
+    .filter((n, i, arr) => n.section === undefined || n.section === null || arr.slice(i + 1).find(x => x.section !== undefined || x.href)?.href); // drop empty sections
   mount(root, html`<div class="app">
     <aside class="sidebar">
       ${brand(state.settings.company_name)}
@@ -192,7 +201,7 @@ function renderShell() {
     <div class="main">
       <header class="topbar">
         <button class="btn ghost menu-btn" data-menu aria-label="Menu">${icon('menu')}</button>
-        <div class="search"><span class="ico">${icon('search')}</span><input type="search" placeholder="Search customers, phone, invoice #, call #, parts…" data-search aria-label="Search">
+        <div class="search ${noCust ? 'hidden' : ''}"><span class="ico">${icon('search')}</span><input type="search" placeholder="Search customers, phone, invoice #, call #, parts…" data-search aria-label="Search">
           <div class="search-results hidden" data-results></div></div>
         <div class="user-menu">
           <a href="#/chat" class="btn ghost chat-btn" aria-label="Team chat" title="Team chat">${icon('message-circle')}<span class="nav-badge" data-chat-badge hidden></span></a>

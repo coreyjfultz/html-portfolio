@@ -1,6 +1,6 @@
-import { html, raw, mount, $, $$, dataTable, promptForm, toast, badge, loading, confirmDialog, pickPhotos, resizeImage } from '../ui.js';
+import { html, raw, mount, $, $$, dataTable, promptForm, toast, badge, loading, confirmDialog, pickPhotos, resizeImage, openModal } from '../ui.js';
 import { GET, PUT, POST, R, api } from '../api.js';
-import { ROLES, ROLE_INFO } from '../schema.js';
+import { ROLES, ROLE_INFO, G, PERMISSIONS, CUSTOMER_ACCESS, isPrivilegedRole } from '../schema.js';
 import { state, refresh } from '../app.js';
 
 const SETTINGS = [
@@ -14,9 +14,12 @@ const SETTINGS = [
 ];
 
 export async function render(view, _, query) {
-  const tab = query.tab || 'company';
-  mount(view, html`<div class="page-head"><div><h1>Settings</h1><div class="sub">Company, users and data</div></div></div>
-    <div class="tabs">${[['company', 'Company & billing'], ['payments', 'Payments'], ['notifications', 'Texts & email'], ['calendars', 'Calendars'], ['receiving', 'Receiving'], ['field', 'Field rules'], ['phone', 'Phone & on-call'], ['tracking', 'Tracking & maps'], ['hr', 'HR & time off'], ['assistant', 'Help assistant'], ['users', 'Users & logins'], ['audit', 'Activity log'], ['data', 'Backup & data']].map(([k, l]) => html`<button class="${k === tab ? 'on' : ''}" data-tab="${k}">${l}</button>`)}</div>
+  const role = state.user.role;
+  const mg = G.manage.includes(role);
+  const TABS = [['company', 'Company & billing', mg], ['payments', 'Payments', mg], ['notifications', 'Texts & email', mg], ['calendars', 'Calendars', mg], ['receiving', 'Receiving', mg], ['field', 'Field rules', mg], ['phone', 'Phone & on-call', mg], ['tracking', 'Tracking & maps', mg], ['hr', 'HR & time off', G.hr.includes(role)], ['assistant', 'Help assistant', mg], ['users', 'Users & logins', G.people.includes(role)], ['roles', 'Roles & permissions', mg || G.people.includes(role)], ['audit', 'Activity log', mg], ['data', 'Backup & data', mg]].filter(t => t[2]);
+  const tab = TABS.some(t => t[0] === query.tab) ? query.tab : TABS[0]?.[0];
+  mount(view, html`<div class="page-head"><div><h1>Settings</h1><div class="sub">${mg ? 'Company, users and data' : 'The settings your role can change'}</div></div></div>
+    <div class="tabs">${TABS.map(([k, l]) => html`<button class="${k === tab ? 'on' : ''}" data-tab="${k}">${l}</button>`)}</div>
     <div data-pane></div>`);
   $$('[data-tab]', view).forEach(b => b.addEventListener('click', () => { location.hash = `#/settings?tab=${b.dataset.tab}`; }));
   const pane = $('[data-pane]', view);
@@ -183,6 +186,7 @@ export async function render(view, _, query) {
   }
 
   if (tab === 'hr') await hrPane(pane);
+  if (tab === 'roles') await rolesPane(pane);
   if (tab === 'assistant') await (await import('./library.js')).settingsPane(pane, { settingsCards, wireSettingsCards });
   if (tab === 'tracking') await (await import('./map.js')).settingsPane(pane, { settingsCards, wireSettingsCards });
   if (tab === 'phone') await (await import('./phone.js')).settingsPane(pane, { settingsCards, wireSettingsCards });
@@ -251,7 +255,8 @@ export async function render(view, _, query) {
   if (tab === 'users') {
     const [users, techs] = await Promise.all([GET('/api/users'), R.list('technicians')]);
     const techOpts = [{ value: '', label: '— not a technician —' }, ...techs.map(t => ({ value: t.id, label: t.name }))];
-    const roleOpts = ROLES.filter(r => r !== 'owner' || state.user.role === 'owner').map(r => ({ value: r, label: `${ROLE_INFO[r].label} — ${ROLE_INFO[r].desc}` }));
+    const mgr = G.manage.includes(state.user.role);
+    const roleOpts = ROLES.filter(r => (r !== 'owner' || state.user.role === 'owner') && (mgr || !isPrivilegedRole(r))).map(r => ({ value: r, label: `${ROLE_INFO[r].label} — ${ROLE_INFO[r].desc}` }));
     const supOpts = except => [{ value: '', label: '— nobody (top of the chart) —' }, ...users.filter(u => u.active && u.id !== except).map(u => ({ value: u.id, label: `${u.name}${u.job_title ? ` — ${u.job_title}` : ''}` }))];
     mount(pane, html`<div class="card"><div class="card-head"><div><h2>Users</h2><div class="small muted">Everyone who can sign in. Link technicians to their technician profile so "My Day" shows their jobs. “Reports to” sets who approves their time off (see <a href="#/team">Our team</a>).</div></div>
         <button class="btn primary sm" data-new>+ Add user</button></div>
@@ -264,7 +269,7 @@ export async function render(view, _, query) {
           { label: 'Technician profile', render: u => u.technician_name || '—' },
           { label: 'Last sign-in', render: u => u.last_login || 'never' },
           { label: 'Status', render: u => u.active ? badge('active') : badge('inactive') },
-          { label: '', cls: 'actions-cell', render: u => html`<button class="btn sm ghost" data-edit="${u.id}">Edit</button>` },
+          { label: '', cls: 'actions-cell', render: u => mgr || !isPrivilegedRole(u.role) ? html`<button class="btn sm ghost" data-edit="${u.id}">Edit</button>` : '' },
         ] })}</div></div>`);
     $('[data-new]', pane).addEventListener('click', () => promptForm({
       title: 'Add user', size: '',
@@ -396,6 +401,56 @@ export function wireSettingsCards(pane, onSaved) {
       if ('addon_pay' in body) location.reload();
     } catch (err) { toast(err.message, 'error'); }
   }));
+}
+
+// ---- Roles & permissions: built-in roles (read-only) and custom roles (owner builds them).
+async function rolesPane(pane) {
+  const d = await GET('/api/roles');
+  const isOwner = state.user.role === 'owner';
+  const permLabel = k => PERMISSIONS.find(p => p.key === k)?.label || k;
+  mount(pane, html`<div class="card"><div class="card-head"><div><h2>Roles & permissions</h2>
+      <div class="small muted">A role decides what someone can see and do. Built-in roles are fixed; make a custom role for anything in between (e.g. “Dispatcher”, “Service manager”, “Office assistant”).${isOwner ? '' : ' Only an owner can create or change roles.'}</div></div>
+      ${isOwner ? html`<button class="btn primary sm" data-newrole>+ New role</button>` : ''}</div>
+    <div class="card-body flush">${dataTable({
+      rows: d.roles,
+      columns: [
+        { label: 'Role', render: r => html`<b>${r.name}</b>${r.builtin ? html` ${badge('built-in', '')}` : ''}<div class="small muted">${r.description || ''}</div>` },
+        { label: 'Customers & jobs', render: r => html`<span class="small">${CUSTOMER_ACCESS[r.customer_access]}</span>` },
+        { label: 'Can also', render: r => html`<span class="small">${r.key === 'owner' ? 'Everything' : r.permissions.length ? r.permissions.map(permLabel).join(', ') : '—'}</span>` },
+        { label: 'People', cls: 'num', render: r => r.users },
+        { label: '', cls: 'actions-cell', render: r => isOwner ? (r.builtin ? (r.key === 'owner' ? '' : html`<button class="btn sm ghost" data-copy="${r.key}">Copy</button>`) : html`<button class="btn sm ghost" data-editrole="${r.key}">Edit</button>`) : '' },
+      ] })}</div></div>
+    <p class="small muted">Everyone can use tasks, team chat and calls, time off requests, the training library and the calendar. Owners can always do everything.</p>`);
+  const form = (role, copyOf) => {
+    const r = role || (copyOf ? { ...copyOf, name: `${copyOf.name} (copy)`, key: null } : { name: '', description: '', customer_access: 'all', permissions: ['staff'] });
+    const { el, close } = openModal({
+      title: role ? `Edit ${role.name}` : 'New role', size: 'sm',
+      body: html`<div class="err-box hidden" data-err></div>
+        <div class="field"><label for="rl_n">Name</label><input id="rl_n" type="text" value="${r.name}" maxlength="40" placeholder="e.g. Dispatcher"></div>
+        <div class="field" style="margin-top:10px"><label for="rl_d">Description (optional)</label><input id="rl_d" type="text" value="${r.description || ''}" maxlength="200"></div>
+        <h3 style="margin:16px 0 6px">Customers & jobs</h3>
+        <div class="stack" style="gap:4px">${Object.entries(CUSTOMER_ACCESS).map(([k, l]) => html`<label class="check-row"><input type="radio" name="rl_a" value="${k}" ${r.customer_access === k ? 'checked' : ''}> <span>${l}</span></label>`)}</div>
+        <h3 style="margin:16px 0 6px">Can also</h3>
+        <div class="stack" style="gap:6px">${PERMISSIONS.map(p => html`<label class="check-row"><input type="checkbox" value="${p.key}" data-perm ${r.permissions.includes(p.key) ? 'checked' : ''}> <span><b>${p.label}</b><span class="small muted" style="display:block">${p.desc}</span></span></label>`)}</div>`,
+      foot: html`${role ? html`<button class="btn ghost danger" data-del>Delete</button>` : ''}<button class="btn" data-close>Cancel</button><button class="btn primary" data-save>${role ? 'Save' : 'Create role'}</button>`,
+    });
+    const err = m => { const b = $('[data-err]', el); b.textContent = m; b.classList.remove('hidden'); };
+    $('[data-save]', el).addEventListener('click', async () => {
+      const body = { name: $('#rl_n', el).value, description: $('#rl_d', el).value, customer_access: $('input[name=rl_a]:checked', el)?.value || 'none', permissions: $$('[data-perm]:checked', el).map(c => c.value) };
+      try {
+        if (role) await PUT(`/api/roles/${role.key}`, body); else await POST('/api/roles', body);
+        close(); toast(role ? 'Role saved. People with it get the change next time they open the app.' : 'Role created. Give it to people under Users & logins.');
+        location.reload();
+      } catch (e) { err(e.message); }
+    });
+    $('[data-del]', el)?.addEventListener('click', async () => {
+      if (!(await confirmDialog(`Delete the ${role.name} role?`, { okLabel: 'Delete', danger: true }))) return;
+      try { await api('DELETE', `/api/roles/${role.key}`); close(); location.reload(); } catch (e) { err(e.message); }
+    });
+  };
+  $('[data-newrole]', pane)?.addEventListener('click', () => form(null));
+  $$('[data-editrole]', pane).forEach(b => b.addEventListener('click', () => form(d.roles.find(r => r.key === b.dataset.editrole))));
+  $$('[data-copy]', pane).forEach(b => b.addEventListener('click', () => form(null, d.roles.find(r => r.key === b.dataset.copy))));
 }
 
 async function hrPane(pane) {

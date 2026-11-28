@@ -139,7 +139,7 @@ function migrate(db) {
       name TEXT NOT NULL,
       email TEXT NOT NULL UNIQUE COLLATE NOCASE,
       password_hash TEXT NOT NULL,
-      role TEXT NOT NULL CHECK (role IN ('owner','admin','sales','accounting','technician')),
+      role TEXT NOT NULL,
       technician_id INTEGER REFERENCES technicians(id) ON DELETE SET NULL,
       active INTEGER NOT NULL DEFAULT 1,
       created_at TEXT NOT NULL DEFAULT (datetime('now','localtime')),
@@ -371,6 +371,12 @@ function migrate(db) {
       created_at TEXT NOT NULL DEFAULT (datetime('now','localtime'))
     );
     CREATE INDEX IF NOT EXISTS idx_employee_docs ON employee_documents(user_id);
+    -- Custom roles (Settings → Roles): permission groups + which customers they can see.
+    CREATE TABLE IF NOT EXISTS custom_roles (
+      key TEXT PRIMARY KEY, name TEXT NOT NULL, description TEXT,
+      permissions TEXT NOT NULL DEFAULT '[]', customer_access TEXT NOT NULL DEFAULT 'none',
+      created_at TEXT NOT NULL DEFAULT (datetime('now','localtime'))
+    );
     -- In-app calls between team members (the call itself goes device to device).
     CREATE TABLE IF NOT EXISTS app_calls (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -505,6 +511,12 @@ function migrate(db) {
   if (!db.prepare('PRAGMA table_info(users)').all().some(c => c.name === 'phone')) db.exec('ALTER TABLE users ADD COLUMN phone TEXT');
   if (!db.prepare('PRAGMA table_info(users)').all().some(c => c.name === 'supervisor_id')) db.exec('ALTER TABLE users ADD COLUMN supervisor_id INTEGER REFERENCES users(id) ON DELETE SET NULL; ALTER TABLE users ADD COLUMN job_title TEXT;');
   if (!db.prepare('PRAGMA table_info(time_off)').all().some(c => c.name === 'hours')) db.exec('ALTER TABLE time_off ADD COLUMN hours REAL');
+  // Roles used to be a fixed list; custom roles need any value. Rebuild users without that check.
+  const uSql = db.prepare("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'users'").get()?.sql || '';
+  if (/CHECK\s*\(role IN/i.test(uSql)) {
+    const newSql = uSql.replace(/\s*CHECK\s*\(role IN \([^)]*\)\)/i, '').replace(/^CREATE TABLE\s+"?users"?/i, 'CREATE TABLE users_new');
+    db.exec(`PRAGMA foreign_keys = OFF; BEGIN; ${newSql}; INSERT INTO users_new SELECT * FROM users; DROP TABLE users; ALTER TABLE users_new RENAME TO users; COMMIT; PRAGMA foreign_keys = ON;`);
+  }
   for (const t of ['tasks', 'task_series']) {
     const cols = db.prepare(`PRAGMA table_info(${t})`).all().map(c => c.name);
     if (!cols.includes('start_time')) db.exec(`ALTER TABLE ${t} ADD COLUMN start_time TEXT; ALTER TABLE ${t} ADD COLUMN end_time TEXT; ALTER TABLE ${t} ADD COLUMN block_time INTEGER NOT NULL DEFAULT 0;`);

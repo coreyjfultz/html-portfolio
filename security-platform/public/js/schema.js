@@ -4,26 +4,93 @@
 // Field types: text, email, tel, textarea, number, money, date, datetime,
 // select, ref, checkbox, secret (encrypted at rest), color, location.
 
-// ---------------------------------------------------------------- roles
-export const ROLES = ['owner', 'admin', 'sales', 'accounting', 'technician'];
+// ---------------------------------------------------------------- roles & permissions
+// Every check in the app asks "is this person's role in permission group X?" (G.manage,
+// G.billing…). Built-in roles have fixed groups; custom roles (Settings → Roles) pick their own.
+// applyRoles() rebuilds the group lists IN PLACE, so every screen and route that holds a
+// reference to G.something sees custom roles too.
+export const ROLES = ['owner', 'admin', 'sales', 'accounting', 'technician', 'hr'];
+export const BUILTIN_ROLES = ['owner', 'admin', 'sales', 'accounting', 'technician', 'hr'];
 export const ROLE_INFO = {
   owner: { label: 'Owner / Global admin', desc: 'Everything, including managing other admins, backups and integrations' },
   admin: { label: 'Administrator', desc: 'Runs the business day to day: customers, scheduling, billing, inventory, team (but not owner accounts or backups)' },
   sales: { label: 'Sales', desc: 'Leads, pipeline, proposals and agreements, site surveys and estimates; no invoices or financial reports' },
-  accounting: { label: 'Accounting', desc: 'Invoices, payments, expenses, receiving, reports and QuickBooks; read-only scheduling' },
+  accounting: { label: 'Accounting', desc: 'Invoices, payments, expenses, receiving, reports and QuickBooks; pay stubs & benefits; read-only scheduling' },
   technician: { label: 'Technician', desc: 'Their jobs, schedule, customer systems & passwords, photos, signatures, truck inventory; no billing' },
+  hr: { label: 'HR', desc: 'Time off for everyone, balances, holidays, users & supervisors, pay stubs & benefits, chat records; no customers, jobs or billing' },
 };
+
+// What a custom role can be given. `key` is the permission group.
+export const PERMISSIONS = [
+  { key: 'staff', label: 'Office basics', desc: 'Pipeline, alerts, exports, support contacts, address & drive-time lookups' },
+  { key: 'customers', label: 'Edit customers', desc: 'Add and change customers, sites and contacts; customer portal invites' },
+  { key: 'sales', label: 'Sales', desc: 'Leads, proposals and agreements, site surveys and estimates' },
+  { key: 'billing', label: 'Billing & accounting', desc: 'Invoices, payments, expenses, receiving, reports, QuickBooks, truck stock admin' },
+  { key: 'manage', label: 'Operations admin', desc: 'Everything an Administrator can do: scheduling for everyone, settings, live map, ratings, overrides' },
+  { key: 'hr', label: 'Time off for everyone', desc: 'Approve or deny anyone’s time off, set balances and company holidays' },
+  { key: 'people', label: 'Users & supervisors', desc: 'Add and edit users, job titles and who reports to whom (not owners or administrators)' },
+  { key: 'payAdmin', label: 'Pay & benefits admin', desc: 'Post pay stubs and tax forms, manage benefit plans (when the add-on is on)' },
+  { key: 'records', label: 'Chat records', desc: 'Review any conversation after an incident (logged; owners are alerted)' },
+];
+// Which customers a role can see: every customer, only those on their own schedule (field
+// technicians: also My Day, truck stock and vehicle checks), or none at all.
+export const CUSTOMER_ACCESS = { all: 'All customers and jobs', schedule: 'Only customers on their own schedule (field technician)', none: 'No customers or jobs' };
+
+const BUILTIN_GROUPS = {
+  owner: ['staff', 'customers', 'sales', 'billing', 'manage', 'hr', 'people', 'payAdmin', 'records', 'owner'],
+  admin: ['staff', 'customers', 'sales', 'billing', 'manage', 'hr', 'people', 'records'],
+  sales: ['staff', 'customers', 'sales'],
+  accounting: ['staff', 'customers', 'billing', 'payAdmin'],
+  technician: [],
+  hr: ['hr', 'people', 'payAdmin', 'records'],
+};
+const BUILTIN_ACCESS = { owner: 'all', admin: 'all', sales: 'all', accounting: 'all', technician: 'schedule', hr: 'none' };
+
 // Permission groups used throughout the server and the screens.
 export const G = {
-  all: ROLES,
-  staff: ['owner', 'admin', 'sales', 'accounting'],
-  owner: ['owner'],
-  manage: ['owner', 'admin'],
-  billing: ['owner', 'admin', 'accounting'],
-  sales: ['owner', 'admin', 'sales'],
-  customers: ['owner', 'admin', 'sales', 'accounting'],
-  salesOrBilling: ['owner', 'admin', 'sales', 'accounting'],
+  all: ROLES, owner: [], staff: [], customers: [], sales: [], billing: [], manage: [],
+  hr: [], people: [], payAdmin: [], records: [],
+  salesOrBilling: [], // sales or billing
+  settings: [],       // can open Settings (manage, hr or people)
 };
+const ACCESS = {};
+let CUSTOM = [];
+
+/** Rebuild the permission groups from the built-in roles plus the custom roles. */
+export function applyRoles(custom = []) {
+  CUSTOM = custom.filter(r => r && r.key && !BUILTIN_ROLES.includes(r.key));
+  ROLES.splice(0, ROLES.length, ...BUILTIN_ROLES, ...CUSTOM.map(r => r.key));
+  for (const k of Object.keys(ROLE_INFO)) if (!BUILTIN_ROLES.includes(k)) delete ROLE_INFO[k];
+  for (const k of Object.keys(ACCESS)) delete ACCESS[k];
+  const groupsOf = {};
+  for (const r of BUILTIN_ROLES) { groupsOf[r] = BUILTIN_GROUPS[r]; ACCESS[r] = BUILTIN_ACCESS[r]; }
+  for (const r of CUSTOM) {
+    const perms = (r.permissions || []).filter(p => PERMISSIONS.some(x => x.key === p));
+    groupsOf[r.key] = perms;
+    ACCESS[r.key] = CUSTOMER_ACCESS[r.customer_access] ? r.customer_access : 'none';
+    ROLE_INFO[r.key] = { label: r.name, desc: r.description || 'Custom role', custom: true };
+  }
+  for (const g of Object.keys(G)) {
+    if (g === 'all') continue;
+    const members = ROLES.filter(role => {
+      const p = groupsOf[role] || [];
+      if (g === 'salesOrBilling') return p.includes('sales') || p.includes('billing');
+      if (g === 'settings') return p.includes('manage') || p.includes('hr') || p.includes('people');
+      return p.includes(g);
+    });
+    G[g].splice(0, G[g].length, ...members);
+  }
+}
+applyRoles();
+
+export const customRoles = () => CUSTOM;
+/** 'all' | 'schedule' | 'none' — which customers this role can see. */
+export const customerAccess = role => ACCESS[role] || 'none';
+/** Field technicians (built-in or custom): scoped to their schedule; My Day, truck stock, vehicle checks. */
+export const isFieldRole = role => customerAccess(role) === 'schedule';
+/** True if a user with this role can be given `role2` by someone who only has 'people' rights. */
+export const isPrivilegedRole = role => role === 'owner' || G.manage.includes(role);
+
 // Customer lifecycle stages (pipeline), in order.
 export const STAGES = ['lead', 'site survey', 'bid', 'accepted', 'installation', 'active', 'lost'];
 export const STAGE_INFO = {
@@ -609,7 +676,7 @@ export const RESOURCES = {
   // Pay & benefits add-on: the company's benefit plans (everyone can read; owner/accounting edit).
   benefit_plans: {
     label: 'Benefit plans', singular: 'Benefit plan', labelExpr: 'name',
-    read: ALL, write: ['owner', 'accounting'], order: 'sort, name',
+    read: ALL, write: G.payAdmin, order: 'sort, name',
     fields: [
       { name: 'name', label: 'Plan', type: 'text', required: true, list: true, help: 'e.g. Blue Cross PPO, 401(k) with match' },
       { name: 'kind', label: 'Type', type: 'select', options: ['health', 'dental', 'vision', 'life', 'disability', 'retirement', 'HSA / FSA', 'other'], default: 'health', list: true },

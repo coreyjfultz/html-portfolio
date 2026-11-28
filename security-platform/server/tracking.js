@@ -222,7 +222,7 @@ registerHooks('service_calls', {
     if (!isCreate && 'status' in data && !['technician_id', 'scheduled_start', 'duration_hours'].some(k => k in data && data[k] !== existing[k])) return; // status-only changes
     const p = travelProblem(db, merged);
     if (!p) return;
-    const canOverride = ['owner', 'admin'].includes(user?.role);
+    const canOverride = G.manage.includes(user?.role);
     const e = new HttpError(409, p.message + (canOverride ? ' Pick another time or tech, or book anyway.' : ' Pick another time or technician.'));
     e.code = 'conflict'; e.canOverride = canOverride; e.kind = 'travel';
     throw e;

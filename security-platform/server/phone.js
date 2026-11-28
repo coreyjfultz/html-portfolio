@@ -13,7 +13,7 @@
 import crypto from 'node:crypto';
 import { G } from '../public/js/schema.js';
 import { getSettings } from './db.js';
-import { HttpError, registerHooks, nowLocal, todayLocal, addDays, grantAccess, assertCustomerVisible } from './resources.js';
+import { HttpError, registerHooks, nowLocal, todayLocal, addDays, grantAccess, assertCustomerVisible, isScoped } from './resources.js';
 import { audit } from './security.js';
 import { smsConfig, normalizePhone, queue, sendSms, sendEmail, mailConfig, appUrl } from './notify.js';
 import { zonedToUtc, buildCalendar } from './calendar.js';
@@ -264,7 +264,7 @@ export async function clickToCall(db, user, body) {
   const target = normalizePhone(body.phone || (customerId && db.prepare('SELECT phone FROM customers WHERE id = ?').get(customerId)?.phone));
   if (!target) throw new HttpError(400, 'No valid phone number to call');
   // Technicians may only call numbers on file for customers they can see; the office can dial any number.
-  if (user.role === 'technician' && !(customerId && customerNumbers(db, customerId).has(target))) throw new HttpError(403, 'You can call customers on your schedule from here');
+  if (isScoped(user) && !(customerId && customerNumbers(db, customerId).has(target))) throw new HttpError(403, 'You can call customers on your schedule from here');
   const from = normalizePhone(tech?.twilio_number) || cfg.number;
   const id = Number(db.prepare(`INSERT INTO phone_calls (direction, from_number, to_number, customer_id, service_call_id, user_id, technician_id, route, routed_to, status, dial_number)
     VALUES ('outbound', ?, ?, ?, ?, ?, ?, 'click to call', ?, 'ringing you', ?)`).run(from, target, customerId, Number(body.service_call_id) || null, user.id, user.technician_id || null, user.name, myPhone).lastInsertRowid);
@@ -293,11 +293,11 @@ export function registerPhoneRoutes(r, { create }) {
 
   r('GET', '/api/phone/calls', G.all, ({ db, user, query }) => {
     const where = [], params = [];
-    if (user.role === 'technician') { where.push('(p.user_id = ? OR p.technician_id = ? OR p.answered_by = ?)'); params.push(user.id, user.technician_id || 0, user.name); }
+    if (isScoped(user)) { where.push('(p.user_id = ? OR p.technician_id = ? OR p.answered_by = ?)'); params.push(user.id, user.technician_id || 0, user.name); }
     if (query.customer_id) { where.push('p.customer_id = ?'); params.push(Number(query.customer_id)); }
     return db.prepare(`SELECT p.*, c.name AS customer_name, u.name AS user_name FROM phone_calls p LEFT JOIN customers c ON c.id = p.customer_id LEFT JOIN users u ON u.id = p.user_id
       ${where.length ? 'WHERE ' + where.join(' AND ') : ''} ORDER BY p.id DESC LIMIT 200`).all(...params)
-      .map(p => (user.role === 'technician' && p.customer_id == null ? { ...p, from_number: p.from_number?.slice(0, -4).replace(/\d/g, '•') + (p.from_number || '').slice(-4) } : p));
+      .map(p => (isScoped(user) && p.customer_id == null ? { ...p, from_number: p.from_number?.slice(0, -4).replace(/\d/g, '•') + (p.from_number || '').slice(-4) } : p));
   });
   r('POST', '/api/phone/call', G.all, ({ db, user, body }) => clickToCall(db, user, body));
   r('PUT', '/api/phone/my-number', G.all, ({ db, user, body }) => {

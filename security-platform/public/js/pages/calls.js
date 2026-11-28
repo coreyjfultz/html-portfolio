@@ -10,7 +10,7 @@ const OPEN = 'new,scheduled,in progress,on hold';
 export async function list(view, _, query) {
   const techs = await R.list('technicians', { active: 1 });
   const f = {
-    group: query.status === 'completed' ? 'completed' : query.group || (state.user.role === 'technician' ? 'mine' : 'open'),
+    group: query.status === 'completed' ? 'completed' : query.group || (can.tech() ? 'mine' : 'open'),
     priority: query.priority || '', technician_id: query.technician_id || '', q: '', uninvoiced: query.uninvoiced === '1',
   };
   mount(view, html`

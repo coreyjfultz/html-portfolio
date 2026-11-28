@@ -184,7 +184,7 @@ registerHooks('service_calls', {
     const start = String(m.scheduled_start).slice(0, 16);
     const b = blockedDuring(db, m.technician_id, start, addMin(start, Math.round((Number(m.duration_hours) || 1) * 60)));
     if (!b) return;
-    const canOverride = ['owner', 'admin'].includes(user?.role);
+    const canOverride = G.manage.includes(user?.role);
     const day = new Date(`${b.due_date}T12:00`).toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' });
     const e = new HttpError(409, `${b.assigned_name} has blocked ${b.start_time ? timeLabel(b) : 'all day'} on ${day} for a task: “${b.title}”.${canOverride ? ' Pick another tech or time, or book anyway.' : ' Pick another tech or time.'}`);
     e.code = 'conflict'; e.canOverride = canOverride; e.kind = 'task';

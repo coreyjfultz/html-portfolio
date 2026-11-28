@@ -3,6 +3,7 @@
 import { html, mount, $, $$, fmtDate, fmtTime, toast, openModal, pickPhotos, resizeImage, initials, confirmDialog } from '../ui.js';
 import { GET, POST, api } from '../api.js';
 import { state } from '../app.js';
+import { G } from '../schema.js';
 import { listeners, refreshBadge, pushState, enablePush, disablePush } from '../chat-live.js';
 
 const KIND_ICON = { team: '📣', group: '👥', direct: '', job: '🔧' };
@@ -21,7 +22,7 @@ export async function render(view, params = []) {
   const push = await pushState().catch(() => 'unsupported');
   mount(view, html`<div class="chat ${openId ? 'has-open' : ''}">
     <aside class="chat-list card">
-      <div class="card-head"><h2>Team chat</h2><div class="row">${['owner', 'admin'].includes(state.user.role) ? html`<a class="btn sm ghost" href="#/chat-records" title="Recover conversations for an incident">Records</a>` : ''}${state.settings.app_calls_enabled !== '0' ? html`<button class="btn sm" data-calls title="Call someone in the app">📞</button>` : ''}<button class="btn sm primary" data-new>+ New</button></div></div>
+      <div class="card-head"><h2>Team chat</h2><div class="row">${G.records.includes(state.user.role) ? html`<a class="btn sm ghost" href="#/chat-records" title="Recover conversations for an incident">Records</a>` : ''}${state.settings.app_calls_enabled !== '0' ? html`<button class="btn sm" data-calls title="Call someone in the app">📞</button>` : ''}<button class="btn sm primary" data-new>+ New</button></div></div>
       ${push === 'off' ? html`<div class="note small chat-push">🔔 Get a notification on this device for new messages. <button class="btn sm" data-push>Turn on</button></div>`
         : push === 'blocked' ? html`<div class="note small chat-push">Notifications are blocked for this site in your browser settings.</div>` : ''}
       <nav class="chat-chans" data-chans>${chanList(chans, openId)}</nav>

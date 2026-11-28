@@ -5,7 +5,7 @@
 //  * Job materials: equipment planned for a job, checked out of the warehouse onto the truck.
 //  * Start-of-day readiness check: before the first job, the tech confirms they have what
 //    today's jobs need. Only an administrator can let them skip it.
-import { G } from '../public/js/schema.js';
+import { G, isFieldRole } from '../public/js/schema.js';
 import { getSettings, tx } from './db.js';
 import { HttpError, adjustStock, registerHooks, todayLocal, round2 } from './resources.js';
 import { audit } from './security.js';
@@ -23,7 +23,7 @@ function vehicleOr404(db, id) {
 }
 /** Technicians may only count / load their own truck. */
 function assertVehicleAccess(db, user, v) {
-  if (isOffice(user) || user.role !== 'technician') return;
+  if (isOffice(user) || !isFieldRole(user.role)) return;
   if (!user.technician_id || v.assigned_technician_id !== user.technician_id) throw new HttpError(403, 'You can only do this for the vehicle assigned to you');
 }
 export const vehicleForTech = (db, techId) => techId
@@ -317,7 +317,7 @@ function submitReadiness(db, techId, body, user) {
 // Jobs can't be started (on my way / in progress) by a tech before today's check is cleared.
 registerHooks('service_calls', {
   beforeSave(db, data, { existing, user }) {
-    if (!existing || user?.role !== 'technician') return;
+    if (!existing || !isFieldRole(user?.role)) return;
     if (!['en route', 'in progress'].includes(data.status) || ['en route', 'in progress'].includes(existing.status)) return;
     if (getSettings(db).readiness_required !== '1') return;
     const techId = existing.technician_id || user.technician_id;
@@ -375,18 +375,18 @@ export function registerTruckStockRoutes(r) {
   r('GET', '/api/service_calls/:id/materials', G.all, ({ db, params }) => materialsFor(db, callOr404(db, params.id).id));
   r('POST', '/api/service_calls/:id/materials/checkout', G.all, ({ db, params, body, user }) => {
     const call = callOr404(db, params.id);
-    if (user.role === 'technician' && call.technician_id !== user.technician_id) throw new HttpError(403, 'This job is assigned to someone else');
+    if (isFieldRole(user.role) && call.technician_id !== user.technician_id) throw new HttpError(403, 'This job is assigned to someone else');
     return checkoutMaterials(db, call, body, user);
   });
   r('POST', '/api/service_calls/:id/materials/return', G.all, ({ db, params, body, user }) => {
     const call = callOr404(db, params.id);
-    if (user.role === 'technician' && call.technician_id !== user.technician_id) throw new HttpError(403, 'This job is assigned to someone else');
+    if (isFieldRole(user.role) && call.technician_id !== user.technician_id) throw new HttpError(403, 'This job is assigned to someone else');
     return returnMaterials(db, call, body, user);
   });
 
   // Start-of-day readiness
   const techParam = (user, q) => {
-    if (user.role === 'technician') {
+    if (isFieldRole(user.role)) {
       if (!user.technician_id) throw new HttpError(400, 'Your login is not linked to a technician profile');
       return user.technician_id;
     }

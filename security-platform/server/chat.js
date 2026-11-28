@@ -1,7 +1,7 @@
 // Team chat: an "Everyone" channel, one-to-one and group conversations, and a thread per job
 // (tech ↔ office). Messages arrive live over Server-Sent Events while the app is open, and as
 // a push notification on phones/computers that allowed notifications when it isn't.
-import { G } from '../public/js/schema.js';
+import { G, isFieldRole } from '../public/js/schema.js';
 import { getSettings } from './db.js';
 import { HttpError, nowLocal } from './resources.js';
 import { decodeImage, saveImage, sendImage } from './media.js';
@@ -223,7 +223,7 @@ export function registerChatRoutes(r) {
     if (!r || r.until < Date.now()) throw Object.assign(new HttpError(403, 'Start a review with a reason first'), { code: 'review_required' });
     return r;
   };
-  r('POST', '/api/chat/records/review', MANAGE, ({ db, user, body }) => {
+  r('POST', '/api/chat/records/review', G.records, ({ db, user, body }) => {
     const reason = String(body.reason || '').trim();
     if (reason.length < 5) throw new HttpError(400, 'Describe the incident or reason for the review');
     reviews.set(user.id, { reason: reason.slice(0, 300), until: Date.now() + 30 * 60e3 });
@@ -231,7 +231,7 @@ export function registerChatRoutes(r) {
     if (user.role !== 'owner') raiseAlert(db, { kind: 'chat_review', severity: 'info', title: `${user.name} started reviewing team chat records`, body: `Reason: ${reason}`, link: '#/settings?tab=audit', roles: 'owner' });
     return { ok: true, until: new Date(Date.now() + 30 * 60e3).toISOString() };
   });
-  r('GET', '/api/chat/records/channels', MANAGE, ({ db, user, query }) => {
+  r('GET', '/api/chat/records/channels', G.records, ({ db, user, query }) => {
     reviewOf(user);
     const where = [], args = [];
     if (query.user_id) {
@@ -251,14 +251,14 @@ export function registerChatRoutes(r) {
   });
   const transcript = (db, c) => db.prepare('SELECT * FROM chat_messages WHERE channel_id = ? ORDER BY id').all(c.id)
     .map(m => ({ id: m.id, user_name: m.user_name, body: m.body, photo: m.photo_key ? `/api/chat/records/photos/${m.id}` : null, created_at: m.created_at, deleted_at: m.deleted_at }));
-  r('GET', '/api/chat/records/channels/:id', MANAGE, ({ db, user, params }) => {
+  r('GET', '/api/chat/records/channels/:id', G.records, ({ db, user, params }) => {
     const rv = reviewOf(user);
     const c = channelOr404(db, params.id);
     audit(db, user, 'review chat', 'chat', c.id, rv.reason);
     const people = db.prepare('SELECT DISTINCT u.name FROM users u WHERE u.id IN (SELECT user_id FROM chat_members WHERE channel_id = ? UNION SELECT user_id FROM chat_messages WHERE channel_id = ?) ORDER BY u.name').all(c.id, c.id).map(x => x.name);
     return { id: c.id, kind: c.kind, title: c.kind === 'direct' ? `Direct message: ${people.join(' & ')}` : channelTitle(db, c, { id: 0 }), people, messages: transcript(db, c) };
   });
-  r('GET', '/api/chat/records/channels/:id/export', MANAGE, ({ db, user, params, res }) => {
+  r('GET', '/api/chat/records/channels/:id/export', G.records, ({ db, user, params, res }) => {
     const rv = reviewOf(user);
     const c = channelOr404(db, params.id);
     audit(db, user, 'export chat', 'chat', c.id, rv.reason);
@@ -268,7 +268,7 @@ export function registerChatRoutes(r) {
     res.end(lines.join('\r\n'));
     return undefined;
   });
-  r('GET', '/api/chat/records/photos/:id', MANAGE, ({ db, user, params, res }) => {
+  r('GET', '/api/chat/records/photos/:id', G.records, ({ db, user, params, res }) => {
     reviewOf(user);
     const m = db.prepare('SELECT * FROM chat_messages WHERE id = ?').get(Number(params.id));
     if (!m?.photo_key) throw new HttpError(404, 'Not found');
@@ -280,7 +280,7 @@ export function registerChatRoutes(r) {
   r('POST', '/api/service_calls/:id/chat', G.all, ({ db, params, user }) => {
     const call = db.prepare('SELECT id, technician_id FROM service_calls WHERE id = ?').get(Number(params.id));
     if (!call) throw new HttpError(404, 'Service call not found');
-    if (user.role === 'technician' && call.technician_id !== user.technician_id) throw new HttpError(403, 'This job is assigned to someone else');
+    if (isFieldRole(user.role) && call.technician_id !== user.technician_id) throw new HttpError(403, 'This job is assigned to someone else');
     let c = db.prepare("SELECT * FROM chat_channels WHERE kind = 'job' AND service_call_id = ?").get(call.id);
     if (!c) {
       const id = Number(db.prepare("INSERT INTO chat_channels (kind, service_call_id, created_by) VALUES ('job', ?, ?)").run(call.id, user.id).lastInsertRowid);

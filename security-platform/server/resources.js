@@ -1,5 +1,5 @@
 // Generic, schema-driven CRUD with business-rule hooks.
-import { RESOURCES, MAINTENANCE, STAGES, fieldDefault } from '../public/js/schema.js';
+import { RESOURCES, MAINTENANCE, STAGES, fieldDefault, customerAccess, isFieldRole, G } from '../public/js/schema.js';
 import { encrypt, decrypt, audit } from './security.js';
 import { getSettings, nextNumber, tx, DATA_DIR } from './db.js';
 import fs from 'node:fs';
@@ -97,13 +97,15 @@ const SCOPE_SQL = {
   service_call_parts: '(SELECT customer_id FROM service_calls s WHERE s.id = t.service_call_id)',
   job_materials: '(SELECT customer_id FROM service_calls s WHERE s.id = t.service_call_id)',
 };
-export const isScoped = user => user?.role === 'technician';
+// Anyone who can't see every customer: field technicians (their schedule) and roles with no customer access.
+export const isScoped = user => !!user && customerAccess(user.role) !== 'all';
 function scopeExpr(name) {
   if (SCOPE_SQL[name]) return SCOPE_SQL[name];
   return RESOURCES[name]?.fields.some(f => f.name === 'customer_id') ? 't.customer_id' : null;
 }
 export function techCustomerIds(db, user) {
   if (!isScoped(user)) return null;
+  if (customerAccess(user.role) === 'none') return new Set();
   const now = nowLocal();
   const ids = new Set();
   if (user.technician_id) {
@@ -150,7 +152,7 @@ export function canWrite(def, user) { return def.write.includes(user.role); }
 function canDelete(name, def, user) {
   if (def.del) return def.del.includes(user.role);
   if (name === 'service_call_parts') return canWrite(def, user);
-  return ['owner', 'admin', 'accounting'].includes(user.role) && canWrite(def, user);
+  return G.billing.includes(user.role) && canWrite(def, user);
 }
 
 export function present(name, row) {
@@ -203,7 +205,7 @@ export function list(db, name, query = {}, user) {
     if (query.to) { where.push(`t."${def.dateField}" <= ?`); params.push(query.to + (def.dateField.includes('start') ? 'T23:59' : '')); }
   }
   // Technicians only see their own service calls unless asking for everything.
-  if (name === 'service_calls' && user?.role === 'technician' && query.mine === '1' && user.technician_id) {
+  if (name === 'service_calls' && isFieldRole(user?.role) && query.mine === '1' && user.technician_id) {
     where.push('t.technician_id = ?');
     params.push(user.technician_id);
   }
@@ -419,13 +421,13 @@ function enforceCompletionRules(db, call, existing, user, body, data) {
   }
   if (!missing.length) return;
   const reason = String(body?.override_reason || '').trim();
-  if (reason && ['owner', 'admin'].includes(user?.role)) {
+  if (reason && G.manage.includes(user?.role)) {
     data.completion_override = `${user.name}: ${reason}`.slice(0, 300);
     return;
   }
   const e = new HttpError(400, `Before completing this job, add ${missing.join(', ')}.`);
   e.code = 'completion_rules';
-  e.canOverride = ['owner', 'admin'].includes(user?.role);
+  e.canOverride = G.manage.includes(user?.role);
   throw e;
 }
 
@@ -666,7 +668,7 @@ const HOOKS = {
       if (touched && !body?.allow_conflict) {
         const clash = findConflict(db, { id: existing?.id, technician_id: merged.technician_id, scheduled_start: merged.scheduled_start, duration_hours: merged.duration_hours, status: merged.status });
         if (clash) {
-          const canOverride = ['owner', 'admin'].includes(user?.role);
+          const canOverride = G.manage.includes(user?.role);
           const e = new HttpError(409, `Schedule conflict: ${clash.tech} is already booked ${clash.when} for SC-${clash.number} (${clash.customer}).`
             + (canOverride ? ' Choose another time or technician, or book anyway.' : ' Choose another time or technician.'));
           e.code = 'conflict';
@@ -676,7 +678,7 @@ const HOOKS = {
       }
       if (merged.status === 'new' && merged.technician_id && merged.scheduled_start) data.status = 'scheduled';
       if ('signature_waived' in data && !!data.signature_waived !== !!existing?.signature_waived) {
-        if (!['owner', 'admin'].includes(user?.role)) throw new HttpError(403, 'Only an owner or administrator can approve completing a job without the customer’s signature');
+        if (!G.manage.includes(user?.role)) throw new HttpError(403, 'Only an owner or administrator can approve completing a job without the customer’s signature');
         data.signature_waived_by = data.signature_waived ? user.name : null;
       }
       if (isCreate && !data.signature_waived && db.prepare('SELECT no_signature_needed FROM customers WHERE id = ?').get(data.customer_id)?.no_signature_needed) {

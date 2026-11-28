@@ -5,7 +5,7 @@ import { getSettings } from './db.js';
 import { HttpError, registerHooks, todayLocal, addDays } from './resources.js';
 import { audit } from './security.js';
 
-const MANAGE = G.manage;
+const MANAGE = G.hr; // time off, balances and holidays for everyone
 export const PTO_KINDS = ['vacation', 'sick', 'personal'];
 const D = /^\d{4}-\d{2}-\d{2}$/;
 
@@ -36,7 +36,7 @@ registerHooks('service_calls', {
     if (!(isCreate || ('scheduled_start' in data && data.scheduled_start !== existing?.scheduled_start))) return;
     const h = db.prepare('SELECT name FROM company_holidays WHERE date = ?').get(m.scheduled_start.slice(0, 10));
     if (!h) return;
-    const canOverride = ['owner', 'admin'].includes(user?.role);
+    const canOverride = G.manage.includes(user?.role);
     const e = new HttpError(409, `${m.scheduled_start.slice(0, 10)} is a company holiday (${h.name}).${canOverride ? ' Book anyway?' : ' Pick another day, or ask the office.'}`);
     e.code = 'conflict'; e.canOverride = canOverride; e.kind = 'holiday';
     throw e;
@@ -105,7 +105,7 @@ export function registerHrRoutes(r) {
   r('GET', '/api/pto/balances', G.all, ({ db, user, query }) => {
     const year = Number(query.year) || Number(todayLocal().slice(0, 4));
     if (query.all === '1') {
-      if (!MANAGE.includes(user.role)) throw new HttpError(403, 'Owners and administrators only');
+      if (!MANAGE.includes(user.role)) throw new HttpError(403, 'Only people who manage time off can see everyone’s balances');
       return db.prepare('SELECT id, name, role FROM users WHERE active = 1 ORDER BY name').all().map(u => ({ ...u, year, balances: balances(db, u.id, year) }));
     }
     return { year, workday_hours: Number(getSettings(db).workday_hours) || 8, balances: balances(db, user.id, year) };

@@ -3,7 +3,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
-import { RESOURCES, MAINTENANCE } from '../public/js/schema.js';
+import { RESOURCES, MAINTENANCE, customerAccess, isFieldRole, isPrivilegedRole } from '../public/js/schema.js';
 import { getSettings, DEFAULT_SETTINGS, PRIVATE_SETTINGS, SECRET_SETTINGS, INTERNAL_SETTINGS, tx, DATA_DIR } from './db.js';
 import { markInvoiceDirty, qboConfig, qboConnected, authorizeUrl, handleCallback, disconnect as qboDisconnect, listItems as qboItems, syncAll as qboSync, exportFile } from './quickbooks.js';
 import { queue, notifyOnMyWay, notifyScheduled, sendEmail, sendSms, mailConfig, smsConfig, appUrl } from './notify.js';
@@ -29,6 +29,7 @@ import { registerLibraryRoutes } from './library.js';
 import { registerTaskRoutes, taskFeedEvents } from './tasks.js';
 import { registerCallRoutes } from './calls.js';
 import { registerOrgRoutes, checkSupervisor, supervisorOf } from './org.js';
+import { registerRoleRoutes } from './roles.js';
 import { requestOrigin } from './net.js';
 import { runBackup, listBackups } from './backup.js';
 import { openAlerts, resolveAlert } from './alerts.js';
@@ -86,6 +87,9 @@ function requireStr(v, label) {
 function publicUser(u) {
   return u && { id: u.id, name: u.name, email: u.email, role: u.role, technician_id: u.technician_id };
 }
+
+// Settings someone with only the HR permission may change.
+const HR_SETTINGS = new Set(['workday_hours', 'pto_default_vacation', 'pto_default_sick', 'pto_default_personal', 'pto_allow_negative', 'holiday_blocks', 'timeoff_notify_managers', 'timeoff_managers_decide']);
 
 export function buildRoutes() {
   const routes = [];
@@ -148,11 +152,12 @@ export function buildRoutes() {
   });
 
   // ------------------------------------------------------------ users
-  r('GET', '/api/users', MANAGE, ({ db }) => db.prepare(`SELECT u.id, u.name, u.email, u.role, u.technician_id, u.active, u.last_login, u.job_title, u.supervisor_id,
+  r('GET', '/api/users', G.people, ({ db }) => db.prepare(`SELECT u.id, u.name, u.email, u.role, u.technician_id, u.active, u.last_login, u.job_title, u.supervisor_id,
       t.name AS technician_name, s.name AS supervisor_name FROM users u LEFT JOIN technicians t ON t.id = u.technician_id LEFT JOIN users s ON s.id = u.supervisor_id
       ORDER BY u.active DESC, u.name`).all());
 
-  r('POST', '/api/users', MANAGE, ({ db, body, user }) => {
+  r('POST', '/api/users', G.people, ({ db, body, user }) => {
+    if (!G.manage.includes(user.role) && isPrivilegedRole(body.role)) throw new HttpError(403, 'Only an owner or administrator can create accounts with admin rights');
     const name = requireStr(body.name, 'Name');
     const email = requireStr(body.email, 'Email').toLowerCase();
     if (!ROLES.includes(body.role)) throw new HttpError(400, 'Invalid role');
@@ -171,9 +176,10 @@ export function buildRoutes() {
     }
   });
 
-  r('PUT', '/api/users/:id', MANAGE, ({ db, body, user, params }) => {
+  r('PUT', '/api/users/:id', G.people, ({ db, body, user, params }) => {
     const target = db.prepare('SELECT * FROM users WHERE id = ?').get(Number(params.id));
     if (!target) throw new HttpError(404, 'Not found');
+    if (!G.manage.includes(user.role) && (isPrivilegedRole(target.role) || isPrivilegedRole(body.role ?? target.role))) throw new HttpError(403, 'Only an owner or administrator can change accounts with admin rights');
     const role = body.role ?? target.role;
     const active = body.active === undefined ? target.active : (body.active ? 1 : 0);
     if (!ROLES.includes(role)) throw new HttpError(400, 'Invalid role');
@@ -213,8 +219,10 @@ export function buildRoutes() {
     else { s.email_ready = mailConfig(db).ok; s.sms_ready = smsConfig(db).ok; }
     return s;
   });
-  r('PUT', '/api/settings', MANAGE, ({ db, body, user }) => {
+  r('PUT', '/api/settings', G.settings, ({ db, body, user }) => {
     const up = db.prepare('INSERT INTO settings(key, value) VALUES (?,?) ON CONFLICT(key) DO UPDATE SET value = excluded.value');
+    const full = G.manage.includes(user.role);
+    if (!full && (!G.hr.includes(user.role) || Object.keys(body).some(k => k in DEFAULT_SETTINGS && !HR_SETTINGS.has(k)))) throw new HttpError(403, 'You can change the time-off and holiday settings only');
     for (const k of Object.keys(DEFAULT_SETTINGS)) {
       if (!(k in body) || INTERNAL_SETTINGS.has(k)) continue;
       if (SECRET_SETTINGS.has(k)) { if (body[k]) up.run(k, encrypt(String(body[k]))); continue; } // blank = keep
@@ -253,7 +261,8 @@ export function buildRoutes() {
   // ------------------------------------------------------------ dashboard
   r('GET', '/api/dashboard', ALL, ({ db, user }) => {
     const today = todayLocal();
-    const isTech = user.role === 'technician';
+    const isTech = isFieldRole(user.role);
+    if (customerAccess(user.role) === 'none') return { today, no_customers: true, todayCalls: [], openCalls: 0, unassignedCalls: 0, emergencies: 0, customers: [], maintenance: [], lowStock: [] };
     const seesMoney = BILLING.includes(user.role);
     const callWhere = isTech && user.technician_id ? `AND t.technician_id = ${Number(user.technician_id)}` : '';
     const todayCalls = list(db, 'service_calls', { from: today, to: today, limit: 200 }, user)
@@ -436,6 +445,7 @@ export function buildRoutes() {
   registerTaskRoutes(r);
   registerCallRoutes(r);
   registerOrgRoutes(r);
+  registerRoleRoutes(r);
 
   // ------------------------------------------------------------ alerts for the owner / office
   r('GET', '/api/alerts', G.staff, ({ db, user }) => openAlerts(db, user.role));
@@ -678,7 +688,7 @@ ${s.company_name}` }));
   // ------------------------------------------------------------ notifications
   r('POST', '/api/service_calls/:id/on-my-way', ALL, ({ db, params, body, user }) => {
     const call = get(db, 'service_calls', params.id, user);
-    if (user.role === 'technician' && user.technician_id && call.technician_id && call.technician_id !== user.technician_id) throw new HttpError(403, 'This job is assigned to someone else');
+    if (isFieldRole(user.role) && user.technician_id && call.technician_id && call.technician_id !== user.technician_id) throw new HttpError(403, 'This job is assigned to someone else');
     const eta = Number(body.eta_minutes) > 0 ? Math.round(Number(body.eta_minutes)) : null;
     const updated = update(db, 'service_calls', call.id, { status: 'en route' }, user);
     if (getSettings(db).notify_on_way === '1') queue(() => notifyOnMyWay(db, updated, { etaMinutes: eta }));

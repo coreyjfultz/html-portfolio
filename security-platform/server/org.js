@@ -6,7 +6,7 @@ import { HttpError } from './resources.js';
 import { getSettings } from './db.js';
 import { onlineUserIds } from './chat.js';
 
-const MANAGE = G.manage;
+const MANAGE = G.hr; // owners/admins/HR: everyone's time off
 
 /** Everyone below this person (their reports, their reports' reports, …). */
 export function reportIds(db, uid) {

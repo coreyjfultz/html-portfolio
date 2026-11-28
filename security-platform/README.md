@@ -46,7 +46,7 @@ One system for the office and the field. It runs as a **website** and installs o
 | **Owner alerts** | Truck count differences, missing tools, techs short on equipment, clock-ins away from the office, voicemails and missed calls show on the dashboard and are emailed (optionally texted) to the owner |
 | **Expenses & profit** | Categorized expenses; **Profit & loss** by month (residential vs. commercial revenue, collected, expenses, estimated labor cost, net); **Job profitability** per completed call |
 | **Reports** | **Technician workload** (busiest tech, booked hours vs. capacity, calls, emergencies, labor billed/cost, backlog); **Residential vs. commercial** (customers, MRR/ARR, revenue, open balance); **A/R aging** (current / 30 / 60 / 90+) |
-| **Team & roles** | **Owner / Global admin** (everything, incl. admins and backups), **Administrator** (runs the business, but not owner accounts or backups), **Sales** (leads, pipeline, proposals, site surveys; no invoices or financials), **Accounting** (invoices, payments, expenses, receiving, reports, QuickBooks), **Technician** (their jobs, schedule, systems & passwords, photos, signatures, truck inventory). Activity log, CSV exports, one-click backup |
+| **Team & roles** | **Owner / Global admin** (everything, incl. admins and backups), **Administrator** (runs the business, but not owner accounts or backups), **Sales** (leads, pipeline, proposals, site surveys; no invoices or financials), **Accounting** (invoices, payments, expenses, receiving, reports, QuickBooks), **Technician** (their jobs, schedule, systems & passwords, photos, signatures, truck inventory), **HR** (everyone's time off, balances, holidays, users & supervisors, pay stubs & benefits, chat records; no customers, jobs or billing). **Custom roles** (Settings → Roles & permissions, owner only): pick which customers the role sees (all / only their own schedule like a technician / none) and what else it can do (office basics, edit customers, sales, billing & accounting, operations admin, time off for everyone, users & supervisors, pay & benefits admin, chat records). Changes apply right away; built-in roles can be copied as a starting point. Activity log, CSV exports, one-click backup |
 
 ## Try it in 2 minutes
 
@@ -59,7 +59,7 @@ npm run seed     # loads demo data (optional)
 npm start        # http://localhost:3000
 ```
 
-Demo logins (password `demo1234`): `owner@demo.local`, `admin@demo.local`, `sales@demo.local`, `accounting@demo.local`, and technicians `jen@demo.local`, `mike@demo.local`, `sam@demo.local`.
+Demo logins (password `demo1234`): `owner@demo.local`, `admin@demo.local`, `sales@demo.local`, `accounting@demo.local`, `hr@demo.local`, and technicians `jen@demo.local`, `mike@demo.local`, `sam@demo.local`.
 Customer portal: http://localhost:3000/portal — `becker@example.com` / `demo1234`.
 
 For real use, **skip `npm run seed`**. The first visit asks you to create the owner account. Then add your team (Settings → Users), technicians, vehicles, inventory items and customers.

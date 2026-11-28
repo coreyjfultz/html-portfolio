@@ -5,6 +5,7 @@ import { state, can } from '../app.js';
 export async function render(view) {
   loading(view);
   const [d, onTest, alerts] = await Promise.all([GET('/api/dashboard'), GET('/api/monitoring-on-test').catch(() => []), can.staff() ? GET('/api/alerts').catch(() => []) : Promise.resolve([])]);
+  if (d.no_customers) return simpleDashboard(view);
   const { alertRow, wireAlerts } = alerts.length ? await import('./truckstock.js') : {};
   const outToday = can.staff() ? await GET('/api/time-off/out', { from: new Date().toISOString().slice(0, 10), to: new Date().toISOString().slice(0, 10) }).catch(() => []) : [];
   const res = d.customers.find(c => c.type === 'residential')?.n || 0;
@@ -89,6 +90,20 @@ export async function render(view) {
           ] })}</div></div>
     </div>`);
   if (alerts.length) wireAlerts(view, () => render(view));
+  import('./timeclock.js').then(m => m.clockWidget($('[data-clock]', view)));
+  import('./tasks.js').then(m => m.myTasksCard($('[data-mytasks]', view)));
+  GET('/api/org/me').then(o => { const b = $('[data-approvals]', view); if (b && o.pending_time_off) { b.innerHTML = `🌴 ${o.pending_time_off} time-off request${o.pending_time_off > 1 ? 's' : ''} waiting for your approval. <a href="#/time-off">Review</a>`; b.classList.remove('hidden'); } }).catch(() => {});
+}
+
+// For roles without customers or jobs (e.g. HR): greeting, time clock, approvals and tasks.
+function simpleDashboard(view) {
+  const hour = new Date().getHours();
+  mount(view, html`<div class="page-head"><div><h1>Good ${hour < 12 ? 'morning' : hour < 17 ? 'afternoon' : 'evening'}, ${state.user.name.split(' ')[0]}</h1>
+      <div class="sub">${new Date().toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' })}</div></div>
+      <div class="actions"><a class="btn" href="#/time-off">Time off</a><a class="btn" href="#/team">Our team</a></div></div>
+    <div class="banner warn hidden" style="margin-bottom:16px" data-approvals></div>
+    <div class="card" style="margin-bottom:16px"><div class="card-body" data-clock></div></div>
+    <div class="card hidden" style="margin-bottom:16px" data-mytasks></div>`);
   import('./timeclock.js').then(m => m.clockWidget($('[data-clock]', view)));
   import('./tasks.js').then(m => m.myTasksCard($('[data-mytasks]', view)));
   GET('/api/org/me').then(o => { const b = $('[data-approvals]', view); if (b && o.pending_time_off) { b.innerHTML = `🌴 ${o.pending_time_off} time-off request${o.pending_time_off > 1 ? 's' : ''} waiting for your approval. <a href="#/time-off">Review</a>`; b.classList.remove('hidden'); } }).catch(() => {});

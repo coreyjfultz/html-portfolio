@@ -1,4 +1,4 @@
-import { RESOURCES, STAGES, STAGE_INFO, PAYMENT_METHODS } from '../schema.js';
+import { RESOURCES, STAGES, STAGE_INFO, PAYMENT_METHODS, isFieldRole } from '../schema.js';
 import {
   html, raw, icon, mount, $, $$, money, fmtDate, badge, typeBadge, stageBadge, relDays, dataTable, fieldColumns, openForm, renderValue,
   loading, toast, secretView, confirmDialog, openModal, fmtDateTime,
@@ -414,7 +414,7 @@ async function portalDialog(c) {
 
 async function techAccessDialog(c) {
   const [grants, users] = await Promise.all([GET(`/api/customers/${c.id}/access`), GET('/api/users')]);
-  const techs = users.filter(u => u.role === 'technician' && u.active);
+  const techs = users.filter(u => isFieldRole(u.role) && u.active);
   const { el, close } = openModal({
     title: 'Technician access', size: 'sm',
     body: html`<p class="muted" style="margin-top:0">Technicians automatically see customers on their schedule. Give someone temporary access to ${c.name} for anything else (a phone consult, a backup tech).</p>

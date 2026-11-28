@@ -1,3 +1,4 @@
+import { loadRoles } from './roles.js';
 import http from 'node:http';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -81,6 +82,7 @@ function serveStatic(req, res, pathname) {
 }
 
 export function createServer(db) {
+  loadRoles(db);
   const routes = buildRoutes();
   const secureCookies = process.env.COOKIE_SECURE === '1';
 

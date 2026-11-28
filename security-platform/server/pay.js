@@ -11,7 +11,7 @@ import { HttpError } from './resources.js';
 import { audit } from './security.js';
 
 // Pay documents are seen only by the person, the owner and accounting.
-const PAY_ADMIN = ['owner', 'accounting'];
+const PAY_ADMIN = G.payAdmin;
 const DIR = path.join(DATA_DIR, 'hrdocs');
 export const PROVIDERS = {
   quickbooks: { label: 'QuickBooks Workforce', url: 'https://workforce.intuit.com' },

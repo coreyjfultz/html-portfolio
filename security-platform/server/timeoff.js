@@ -11,7 +11,7 @@ import { requestHours, balances, PTO_KINDS } from './hr.js';
 import { canApprove, reportIds, supervisorOf } from './org.js';
 import { notifyPush } from './push.js';
 
-const MANAGE = G.manage;
+const MANAGE = G.hr; // decide/see everyone's time off
 export const KINDS = ['vacation', 'sick', 'personal', 'training', 'other'];
 const DT = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/;
 const D = /^\d{4}-\d{2}-\d{2}$/;
@@ -56,7 +56,7 @@ registerHooks('service_calls', {
     if (!touched) return;
     const off = timeOffDuring(db, m.technician_id, m.scheduled_start, addMin(m.scheduled_start, (Number(m.duration_hours) || 1) * 60));
     if (!off) return;
-    const canOverride = ['owner', 'admin'].includes(user?.role);
+    const canOverride = G.manage.includes(user?.role);
     const e = new HttpError(409, `${off.user_name} is off (${off.kind}) ${fmt(off.starts_at, off.ends_at, off.all_day)}.${canOverride ? ' Pick another tech or time, or book anyway.' : ' Pick another tech or time.'}`);
     e.code = 'conflict'; e.canOverride = canOverride; e.kind = 'time_off';
     throw e;
@@ -159,11 +159,11 @@ export function registerTimeOffRoutes(r) {
       };
       if (sup) tellPerson(sup);
       if (!sup || s.timeoff_notify_managers !== '0') {
-        for (const m of db.prepare("SELECT id, name, email FROM users WHERE active = 1 AND role IN ('owner','admin') AND id <> ?").all(forUser.id)) if (m.id !== sup?.id) tellPerson(m);
+        for (const m of db.prepare(`SELECT id, name, email FROM users WHERE active = 1 AND role IN (${MANAGE.map(() => '?').join(',')}) AND id <> ?`).all(...MANAGE, forUser.id)) if (m.id !== sup?.id) tellPerson(m);
         raiseAlert(db, {
           kind: 'time_off', severity: 'info', title: `${forUser.name} requested time off: ${what}${sup ? ` · ${sup.name.split(' ')[0]} is their supervisor` : ''}`,
           body: `${x.note ? `“${x.note}”\n` : ''}${c.jobs.length ? `${c.jobs.length} job(s) already booked then.` : 'No jobs booked then.'}${c.oncall.length ? ` On call during part of it.` : ''}`,
-          link: `#/time-off?req=${id}`, roles: 'owner,admin', notify: false,
+          link: `#/time-off?req=${id}`, roles: MANAGE.join(','), notify: false,
         });
       }
     }

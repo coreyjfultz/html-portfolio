@@ -8,7 +8,7 @@ const STATUS = { pending: 'warn', approved: 'good', denied: 'bad', cancelled: ''
 
 export async function render(view, _, query) {
   loading(view);
-  const manage = can.manage();
+  const manage = can.hr();
   const org = await GET('/api/org/me').catch(() => ({ team_ids: [] }));
   const lead = manage || org.is_supervisor; // can approve for others
   const [mine, all, out, users, bal, hols, team] = await Promise.all([

@@ -1,7 +1,7 @@
 // Vehicle checklist: oil, tires, lights, walk-around damage (with photos), clean truck.
 // Done by the tech on their phone, daily by default, before their first job. Problems alert
 // the office; the odometer reading keeps the vehicle's mileage current.
-import { G } from '../public/js/schema.js';
+import { G, isFieldRole } from '../public/js/schema.js';
 import { VEHICLE_ITEMS, TIRES } from '../public/js/vehicle-checks.js';
 import { getSettings, tx } from './db.js';
 import { HttpError, registerHooks, todayLocal, nowLocal, addDays } from './resources.js';
@@ -19,7 +19,7 @@ function vehicleOr404(db, id) {
   return v;
 }
 function assertAccess(user, v) {
-  if (G.billing.includes(user.role) || user.role !== 'technician') return;
+  if (G.billing.includes(user.role) || !isFieldRole(user.role)) return;
   if (!user.technician_id || v.assigned_technician_id !== user.technician_id) throw new HttpError(403, 'You can only check the vehicle assigned to you');
 }
 
@@ -90,7 +90,7 @@ export function submitCheck(db, v, body, user) {
 // (when required). "Approve start" on the start-of-day check covers this too.
 registerHooks('service_calls', {
   beforeSave(db, data, { existing, user }) {
-    if (!existing || user?.role !== 'technician') return;
+    if (!existing || !isFieldRole(user?.role)) return;
     if (!['en route', 'in progress'].includes(data.status) || ['en route', 'in progress'].includes(existing.status)) return;
     if (getSettings(db).vehicle_check_required !== '1') return;
     const techId = existing.technician_id || user.technician_id;

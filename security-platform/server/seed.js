@@ -54,6 +54,7 @@ ins.run('Demo Owner', 'owner@demo.local', hashPassword('demo1234'), 'owner', nul
 ins.run('Office Admin', 'admin@demo.local', hashPassword('demo1234'), 'admin', null);
 ins.run('Sam Sales', 'sales@demo.local', hashPassword('demo1234'), 'sales', null);
 ins.run('Ann Accounting', 'accounting@demo.local', hashPassword('demo1234'), 'accounting', null);
+ins.run('Hana Reyes', 'hr@demo.local', hashPassword('demo1234'), 'hr', null);
 ins.run('Jen Park', 'jen@demo.local', hashPassword('demo1234'), 'technician', jen.id);
 ins.run('Mike Alvarez', 'mike@demo.local', hashPassword('demo1234'), 'technician', mike.id);
 ins.run('Sam Turner', 'sam@demo.local', hashPassword('demo1234'), 'technician', sam.id);
@@ -442,6 +443,7 @@ db.prepare("UPDATE service_calls SET signature_waived = 1, signature_waived_by =
   set('admin@demo.local', 'owner@demo.local', 'Office Manager');
   set('sales@demo.local', 'admin@demo.local', 'Sales');
   set('accounting@demo.local', 'admin@demo.local', 'Bookkeeper');
+  set('hr@demo.local', 'owner@demo.local', 'HR Manager');
   set('mike@demo.local', 'owner@demo.local', 'Lead Technician');
   set('sam@demo.local', 'mike@demo.local', 'Installer');
   set('jen@demo.local', 'mike@demo.local', 'Service Technician');
@@ -580,5 +582,5 @@ db.prepare("UPDATE purchase_invoices SET vendor = 'Anixter', invoice_number = '9
 await processInvoice(db, r2);
 
 console.log(`Demo data loaded into ${DB_PATH}`);
-console.log('Sign in with owner@demo.local / demo1234 (also admin@, sales@, accounting@, and technicians jen@, mike@, sam@demo.local)');
+console.log('Sign in with owner@demo.local / demo1234 (also admin@, sales@, accounting@, hr@, and technicians jen@, mike@, sam@demo.local)');
 console.log('Customer portal (/portal): becker@example.com / demo1234');
