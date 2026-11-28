@@ -1,0 +1,32 @@
+# Optional relay server for in-app calls (coturn). Only needed if some calls won't connect
+# (some cell networks and office firewalls block device-to-device audio).
+#
+#   1. In .env set TURN_SECRET (a long random string, e.g. `openssl rand -hex 32`) and
+#      TURN_URLS=turn:<your domain>:3478?transport=udp,turn:<your domain>:3478?transport=tcp
+#   2. Open these ports in the server firewall: 3478 TCP+UDP, and 49160-49200 UDP.
+#   3. docker compose -f docker-compose.yml -f deploy/docker-compose.turn.yml up -d
+#
+# The app then hands out short-lived relay passwords made from TURN_SECRET; nothing else is
+# needed in Settings.
+services:
+  turn:
+    image: coturn/coturn:4.6.2
+    restart: unless-stopped
+    network_mode: host   # the relay needs a range of UDP ports on the real network
+    command: >
+      -n --log-file=stdout --no-cli --fingerprint
+      --use-auth-secret --static-auth-secret=${TURN_SECRET:?Set TURN_SECRET in .env}
+      --realm=${DOMAIN:?Set DOMAIN in .env}
+      --listening-port=3478 --min-port=49160 --max-port=49200
+      --no-multicast-peers
+      --denied-peer-ip=0.0.0.0-0.255.255.255
+      --denied-peer-ip=10.0.0.0-10.255.255.255
+      --denied-peer-ip=100.64.0.0-100.127.255.255
+      --denied-peer-ip=127.0.0.0-127.255.255.255
+      --denied-peer-ip=169.254.0.0-169.254.255.255
+      --denied-peer-ip=172.16.0.0-172.31.255.255
+      --denied-peer-ip=192.168.0.0-192.168.255.255
+  app:
+    environment:
+      TURN_SECRET: ${TURN_SECRET}
+      TURN_URLS: ${TURN_URLS:?Set TURN_URLS in .env}

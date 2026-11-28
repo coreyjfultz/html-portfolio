@@ -1,0 +1,502 @@
+import { html, raw, mount, $, $$, dataTable, promptForm, toast, badge, loading, confirmDialog, pickPhotos, resizeImage, openModal } from '../ui.js';
+import { GET, PUT, POST, R, api } from '../api.js';
+import { ROLES, ROLE_INFO, G, PERMISSIONS, CUSTOMER_ACCESS, isPrivilegedRole } from '../schema.js';
+import { state, refresh } from '../app.js';
+
+const SETTINGS = [
+  ['company_name', 'Company name'], ['company_phone', 'Phone'], ['company_email', 'Email'], ['company_license', 'License #'],
+  ['company_address', 'Address (printed on invoices)', 'textarea'],
+  ['tax_rate', 'Sales tax rate %', 'number'], ['payment_terms_days', 'Payment terms (days)', 'number'], ['default_labor_rate', 'Default labor rate / hr', 'number'],
+  ['invoice_next_number', 'Next invoice #', 'number'], ['call_next_number', 'Next service call #', 'number'],
+  ['invoice_footer', 'Invoice footer (payment instructions)', 'textarea'],
+  ['proposal_valid_days', 'Proposals valid for (days)', 'number'], ['proposal_next_number', 'Next proposal #', 'number'],
+  ['proposal_terms', 'Default terms & conditions for proposals and agreements (have your attorney review)', 'textarea'],
+];
+
+export async function render(view, _, query) {
+  const role = state.user.role;
+  const mg = G.manage.includes(role);
+  const TABS = [['company', 'Company & billing', mg], ['payments', 'Payments', mg], ['notifications', 'Texts & email', mg], ['calendars', 'Calendars', mg], ['receiving', 'Receiving', mg], ['field', 'Field rules', mg], ['phone', 'Phone & on-call', mg], ['tracking', 'Tracking & maps', mg], ['hr', 'HR & time off', G.hr.includes(role)], ['assistant', 'Help assistant', mg], ['users', 'Users & logins', G.people.includes(role)], ['roles', 'Roles & permissions', mg || G.people.includes(role)], ['audit', 'Activity log', mg], ['data', 'Backup & data', mg]].filter(t => t[2]);
+  const tab = TABS.some(t => t[0] === query.tab) ? query.tab : TABS[0]?.[0];
+  mount(view, html`<div class="page-head"><div><h1>Settings</h1><div class="sub">${mg ? 'Company, users and data' : 'The settings your role can change'}</div></div></div>
+    <div class="tabs">${TABS.map(([k, l]) => html`<button class="${k === tab ? 'on' : ''}" data-tab="${k}">${l}</button>`)}</div>
+    <div data-pane></div>`);
+  $$('[data-tab]', view).forEach(b => b.addEventListener('click', () => { location.hash = `#/settings?tab=${b.dataset.tab}`; }));
+  const pane = $('[data-pane]', view);
+  loading(pane);
+
+  if (tab === 'company') {
+    const s = await GET('/api/settings');
+    mount(pane, html`<div class="card"><div class="card-body"><form class="form-grid" data-form>
+      ${SETTINGS.map(([k, l, t]) => html`<div class="field ${t === 'textarea' ? 'full' : ''}"><label for="s_${k}">${l}</label>
+        ${t === 'textarea' ? html`<textarea id="s_${k}" name="${k}" rows="${k === 'proposal_terms' ? 12 : 3}">${s[k]}</textarea>` : html`<input id="s_${k}" name="${k}" type="${t || 'text'}" step="any" value="${s[k]}">`}</div>`)}
+      </form><div class="row" style="margin-top:16px"><button class="btn primary" data-save>Save settings</button></div></div></div>
+      <div class="card" style="margin-top:16px"><div class="card-head"><div><h2>Logo</h2><div class="small muted">Shown on invoices, proposals, the customer portal and the app. PNG or JPG, ideally wide and on a transparent or white background.</div></div></div>
+        <div class="card-body row" style="gap:16px">${state.logo ? html`<img src="/api/public/logo?v=${state.logo}" alt="Current logo" style="max-height:64px;max-width:220px;background:#fff;padding:6px;border:1px solid var(--border);border-radius:8px">` : html`<span class="muted">No logo yet</span>`}
+          <button class="btn" data-logo>Upload logo</button>${state.logo ? html`<button class="btn ghost danger" data-nologo>Remove</button>` : ''}</div></div>`);
+    $('[data-logo]', pane).addEventListener('click', async () => {
+      const [file] = await pickPhotos({ camera: false, multiple: false });
+      if (!file) return;
+      try {
+        const data = file.type === 'image/png' ? await new Promise((res, rej) => { const r = new FileReader(); r.onload = () => res(r.result); r.onerror = rej; r.readAsDataURL(file); }) : await resizeImage(file, 800, 0.9);
+        await POST('/api/settings/logo', { data });
+        toast('Logo updated'); location.reload();
+      } catch (e) { toast(e.message, 'error'); }
+    });
+    $('[data-nologo]', pane)?.addEventListener('click', async () => { await api('DELETE', '/api/settings/logo'); toast('Logo removed'); location.reload(); });
+    $('[data-save]', pane).addEventListener('click', async () => {
+      const data = Object.fromEntries(new FormData($('[data-form]', pane)));
+      state.settings = await PUT('/api/settings', data);
+      toast('Settings saved');
+      $('.sidebar .brand span').textContent = state.settings.company_name;
+    });
+  }
+
+  if (tab === 'payments') {
+    const [s2, cfg] = await Promise.all([GET('/api/settings'), GET('/api/payments/config')]);
+    mount(pane, html`<div class="grid g2">
+      <div class="card"><div class="card-head"><h2>Accepted payment methods</h2></div><div class="card-body small">
+        <p>✔ <b>Cash</b> and ✔ <b>Check</b>: record them on the invoice with “Record payment”.</p>
+        <p>✔ <b>Credit card</b> and ✔ <b>Bank ACH</b>: customers pay online from a “Pay now” link or the customer portal, or you charge a card/bank they've saved. Payments post to the invoice automatically.</p>
+        <p class="muted">Online payments run through Stripe (about 2.9% + 30¢ per card payment; ACH 0.8%, capped at $5). Card and bank numbers stay with Stripe and never touch this system.</p></div></div>
+      <div class="card"><div class="card-head"><h2>Stripe connection</h2>${cfg.ok ? html`<span class="badge good">${cfg.test ? 'Connected (test mode)' : 'Connected'}</span>` : html`<span class="badge warn">Not connected</span>`}</div>
+        <div class="card-body"><form class="stack" data-pform style="gap:12px">
+          <div class="field"><label for="sk">Secret key</label><input id="sk" type="password" name="stripe_secret" placeholder="${s2.stripe_secret__set ? 'Saved — leave blank to keep' : 'sk_live_… (Stripe Dashboard → Developers → API keys)'}" autocomplete="off"></div>
+          <div class="field"><label for="wh">Webhook signing secret</label><input id="wh" type="password" name="stripe_webhook_secret" placeholder="${s2.stripe_webhook_secret__set ? 'Saved — leave blank to keep' : 'whsec_…'}" autocomplete="off">
+            <span class="help">In Stripe: Developers → Webhooks → Add endpoint <span class="mono">${cfg.webhook_url}</span> with events <span class="mono">checkout.session.completed, checkout.session.async_payment_succeeded, checkout.session.async_payment_failed, payment_intent.succeeded, payment_intent.payment_failed</span>, then paste its signing secret here.</span></div>
+          <label class="row"><input type="checkbox" name="stripe_ach" ${s2.stripe_ach !== '0' ? raw('checked') : ''}> Offer bank (ACH) payments as well as cards</label>
+          <div><button class="btn primary">Save</button></div></form></div></div></div>`);
+    $('[data-pform]', pane).addEventListener('submit', async e => {
+      e.preventDefault();
+      const f = e.target;
+      await PUT('/api/settings', { stripe_secret: f.stripe_secret.value.trim(), stripe_webhook_secret: f.stripe_webhook_secret.value.trim(), stripe_ach: f.stripe_ach.checked ? '1' : '0' });
+      toast('Saved'); refresh();
+    });
+  }
+
+  if (tab === 'notifications') {
+    const [s2, log] = await Promise.all([GET('/api/settings'), GET('/api/notifications')]);
+    const chk = (k, label) => html`<label class="row"><input type="checkbox" name="${k}" ${s2[k] === '1' ? raw('checked') : ''}> ${label}</label>`;
+    const inp = (k, label, extra = {}) => html`<div class="field"><label for="n_${k}">${label}</label><input id="n_${k}" name="${k}" type="${extra.type || 'text'}" value="${extra.type === 'password' ? '' : s2[k] ?? ''}" placeholder="${extra.ph || ''}" autocomplete="off">${extra.help ? html`<span class="help">${extra.help}</span>` : ''}</div>`;
+    mount(pane, html`<form data-nform class="stack">
+      <div class="grid g2">
+        <div class="card"><div class="card-head"><h2>Email (SMTP)</h2>${s2.email_ready ? html`<span class="badge good">Ready</span>` : html`<span class="badge warn">Not set up</span>`}</div><div class="card-body form-grid">
+          ${inp('smtp_host', 'SMTP server', { ph: 'smtp.office365.com or smtp.gmail.com' })}${inp('smtp_port', 'Port', { ph: '587' })}
+          ${inp('smtp_user', 'Username', { ph: 'office@yourcompany.com' })}${inp('smtp_pass', 'Password / app password', { type: 'password', ph: s2.smtp_pass__set ? 'Saved — leave blank to keep' : '' })}
+          ${inp('mail_from', 'Send from address', { ph: 'office@yourcompany.com', help: 'Microsoft 365: use an account with SMTP AUTH enabled. Gmail: create an app password.' })}
+          <div class="field"><label>&nbsp;</label><button type="button" class="btn" data-test="email">Send test email</button></div></div></div>
+        <div class="card"><div class="card-head"><h2>Text messages (Twilio)</h2>${s2.sms_ready ? html`<span class="badge good">Ready</span>` : html`<span class="badge warn">Not set up</span>`}</div><div class="card-body form-grid">
+          ${inp('twilio_sid', 'Account SID', { ph: 'AC…' })}${inp('twilio_token', 'Auth token', { type: 'password', ph: s2.twilio_token__set ? 'Saved — leave blank to keep' : '' })}
+          ${inp('twilio_from', 'Texting number', { ph: '+15555550100', help: 'A Twilio number registered for business texting (A2P 10DLC).' })}
+          <div class="field"><label>&nbsp;</label><button type="button" class="btn" data-test="sms">Send test text</button></div></div></div>
+      </div>
+      <div class="card"><div class="card-head"><h2>When to send</h2></div><div class="card-body stack" style="gap:10px">
+        ${chk('notify_on_schedule', 'Confirm with the customer when a job is scheduled or moved (email and/or text, per customer)')}
+        ${chk('notify_on_way', 'Text/email the customer when the technician taps “On my way”')}
+        ${chk('notify_tech_invites', 'Email technicians a calendar invite (Outlook/Gmail) when they’re booked, moved or unassigned')}
+        <p class="small muted" style="margin:0">Each customer can be set to email only, text only, both or neither on their profile.</p></div></div>
+      <div class="card"><div class="card-head"><div><h2>Message wording</h2><div class="small muted">Placeholders: {customer} {company} {company_phone} {tech} {date} {time} {type} {address} {eta} {call_number}</div></div></div>
+        <div class="card-body form-grid">
+          ${[['tpl_scheduled_sms', 'Appointment text'], ['tpl_onway_sms', 'On-my-way text'], ['tpl_scheduled_email', 'Appointment email'], ['tpl_onway_email', 'On-my-way email']].map(([k, l]) =>
+            html`<div class="field"><label for="n_${k}">${l}</label><textarea id="n_${k}" name="${k}" rows="${k.endsWith('email') ? 7 : 3}">${s2[k]}</textarea></div>`)}</div></div>
+      <div><button class="btn primary">Save</button></div></form>
+      <div class="card" style="margin-top:16px"><div class="card-head"><h2>Recent messages</h2></div><div class="card-body flush">${dataTable({
+        rows: log, empty: 'Nothing sent yet.',
+        columns: [{ label: 'When', key: 'created_at' }, { label: 'Type', render: m => m.channel === 'sms' ? 'Text' : 'Email' }, { label: 'To', render: m => m.to_addr },
+          { label: 'Subject / message', render: m => (m.subject || m.body || '').slice(0, 90) },
+          { label: 'Status', render: m => html`${badge(m.status, m.status === 'sent' ? 'good' : m.status === 'failed' ? 'bad' : '')}${m.error ? html`<div class="small muted">${m.error}</div>` : ''}` }],
+      })}</div></div>`);
+    const form = $('[data-nform]', pane);
+    const collect = () => {
+      const d = Object.fromEntries(new FormData(form));
+      for (const k of ['notify_on_schedule', 'notify_on_way', 'notify_tech_invites']) d[k] = form.elements[k].checked ? '1' : '0';
+      return d;
+    };
+    form.addEventListener('submit', async e => { e.preventDefault(); await PUT('/api/settings', collect()); toast('Saved'); refresh(); });
+    $$('[data-test]', pane).forEach(b => b.addEventListener('click', async () => {
+      await PUT('/api/settings', collect());
+      const channel = b.dataset.test;
+      promptForm({
+        title: channel === 'sms' ? 'Send a test text' : 'Send a test email',
+        fields: [{ name: 'to', label: channel === 'sms' ? 'Mobile number' : 'Email address', type: channel === 'sms' ? 'tel' : 'email', value: channel === 'sms' ? '' : state.user.email }],
+        submitLabel: 'Send',
+        onSubmit: async d => { await POST('/api/notifications/test', { channel, to: d.to }); toast('Sent!'); },
+      });
+    }));
+  }
+
+  if (tab === 'calendars') {
+    const [f, s2] = await Promise.all([GET('/api/calendar/feeds'), GET('/api/settings')]);
+    mount(pane, html`<div class="grid g2">
+      <div class="card"><div class="card-head"><h2>Time zone</h2></div><div class="card-body"><form class="stack" data-tz style="gap:12px">
+        <div class="field"><label for="tz">Company time zone (used for Outlook/Google calendars)</label>
+          <select id="tz" name="timezone">${['America/New_York', 'America/Chicago', 'America/Denver', 'America/Phoenix', 'America/Los_Angeles', 'America/Anchorage', 'Pacific/Honolulu'].map(z => html`<option ${z === s2.timezone ? raw('selected') : ''}>${z}</option>`)}</select></div>
+        <div class="field"><label for="pu">Public web address (optional)</label><input id="pu" type="text" name="public_url" placeholder="https://app.yourcompany.com" value="${s2.public_url}">
+          <span class="help">Used in calendar links, texts and emails. Leave blank to use the address you're on now.</span></div>
+        <div><button class="btn primary">Save</button></div></form></div></div>
+      <div class="card"><div class="card-head"><h2>How it works</h2></div><div class="card-body small">
+        <p>• Every technician gets an <b>email invite</b> when a job is booked, moved or cancelled, so it lands in their Outlook or Gmail calendar right away.</p>
+        <p>• Anyone can also <b>subscribe</b> to a live calendar feed (below, or the “Sync to Outlook / Google” button on the Calendar page).</p>
+        <p class="muted">Feeds are read-only: make changes in SecureOps and they flow out to the calendars.</p></div></div>
+      <div class="card" style="grid-column:1/-1"><div class="card-head"><h2>Calendar feeds</h2></div><div class="card-body flush">${dataTable({
+        rows: [...(f.central ? [{ id: 'central', name: 'Central — all technicians', url: f.central }] : []), ...f.technicians],
+        columns: [{ label: 'Calendar', render: r => html`${r.color ? html`<span class="dot" style="background:${r.color}"></span> ` : ''}<b>${r.name}</b>` },
+          { label: 'Link', render: r => html`<span class="mono small" style="word-break:break-all">${r.url}</span>` },
+          { label: '', cls: 'actions-cell', render: r => html`<button class="btn sm" data-copy="${r.url}">Copy</button> <button class="btn sm ghost danger" data-reset="${r.id}">Reset link</button>` }],
+      })}</div></div></div>`);
+    $('[data-tz]', pane).addEventListener('submit', async e => { e.preventDefault(); await PUT('/api/settings', { timezone: e.target.timezone.value, public_url: e.target.public_url.value.trim() }); toast('Saved'); });
+    $$('[data-copy]', pane).forEach(b => b.addEventListener('click', () => navigator.clipboard?.writeText(b.dataset.copy).then(() => toast('Copied'))));
+    $$('[data-reset]', pane).forEach(b => b.addEventListener('click', async () => {
+      if (!(await confirmDialog('Make a new link? The old link stops working, so anyone subscribed must subscribe again.', { okLabel: 'Reset link', danger: true }))) return;
+      await POST(`/api/calendar/reset/${b.dataset.reset}`); toast('New link created'); refresh();
+    }));
+  }
+
+  if (tab === 'receiving') {
+    const [s, info] = await Promise.all([GET('/api/settings'), GET('/api/receiving/info')]);
+    const url = `${location.origin}${info.inbound_path}`;
+    mount(pane, html`<div class="grid g2">
+      <div class="card"><div class="card-head"><h2>Automatic receiving</h2></div><div class="card-body"><form class="stack" data-form style="gap:14px">
+        <label class="row"><input type="checkbox" name="auto_receive" ${s.auto_receive === '1' ? raw('checked') : ''}> <span><b>Add stock automatically</b> when every line on an invoice matches a part # you already stock</span></label>
+        <label class="row"><input type="checkbox" name="receiving_update_costs" ${s.receiving_update_costs === '1' ? raw('checked') : ''}> <span>Update each item's unit cost to the price on the latest invoice</span></label>
+        <div class="field"><label for="tvd">Trusted distributor email domains</label>
+          <input id="tvd" name="trusted_vendor_domains" value="${s.trusted_vendor_domains}" placeholder="adiglobal.com, anixter.com, wesco.com">
+          <span class="help">Emailed invoices are only received automatically when they come from one of these domains. Anything else waits for review, so a fake email can't change your stock.</span></div>
+        <div><button class="btn primary" type="submit">Save</button></div></form></div></div>
+      <div class="card"><div class="card-head"><h2>Reading PDFs & photos</h2></div><div class="card-body">
+        ${info.ai ? html`<p><span class="badge good">On</span> PDFs, photos and emails are read with Claude (AI).</p>`
+          : html`<p><span class="badge warn">Not set up</span> Add a Claude API key to the server as <span class="mono">ANTHROPIC_API_KEY</span> and restart it. Until then, CSV files are still read automatically, and PDFs/photos can be entered by hand on the review screen.</p>`}
+        <p class="small muted">Get a key at console.anthropic.com. A typical one-page invoice costs a few cents to read.</p></div></div>
+      <div class="card" style="grid-column:1/-1"><div class="card-head"><h2>Email intake</h2></div><div class="card-body">
+        <p>Distributor invoices can flow in by email. Use an inbound-email service (for example Postmark's free "Inbound" stream) or an automation (Zapier, Make, or Microsoft Power Automate) to send each email to this private address:</p>
+        <div class="row"><input readonly value="${url}" class="mono" data-url style="flex:1;min-width:260px"><button class="btn" data-copy>Copy</button><button class="btn danger" data-regen>Make a new address</button></div>
+        <p class="small muted">Then add a rule in your mailbox that forwards emails from your distributors to that service. Full steps are in the README under “Supplier invoices”. Keep this address private: anyone who has it can send documents into your Receiving inbox (they still can't change stock unless they also come from a trusted domain).</p>
+      </div></div></div>`);
+    $('[data-form]', pane).addEventListener('submit', async e => {
+      e.preventDefault();
+      const f = e.target;
+      state.settings = await PUT('/api/settings', { auto_receive: f.auto_receive.checked ? '1' : '0', receiving_update_costs: f.receiving_update_costs.checked ? '1' : '0', trusted_vendor_domains: f.trusted_vendor_domains.value });
+      toast('Receiving settings saved');
+    });
+    $('[data-copy]', pane).addEventListener('click', () => navigator.clipboard?.writeText(url).then(() => toast('Copied')));
+    $('[data-regen]', pane).addEventListener('click', async () => {
+      if (!(await confirmDialog('Make a new private email address? The old one stops working immediately, so update your email service afterwards.', { okLabel: 'Make new address', danger: true }))) return;
+      await POST('/api/receiving/token'); toast('New address created'); refresh();
+    });
+  }
+
+  if (tab === 'hr') await hrPane(pane);
+  if (tab === 'roles') await rolesPane(pane);
+  if (tab === 'assistant') await (await import('./library.js')).settingsPane(pane, { settingsCards, wireSettingsCards });
+  if (tab === 'tracking') await (await import('./map.js')).settingsPane(pane, { settingsCards, wireSettingsCards });
+  if (tab === 'phone') await (await import('./phone.js')).settingsPane(pane, { settingsCards, wireSettingsCards });
+
+  if (tab === 'field') {
+    const [s, users] = await Promise.all([GET('/api/settings'), GET('/api/users')]);
+    mount(pane, settingsCards(s, [
+      { title: 'Completing a job', fields: [
+        ['require_photos', 'Require at least one “before” and one “after” photo', 'check'],
+        ['photo_exempt_types', 'Job types that don’t need photos (comma-separated)', 'text', 'e.g. estimate, warranty'],
+        ['require_parts', 'Require the parts used to be recorded, or “No parts used” ticked', 'check'],
+        ['require_signature', 'Require the customer’s signature (owners/admins can pre-approve jobs where nobody will be on site)', 'check'],
+        ['signature_exempt_types', 'Job types that don’t need a signature (comma-separated)', 'text', 'e.g. estimate'],
+        ['require_serials', 'Require serial numbers for serial-tracked equipment used on the job', 'check'],
+        ['require_serial_photos', '…and a photo of each one’s label / warranty info', 'check'],
+      ], note: 'Owners and administrators can still complete a job without them by giving a reason, which is saved on the job.' },
+      { title: 'Truck stock', fields: [
+        ['truck_count_day', 'Weekly truck count day', 'select', ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'].map((d, i) => [String(i), d])],
+        ['truck_count_reminders', 'Text each tech a reminder on count day; flag trucks that are overdue', 'check'],
+        ['inventory_manager_id', 'Inventory manager (also gets count results)', 'select', [['', '— Owner only —'], ...users.filter(u => u.active).map(u => [String(u.id), `${u.name} (${u.role})`])]],
+      ] },
+      { title: 'Customer surveys', fields: [
+        ['survey_enabled', 'Text / email a short survey after each completed job (per the customer’s preferences)', 'check'],
+        ['survey_delay_hours', 'Hours after the job to send it', 'number'],
+        ['survey_min_days', 'Survey the same customer at most once every (days)', 'number'],
+        ['survey_skip_types', 'Job types to skip (comma-separated)', 'text', 'e.g. estimate'],
+        ['survey_alert_below', 'Alert the owner at this many stars or fewer', 'number'],
+        ['review_url', 'Google review link (offered to 5-star customers)', 'text', 'https://g.page/r/…/review'],
+        ['tpl_survey_sms', 'Text message ({company} {tech} {link})', 'text'],
+      ], note: 'Results: Field work → Customer ratings. Customers can be excluded on their record.' },
+      { title: 'Vehicle checklist', fields: [
+        ['vehicle_check_frequency', 'How often techs check their truck', 'select', [['daily', 'Every day'], ['weekly', 'Once a week'], ['off', 'Off']]],
+        ['vehicle_check_required', 'Must be done before starting the first job', 'check'],
+        ['vehicle_check_photos', 'Photos', 'select', [['damage', 'Only when there’s damage'], ['always', 'Every check: front, back, left and right']]],
+      ], note: 'Oil, tire pressures (set each truck’s target on the vehicle), lights, damage walk-around, clean truck. Problems alert the owner/admins.' },
+      { title: 'Start-of-day check', fields: [
+        ['readiness_required', 'Technicians must confirm their equipment before starting their first job', 'check'],
+        ['readiness_spares', 'Spares to carry beyond what the jobs need', 'number'],
+      ], note: 'Only an owner or administrator can let a technician start without a completed check (Truck stock → Start-of-day checks).' },
+      { title: 'Alerts to the owner', fields: [
+        ['alert_email', 'Email alerts to the owner(s)', 'check'],
+        ['alert_sms', 'Also text important alerts', 'check'],
+        ['alert_phone', 'Owner mobile for alert texts', 'tel'],
+      ], note: 'Alerts: truck count differences and missing tools, techs short on equipment, clock-ins away from the office.' },
+      { title: 'Time clock & office location', wide: true, fields: [
+        ['office_address', 'Office address', 'text'],
+        ['office_lat', 'Office latitude', 'number'], ['office_lng', 'Office longitude', 'number'],
+        ['office_radius_m', 'Counts as “at the office” within (metres)', 'number'],
+        ['clock_alert', 'Alert the owner when someone clocks in away from the office or without a location', 'check'],
+        ['clock_alert_out', 'Also alert on clock-outs away from the office', 'check'],
+        ['clock_allow_jobsite', 'Clocking in at a job you’re scheduled for today is OK (no alert)', 'check'],
+      ], extra: html`<div class="row" style="margin-top:10px"><button class="btn sm" data-here>Use this device’s location</button><button class="btn sm" data-geo>Look up the address</button></div>` },
+    ]));
+    wireSettingsCards(pane);
+    const setLL = (lat, lng) => { pane.querySelector('[name=office_lat]').value = lat.toFixed(6); pane.querySelector('[name=office_lng]').value = lng.toFixed(6); toast('Location filled in — press Save'); };
+    $('[data-here]', pane).addEventListener('click', async () => {
+      const p = await (await import('./timeclock.js')).getPosition();
+      if (p) setLL(p.lat, p.lng); else toast('This device did not share a location', 'error');
+    });
+    $('[data-geo]', pane).addEventListener('click', async () => {
+      try { const g = await POST('/api/geocode', { address: pane.querySelector('[name=office_address]').value }); setLL(g.lat, g.lng); }
+      catch (e) { toast(e.message, 'error'); }
+    });
+  }
+
+  if (tab === 'users') {
+    const [users, techs] = await Promise.all([GET('/api/users'), R.list('technicians')]);
+    const techOpts = [{ value: '', label: '— not a technician —' }, ...techs.map(t => ({ value: t.id, label: t.name }))];
+    const mgr = G.manage.includes(state.user.role);
+    const roleOpts = ROLES.filter(r => (r !== 'owner' || state.user.role === 'owner') && (mgr || !isPrivilegedRole(r))).map(r => ({ value: r, label: `${ROLE_INFO[r].label} — ${ROLE_INFO[r].desc}` }));
+    const supOpts = except => [{ value: '', label: '— nobody (top of the chart) —' }, ...users.filter(u => u.active && u.id !== except).map(u => ({ value: u.id, label: `${u.name}${u.job_title ? ` — ${u.job_title}` : ''}` }))];
+    mount(pane, html`<div class="card"><div class="card-head"><div><h2>Users</h2><div class="small muted">Everyone who can sign in. Link technicians to their technician profile so "My Day" shows their jobs. “Reports to” sets who approves their time off (see <a href="#/team">Our team</a>).</div></div>
+        <button class="btn primary sm" data-new>+ Add user</button></div>
+      <div class="card-body flush">${dataTable({
+        rows: users,
+        columns: [
+          { label: 'Name', render: u => html`<b>${u.name}</b><div class="small muted">${u.job_title ? `${u.job_title} · ` : ''}${u.email}</div>` },
+          { label: 'Role', render: u => badge(ROLE_INFO[u.role]?.label || u.role, u.role === 'owner' ? 'primary' : u.role === 'admin' ? 'info' : '') },
+          { label: 'Reports to', render: u => u.supervisor_name || html`<span class="muted">—</span>` },
+          { label: 'Technician profile', render: u => u.technician_name || '—' },
+          { label: 'Last sign-in', render: u => u.last_login || 'never' },
+          { label: 'Status', render: u => u.active ? badge('active') : badge('inactive') },
+          { label: '', cls: 'actions-cell', render: u => mgr || !isPrivilegedRole(u.role) ? html`<button class="btn sm ghost" data-edit="${u.id}">Edit</button>` : '' },
+        ] })}</div></div>`);
+    $('[data-new]', pane).addEventListener('click', () => promptForm({
+      title: 'Add user', size: '',
+      fields: [
+        { name: 'name', label: 'Name', required: true }, { name: 'email', label: 'Email (used to sign in)', type: 'email' },
+        { name: 'password', label: 'Temporary password (8+ characters)', type: 'password', autocomplete: 'new-password' },
+        { name: 'role', label: 'Role', type: 'select', options: roleOpts, value: 'technician' },
+        { name: 'job_title', label: 'Job title (optional)', placeholder: 'e.g. Lead Technician' },
+        { name: 'supervisor_id', label: 'Reports to (approves their time off)', type: 'select', options: supOpts(null), value: '' },
+        { name: 'technician_id', label: 'Technician profile', type: 'select', options: techOpts, value: '' },
+      ],
+      submitLabel: 'Create user',
+      onSubmit: async d => { await POST('/api/users', d); toast('User created — share the temporary password with them'); refresh(); },
+    }));
+    $$('[data-edit]', pane).forEach(b => b.addEventListener('click', () => {
+      const u = users.find(x => x.id === Number(b.dataset.edit));
+      promptForm({
+        title: `Edit ${u.name}`, size: '',
+        fields: [
+          { name: 'name', label: 'Name', value: u.name }, { name: 'email', label: 'Email', type: 'email', value: u.email },
+          { name: 'role', label: 'Role', type: 'select', options: roleOpts, value: u.role },
+          { name: 'job_title', label: 'Job title', value: u.job_title || '' },
+          { name: 'supervisor_id', label: 'Reports to (approves their time off)', type: 'select', options: supOpts(u.id), value: u.supervisor_id ?? '' },
+          { name: 'technician_id', label: 'Technician profile', type: 'select', options: techOpts, value: u.technician_id ?? '' },
+          { name: 'password', label: 'Reset password (leave blank to keep)', type: 'password', autocomplete: 'new-password' },
+          { name: 'active', label: 'Active (uncheck to block sign-in)', type: 'checkbox', value: !!u.active },
+        ],
+        onSubmit: async d => { if (!d.password) delete d.password; await PUT(`/api/users/${u.id}`, d); toast('User updated'); refresh(); },
+      });
+    }));
+  }
+
+  if (tab === 'audit') {
+    const rows = await GET('/api/audit', { limit: 500 });
+    mount(pane, html`<div class="card"><div class="card-head"><div><h2>Activity log</h2><div class="small muted">Sign-ins, changes, deletes and every time a stored password/code is revealed</div></div></div>
+      <div class="card-body flush">${dataTable({
+        rows,
+        columns: [{ label: 'When', key: 'created_at' }, { label: 'User', render: r => r.user_name || '—' },
+          { label: 'Action', render: r => r.action === 'reveal' ? html`<span class="badge warn">reveal</span>` : r.action === 'delete' ? html`<span class="badge bad">delete</span>` : r.action },
+          { label: 'Record', render: r => r.resource ? `${r.resource}${r.record_id ? ' #' + r.record_id : ''}` : '—' }, { label: 'Detail', render: r => r.detail || '' }],
+      })}</div></div>`);
+  }
+
+  if (tab === 'data') {
+    mount(pane, html`<div class="grid g2">
+      <div class="card"><div class="card-head"><h2>Backup</h2></div><div class="card-body">
+        <p>Download a complete copy of the database. Do this regularly (weekly at least) and keep copies off-site.</p>
+        <p class="note small">Stored camera passwords and alarm codes are encrypted with the server's secret key (<span class="mono">data/secret.key</span> or the <span class="mono">APP_SECRET</span> setting).
+          Back that key up separately and keep it safe — a backup can't decrypt those passwords without it.</p>
+        ${state.user.role === 'owner' ? html`<a class="btn primary" href="/api/admin/backup">Download backup</a>` : html`<p class="muted">Only an owner can download backups.</p>`}</div></div>
+      ${state.user.role === 'owner' ? html`<div class="card" style="grid-column:1/-1" data-serverbackups></div>` : ''}
+      <div class="card"><div class="card-head"><h2>Export to spreadsheet</h2></div><div class="card-body">
+        <p>CSV files open in Excel or Google Sheets. Passwords are never exported.</p>
+        <div class="row">${['customers', 'contacts', 'invoices', 'payments', 'expenses', 'service_calls', 'inventory_items', 'camera_systems', 'fire_systems', 'extinguishers', 'vehicles'].map(r =>
+          html`<a class="btn sm" href="/api/export/${r}">${r.replace(/_/g, ' ')}</a>`)}</div></div></div>
+    </div>`);
+    const box = $('[data-serverbackups]', pane);
+    const drawBackups = async () => {
+      const b = await GET('/api/admin/backups');
+      const mb = n => `${(n / 1e6).toFixed(1)} MB`;
+      mount(box, html`<div class="card-head"><div><h2>Automatic backups on the server</h2><div class="small muted">${b.disabled ? 'Nightly backups are turned off (BACKUP_DISABLED).' : `Every night at ${b.hour}:00 — the database plus job photos, signatures and supplier invoices. The last ${b.keep} are kept.`}</div></div>
+        <button class="btn sm" data-backupnow>Back up now</button></div>
+        <div class="card-body flush">${dataTable({
+          rows: b.backups, empty: 'No backups yet — the first one runs tonight.',
+          columns: [
+            { label: 'Backup', render: x => html`<span class="mono">${x.name}</span>` },
+            { label: 'Type', render: x => x.reason || '' },
+            { label: 'Size', render: x => mb(x.size), cls: 'num' },
+            { label: 'Key', render: x => x.includes_key ? badge('includes key', 'warn') : html`<span class="small muted">key not included</span>` },
+          ] })}</div>
+        <div class="card-body"><p class="small muted" style="margin:0">These sit on the same server. Copy them somewhere else too (see “Off-site copies” in deploy/GO-LIVE.md), or download one above every week.</p></div>`);
+      $('[data-backupnow]', box).addEventListener('click', async e => {
+        e.target.disabled = true;
+        try { const r = await POST('/api/admin/backups'); toast(`Backup saved (${mb(r.size)})`); } catch (err) { toast(err.message, 'error'); }
+        drawBackups();
+      });
+    };
+    if (box) drawBackups();
+  }
+}
+
+export async function account(view) {
+  const org = await GET('/api/org/me').catch(() => ({}));
+  mount(view, html`<div class="page-head"><div><h1>My account</h1><div class="sub">${state.user.name} · ${state.user.email} · ${state.user.role}</div>
+      <div class="small" style="margin-top:4px">Reports to: <b>${org.supervisor ? `${org.supervisor.name}${org.supervisor.job_title ? ` (${org.supervisor.job_title})` : ''}` : '—'}</b>${org.direct_reports?.length ? html` · Your team: ${org.direct_reports.map(p => p.name).join(', ')}` : ''} · <a href="#/team">Our team</a></div></div></div>
+    <div class="grid g2"><div class="card"><div class="card-head"><h2>Change password</h2></div><div class="card-body">
+      <form class="stack" data-pw style="gap:12px">
+        <div class="field"><label for="cur">Current password</label><input id="cur" type="password" name="current" autocomplete="current-password"></div>
+        <div class="field"><label for="np">New password (8+ characters)</label><input id="np" type="password" name="password" autocomplete="new-password"></div>
+        <div><button class="btn primary">Update password</button></div></form></div></div>
+      <div class="card"><div class="card-head"><h2>Install the app</h2></div><div class="card-body">
+        <p><b>iPhone / iPad:</b> open this site in Safari → Share → <i>Add to Home Screen</i>.</p>
+        <p><b>Android:</b> open in Chrome → ⋮ menu → <i>Install app</i>.</p>
+        <p><b>Windows / Mac:</b> in Chrome or Edge, click the install icon in the address bar.</p>
+        <p class="muted small">It then opens full-screen like a regular app, with its own icon.</p></div></div></div>`);
+  $('[data-pw]', view).addEventListener('submit', async e => {
+    e.preventDefault();
+    const f = e.target;
+    try { await POST('/api/auth/password', { current: f.current.value, password: f.password.value }); toast('Password updated'); f.reset(); }
+    catch (err) { toast(err.message, 'error'); }
+  });
+}
+
+// Small helper for settings tabs that are just a few switches and fields.
+export function settingsCards(s, cards) {
+  const field = ([k, label, type, opts]) => {
+    if (type === 'check') return html`<label class="check-row"><input type="checkbox" name="${k}" ${s[k] === '1' ? raw('checked') : ''}> <span>${label}</span></label>`;
+    if (type === 'select') return html`<div class="field"><label for="st_${k}">${label}</label><select id="st_${k}" name="${k}">${opts.map(([v, l]) => html`<option value="${v}" ${String(s[k] ?? '') === v ? raw('selected') : ''}>${l}</option>`)}</select></div>`;
+    if (type === 'secret') return html`<div class="field"><label for="st_${k}">${label}</label><input id="st_${k}" name="${k}" type="password" autocomplete="off" placeholder="${s[k] ? '•••••••• (saved — leave blank to keep)' : ''}"></div>`;
+    return html`<div class="field"><label for="st_${k}">${label}</label><input id="st_${k}" name="${k}" type="${type || 'text'}" value="${s[k] ?? ''}" ${type === 'number' ? raw('step="any"') : ''} placeholder="${typeof opts === 'string' ? opts : ''}" autocomplete="off"></div>`;
+  };
+  return html`<div class="grid g2">${cards.map(c => html`<div class="card ${c.wide ? 'span2' : ''}" ${c.wide ? raw('style="grid-column:1/-1"') : ''}><div class="card-head"><h2>${c.title}</h2></div><div class="card-body">
+    ${c.intro || ''}<form class="stack" data-settings style="gap:12px">${c.fields.map(field)}
+    ${c.note ? html`<p class="small muted" style="margin:0">${c.note}</p>` : ''}
+    <div><button class="btn primary" type="submit">Save</button></div></form>${c.extra || ''}</div></div>`)}</div>`;
+}
+export function wireSettingsCards(pane, onSaved) {
+  $$('[data-settings]', pane).forEach(f => f.addEventListener('submit', async e => {
+    e.preventDefault();
+    const body = {};
+    for (const el of f.elements) {
+      if (!el.name) continue;
+      if (el.type === 'checkbox') body[el.name] = el.checked ? '1' : '0';
+      else if (el.type === 'password') { if (el.value) body[el.name] = el.value; }
+      else body[el.name] = el.value;
+    }
+    try {
+      state.settings = await PUT('/api/settings', body); toast('Saved'); onSaved?.();
+      if ('addon_pay' in body) location.reload();
+    } catch (err) { toast(err.message, 'error'); }
+  }));
+}
+
+// ---- Roles & permissions: built-in roles (read-only) and custom roles (owner builds them).
+async function rolesPane(pane) {
+  const d = await GET('/api/roles');
+  const isOwner = state.user.role === 'owner';
+  const permLabel = k => PERMISSIONS.find(p => p.key === k)?.label || k;
+  mount(pane, html`<div class="card"><div class="card-head"><div><h2>Roles & permissions</h2>
+      <div class="small muted">A role decides what someone can see and do. Built-in roles are fixed; make a custom role for anything in between (e.g. “Dispatcher”, “Service manager”, “Office assistant”).${isOwner ? '' : ' Only an owner can create or change roles.'}</div></div>
+      ${isOwner ? html`<button class="btn primary sm" data-newrole>+ New role</button>` : ''}</div>
+    <div class="card-body flush">${dataTable({
+      rows: d.roles,
+      columns: [
+        { label: 'Role', render: r => html`<b>${r.name}</b>${r.builtin ? html` ${badge('built-in', '')}` : ''}<div class="small muted">${r.description || ''}</div>` },
+        { label: 'Customers & jobs', render: r => html`<span class="small">${CUSTOMER_ACCESS[r.customer_access]}</span>` },
+        { label: 'Can also', render: r => html`<span class="small">${r.key === 'owner' ? 'Everything' : r.permissions.length ? r.permissions.map(permLabel).join(', ') : '—'}</span>` },
+        { label: 'People', cls: 'num', render: r => r.users },
+        { label: '', cls: 'actions-cell', render: r => isOwner ? (r.builtin ? (r.key === 'owner' ? '' : html`<button class="btn sm ghost" data-copy="${r.key}">Copy</button>`) : html`<button class="btn sm ghost" data-editrole="${r.key}">Edit</button>`) : '' },
+      ] })}</div></div>
+    <p class="small muted">Everyone can use tasks, team chat and calls, time off requests, the training library and the calendar. Owners can always do everything.</p>`);
+  const form = (role, copyOf) => {
+    const r = role || (copyOf ? { ...copyOf, name: `${copyOf.name} (copy)`, key: null } : { name: '', description: '', customer_access: 'all', permissions: ['staff'] });
+    const { el, close } = openModal({
+      title: role ? `Edit ${role.name}` : 'New role', size: 'sm',
+      body: html`<div class="err-box hidden" data-err></div>
+        <div class="field"><label for="rl_n">Name</label><input id="rl_n" type="text" value="${r.name}" maxlength="40" placeholder="e.g. Dispatcher"></div>
+        <div class="field" style="margin-top:10px"><label for="rl_d">Description (optional)</label><input id="rl_d" type="text" value="${r.description || ''}" maxlength="200"></div>
+        <h3 style="margin:16px 0 6px">Customers & jobs</h3>
+        <div class="stack" style="gap:4px">${Object.entries(CUSTOMER_ACCESS).map(([k, l]) => html`<label class="check-row"><input type="radio" name="rl_a" value="${k}" ${r.customer_access === k ? 'checked' : ''}> <span>${l}</span></label>`)}</div>
+        <h3 style="margin:16px 0 6px">Can also</h3>
+        <div class="stack" style="gap:6px">${PERMISSIONS.map(p => html`<label class="check-row"><input type="checkbox" value="${p.key}" data-perm ${r.permissions.includes(p.key) ? 'checked' : ''}> <span><b>${p.label}</b><span class="small muted" style="display:block">${p.desc}</span></span></label>`)}</div>`,
+      foot: html`${role ? html`<button class="btn ghost danger" data-del>Delete</button>` : ''}<button class="btn" data-close>Cancel</button><button class="btn primary" data-save>${role ? 'Save' : 'Create role'}</button>`,
+    });
+    const err = m => { const b = $('[data-err]', el); b.textContent = m; b.classList.remove('hidden'); };
+    $('[data-save]', el).addEventListener('click', async () => {
+      const body = { name: $('#rl_n', el).value, description: $('#rl_d', el).value, customer_access: $('input[name=rl_a]:checked', el)?.value || 'none', permissions: $$('[data-perm]:checked', el).map(c => c.value) };
+      try {
+        if (role) await PUT(`/api/roles/${role.key}`, body); else await POST('/api/roles', body);
+        close(); toast(role ? 'Role saved. People with it get the change next time they open the app.' : 'Role created. Give it to people under Users & logins.');
+        location.reload();
+      } catch (e) { err(e.message); }
+    });
+    $('[data-del]', el)?.addEventListener('click', async () => {
+      if (!(await confirmDialog(`Delete the ${role.name} role?`, { okLabel: 'Delete', danger: true }))) return;
+      try { await api('DELETE', `/api/roles/${role.key}`); close(); location.reload(); } catch (e) { err(e.message); }
+    });
+  };
+  $('[data-newrole]', pane)?.addEventListener('click', () => form(null));
+  $$('[data-editrole]', pane).forEach(b => b.addEventListener('click', () => form(d.roles.find(r => r.key === b.dataset.editrole))));
+  $$('[data-copy]', pane).forEach(b => b.addEventListener('click', () => form(null, d.roles.find(r => r.key === b.dataset.copy))));
+}
+
+async function hrPane(pane) {
+  const [s, hols] = await Promise.all([GET('/api/settings'), GET('/api/holidays', { from: `${new Date().getFullYear()}-01-01`, to: `${new Date().getFullYear() + 1}-12-31` })]);
+  mount(pane, html`${settingsCards(s, [
+    { title: 'Time off', fields: [
+      ['workday_hours', 'Hours in a workday', 'number'],
+      ['pto_default_vacation', 'Vacation hours per year (default for everyone)', 'number'],
+      ['pto_default_sick', 'Sick hours per year (default)', 'number'],
+      ['pto_default_personal', 'Personal hours per year (default)', 'number'],
+      ['pto_allow_negative', 'Let people request more than they have left', 'check'],
+    ], note: 'Set different amounts or carryover for a person on the Time off page (Balances → Set).' },
+    { title: 'Who handles time-off requests', intro: html`<p class="small muted" style="margin-top:0">Each request goes to the person’s supervisor (set under Users → Reports to; see <a href="#/team">Our team</a>). Anyone without a supervisor goes to owners and admins.</p>`, fields: [
+      ['timeoff_notify_managers', 'Owners and admins also get every request (phone notification + email)', 'check'],
+      ['timeoff_managers_decide', 'Owners and admins can approve or deny any request (off = supervisors only)', 'check'],
+    ] },
+    { title: 'Pay & benefits (optional add-on)', fields: [
+      ['addon_pay', 'Turn on “My pay & benefits” for everyone', 'check'],
+      ['payroll_provider', 'Payroll provider', 'select', [['quickbooks', 'QuickBooks Payroll (Workforce)'], ['gusto', 'Gusto'], ['adp', 'ADP'], ['paychex', 'Paychex'], ['other', 'Other']]],
+      ['payroll_portal_url', 'Employee payroll site (blank = the provider’s usual sign-in page)', 'text', 'https://workforce.intuit.com'],
+      ['payroll_label', 'Name to show for “Other”', 'text'],
+      ['payroll_contact', 'Payroll questions go to', 'text', 'e.g. Ann in accounting, ext. 204'],
+      ['payroll_note', 'Note for employees (pay schedule, how to sign up…)', 'text'],
+    ], note: 'Pay stubs, W-2s, direct deposit and W-4 changes stay in your payroll provider’s own employee site; this links to it. Benefit plans and private documents (owner/accounting post them) are managed on the My pay & benefits page.' },
+    { title: 'Holidays', fields: [['holiday_blocks', 'Ask before booking a job on a company holiday (emergencies excepted)', 'check']],
+      extra: html`<div class="stack" style="gap:6px;margin-top:12px">${hols.length ? hols.map(h => html`<div class="row" style="justify-content:space-between"><span><b>${h.name}</b> <span class="muted">${new Date(h.date + 'T12:00').toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric', year: 'numeric' })}</span></span><button class="btn sm ghost danger" data-delhol="${h.id}">Remove</button></div>`) : html`<div class="muted">No holidays yet.</div>`}</div>
+        <div class="row" style="margin-top:12px"><button class="btn sm" data-preset="${new Date().getFullYear()}">Add US holidays for ${new Date().getFullYear()}…</button><button class="btn sm" data-preset="${new Date().getFullYear() + 1}">…for ${new Date().getFullYear() + 1}</button><button class="btn sm ghost" data-addhol>+ Other holiday</button></div>` },
+  ])}`);
+  wireSettingsCards(pane);
+  $$('[data-delhol]', pane).forEach(b => b.addEventListener('click', async () => { await api('DELETE', `/api/holidays/${b.dataset.delhol}`); hrPane(pane); }));
+  $('[data-addhol]', pane).addEventListener('click', () => promptForm({
+    title: 'Add a holiday', fields: [{ name: 'name', label: 'Name', type: 'text', required: true }, { name: 'date', label: 'Date', type: 'date', required: true }],
+    onSubmit: async d => { await POST('/api/holidays', d); hrPane(pane); },
+  }));
+  $$('[data-preset]', pane).forEach(b => b.addEventListener('click', async () => {
+    const list = await GET('/api/holidays/presets', { year: b.dataset.preset });
+    const common = new Set(['new_year', 'memorial', 'independence', 'labor', 'thanksgiving', 'christmas']);
+    const { el, close } = (await import('../ui.js')).openModal({
+      title: `US holidays ${b.dataset.preset}`, size: 'sm',
+      body: html`<p class="muted" style="margin-top:0">Weekend holidays use the observed Friday or Monday.</p><div class="stack" style="gap:4px">${list.map(h => html`<label class="check-row"><input type="checkbox" value="${h.key}" ${h.added ? 'checked disabled' : common.has(h.key) ? 'checked' : ''}> <span>${h.name} <span class="muted small">${new Date(h.date + 'T12:00').toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' })}${h.added ? ' · added' : ''}</span></span></label>`)}</div>`,
+      foot: html`<button class="btn" data-close>Cancel</button><button class="btn primary" data-go>Add selected</button>`,
+    });
+    $('[data-go]', el).addEventListener('click', async () => {
+      const keys = new Set($$('input:checked:not(:disabled)', el).map(i => i.value));
+      const r = await POST('/api/holidays', { holidays: list.filter(h => keys.has(h.key)).map(h => ({ date: h.date, name: h.name })) });
+      toast(`${r.added} holidays added`); close(); hrPane(pane);
+    });
+  }));
+}

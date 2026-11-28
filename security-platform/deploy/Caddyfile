@@ -1,0 +1,10 @@
+# HTTPS for SecureOps. Caddy gets and renews the certificate automatically.
+{$DOMAIN} {
+	encode zstd gzip
+	header Strict-Transport-Security "max-age=31536000"
+	# Big enough for supplier-invoice PDFs and job photos.
+	request_body {
+		max_size 50MB
+	}
+	reverse_proxy app:3000
+}
