@@ -1,10 +1,10 @@
-import { RESOURCES, STAGES, STAGE_INFO, PAYMENT_METHODS, isFieldRole } from '../schema.js';
+import { RESOURCES, STAGES, STAGE_INFO, PAYMENT_METHODS, isFieldRole, G } from '../schema.js';
 import {
   html, raw, icon, mount, $, $$, money, fmtDate, badge, typeBadge, stageBadge, relDays, dataTable, fieldColumns, openForm, renderValue,
   loading, toast, secretView, confirmDialog, openModal, fmtDateTime,
 } from '../ui.js';
 import { R, GET, POST, api } from '../api.js';
-import { can, refresh } from '../app.js';
+import { can, refresh, state } from '../app.js';
 import { completeMaintenance, scheduleFromMaintenance, maintenanceTable } from './maintenance.js';
 
 export async function list(view, _, query) {
@@ -89,6 +89,7 @@ export async function detail(view, [id], query) {
     ['overview', 'Overview'],
     ['systems', 'Systems', cams.length + alarms.length + fires.length + exts.length],
     ['equipment', 'Equipment'],
+    ...(G.salesOrBilling.includes(state.user.role) ? [['survey', 'Site survey']] : []),
     ['locations', 'Locations', locs.length || null],
     ['monitoring', 'Monitoring'],
     ...(can.staff() ? [['proposals', 'Proposals']] : []),
@@ -265,6 +266,7 @@ export async function detail(view, [id], query) {
   }
 
   if (tab === 'equipment') import('./equipment.js').then(m => m.customerEquipmentTab(pane, c));
+  if (tab === 'survey') { mount(pane, html`<div class="card" data-survey></div>`); import('../survey-photos.js').then(m => m.surveyGallery($('[data-survey]', pane), { customerId: c.id, canEdit: G.sales.includes(state.user.role), sites: locs })); }
 
   if (tab === 'calls') {
     mount(pane, html`<div class="card"><div class="card-head"><h2>Service history</h2><button class="btn sm" data-nc>+ Service call</button></div>

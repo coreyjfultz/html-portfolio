@@ -1,6 +1,7 @@
 import { html, mount, $, $$, money, fmtDate, fmtDateTime, badge, dataTable, openForm, openModal, loading, toast, confirmDialog, typeBadge } from '../ui.js';
 import { R, GET, POST } from '../api.js';
 import { can, refresh } from '../app.js';
+import { BILLING_FREQ } from '../schema.js';
 import { renderDocument } from '../doc.js';
 
 const STATUS_CLS = { draft: '', sent: 'info', viewed: 'primary', signed: 'good', declined: 'bad', expired: 'warn' };
@@ -56,6 +57,7 @@ export async function detail(view, [id]) {
   loading(view);
   const [p, items, doc] = await Promise.all([R.get('proposals', id), R.list('proposal_items', { proposal_id: id }), GET(`/api/proposals/${id}/document`)]);
   const editable = can.sales() && !['signed', 'declined'].includes(p.status);
+  const itemPhotos = new Set((await R.list('inventory_items', {})).filter(x => x.photo_key).map(x => x.id));
   const reload = () => refresh();
   mount(view, html`
     <div class="crumbs no-print"><a href="#/proposals">Proposals</a> / <a href="#/customers/${p.customer_id}">${p.customer_id_label}</a></div>
@@ -83,7 +85,7 @@ export async function detail(view, [id]) {
         <div class="card-body flush">${dataTable({
           rows: items, empty: 'No lines yet. Add equipment from inventory or a custom line (labor, programming, permits…).',
           columns: [
-            { label: 'Description', render: i => i.description },
+            { label: 'Description', render: i => html`<div class="row" style="gap:8px;flex-wrap:nowrap">${i.item_id && itemPhotos.has(i.item_id) ? html`<img class="thumb" src="/api/inventory/${i.item_id}/photo" alt="">` : ''}<span>${i.description}</span></div>` },
             { label: 'Qty', key: 'qty', cls: 'num' }, { label: 'Price', render: i => money(i.unit_price), cls: 'num' },
             { label: 'Amount', render: i => money(i.qty * i.unit_price), cls: 'num' },
             { label: 'Tax', render: i => i.taxable ? '✓' : '' },
@@ -92,13 +94,15 @@ export async function detail(view, [id]) {
           foot: items.length ? html`<tr><td colspan="3">Total (incl. ${money(p.tax)} tax)</td><td class="num">${money(p.total)}</td><td colspan="2"></td></tr>` : null,
         })}</div></div>
       <div class="card"><div class="card-head"><h2>Monthly & payment</h2><button class="btn sm" data-edit2>Edit</button></div><div class="card-body"><dl class="dl small">
-        <dt>Monthly fee</dt><dd>${p.monthly_amount ? html`${money(p.monthly_amount)} — ${p.monthly_description}` : 'None'}</dd>
+        <dt>Monthly fee</dt><dd>${p.monthly_amount ? html`${money(p.monthly_amount)} — ${p.monthly_description}${p.billing_frequency && p.billing_frequency !== 'monthly' ? html`<div class="small muted">billed ${BILLING_FREQ[p.billing_frequency].adverb} (${money(p.monthly_amount * BILLING_FREQ[p.billing_frequency].months)})</div>` : ''}` : 'None'}</dd>
         <dt>Term</dt><dd>${p.term_months ? `${p.term_months} months` : '—'}</dd>
         <dt>Deposit</dt><dd>${p.deposit_percent ? `${p.deposit_percent}% (${money(doc.deposit)})` : 'None'}</dd>
         <dt>Valid until</dt><dd>${fmtDate(p.valid_until)}</dd></dl>
         <p class="small muted" style="margin-bottom:0">When the customer signs: stage → Accepted${p.monthly_amount ? ', monthly billing starts' : ''}${items.length && !/monitoring|service/.test(p.kind) ? ', an installation job is created' : ''}${p.deposit_percent ? ', a deposit invoice is created' : ''}.</p></div></div>
     </div>` : ''}
-    <div class="doc-frame">${renderDocument(doc, { signatureUrl: doc.signed ? `/api/proposals/${id}/signature` : null, logoUrl: doc.company.logo ? '/api/public/logo' : null })}</div>`);
+    <div class="card no-print" style="margin-bottom:16px" data-survey></div>
+    <div class="doc-frame">${renderDocument(doc, { signatureUrl: doc.signed ? `/api/proposals/${id}/signature` : null, logoUrl: doc.company.logo ? '/api/public/logo' : null, photoUrl: (kind, pid) => `/api/proposals/${id}/${kind}-photo/${pid}` })}</div>`);
+  import('../survey-photos.js').then(m => R.list('locations', { customer_id: p.customer_id }).then(sites => m.surveyGallery($('[data-survey]', view), { customerId: p.customer_id, proposalId: Number(id), locked: p.status === 'signed', canEdit: can.sales() && p.status !== 'declined', sites, onChange: reload })));
 
   $('[data-print]', view).addEventListener('click', () => window.print());
   $('[data-copy]', view)?.addEventListener('click', () => navigator.clipboard?.writeText(doc.link).then(() => toast('Signing link copied. Paste it into a text or email.')));

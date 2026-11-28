@@ -378,6 +378,16 @@ function migrate(db) {
       id INTEGER PRIMARY KEY AUTOINCREMENT, kind TEXT NOT NULL, status TEXT NOT NULL, name TEXT, size INTEGER, detail TEXT,
       started_at TEXT, finished_at TEXT NOT NULL DEFAULT (datetime('now','localtime'))
     );
+    -- Site survey photos for quotes: marked-up pictures with notes, on the customer, optionally shown on a proposal.
+    CREATE TABLE IF NOT EXISTS survey_photos (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      customer_id INTEGER NOT NULL REFERENCES customers(id) ON DELETE CASCADE,
+      site_id INTEGER REFERENCES locations(id) ON DELETE SET NULL,
+      proposal_id INTEGER REFERENCES proposals(id) ON DELETE SET NULL,
+      photo_key TEXT NOT NULL, title TEXT, note TEXT, show_on_proposal INTEGER NOT NULL DEFAULT 0, sort INTEGER NOT NULL DEFAULT 0,
+      created_by TEXT, created_at TEXT NOT NULL DEFAULT (datetime('now','localtime')), updated_at TEXT
+    );
+    CREATE INDEX IF NOT EXISTS idx_survey_photos_customer ON survey_photos(customer_id, proposal_id);
     -- Custom roles (Settings → Roles): permission groups + which customers they can see.
     CREATE TABLE IF NOT EXISTS custom_roles (
       key TEXT PRIMARY KEY, name TEXT NOT NULL, description TEXT,

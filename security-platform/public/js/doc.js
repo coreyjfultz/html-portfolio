@@ -1,10 +1,13 @@
 // Renders a proposal / agreement as a clean, printable document. Used by the
 // staff app (preview) and the customer's public signing page, so both show the same thing.
 import { html, raw, money, fmtDate } from './ui.js';
+import { BILLING_FREQ } from './schema.js';
 
 const KIND = { proposal: 'Proposal', 'installation agreement': 'Installation Agreement', 'monitoring agreement': 'Monitoring Agreement', 'service agreement': 'Service Agreement' };
 
-export function renderDocument(d, { signatureUrl, logoUrl } = {}) {
+export function renderDocument(d, { signatureUrl, logoUrl, photoUrl } = {}) {
+  const hasPhotos = photoUrl && d.items.some(i => i.photo_item);
+  const freq = d.billing_frequency && BILLING_FREQ[d.billing_frequency];
   const addr = x => x ? [x.address || x.billing_address, [x.city, x.state].filter(Boolean).join(', ') + (x.zip ? ' ' + x.zip : '')].filter(v => v && v.trim()) : [];
   return html`<article class="doc">
     <header class="doc-head">
@@ -24,7 +27,7 @@ export function renderDocument(d, { signatureUrl, logoUrl } = {}) {
     <h1 class="doc-title">${d.title}</h1>
     ${d.intro ? html`<div class="doc-intro">${d.intro}</div>` : ''}
     ${d.items.length ? html`<table class="doc-table"><thead><tr><th>Description</th><th class="r">Qty</th><th class="r">Price</th><th class="r">Amount</th></tr></thead>
-      <tbody>${d.items.map(i => html`<tr><td>${i.description}</td><td class="r">${i.qty}</td><td class="r">${money(i.unit_price)}</td><td class="r">${money(i.qty * i.unit_price)}</td></tr>`)}</tbody></table>
+      <tbody>${d.items.map(i => html`<tr><td>${hasPhotos ? html`<div class="doc-item">${i.photo_item ? html`<img class="doc-item-img" src="${photoUrl('item', i.photo_item)}" alt="">` : html`<span class="doc-item-img"></span>`}<span>${i.description}</span></div>` : i.description}</td><td class="r">${i.qty}</td><td class="r">${money(i.unit_price)}</td><td class="r">${money(i.qty * i.unit_price)}</td></tr>`)}</tbody></table>
       <div class="doc-totals">
         <div><span>Subtotal</span><span>${money(d.subtotal)}</span></div>
         ${d.tax ? html`<div><span>Tax (${d.tax_rate}%)</span><span>${money(d.tax)}</span></div>` : ''}
@@ -32,8 +35,11 @@ export function renderDocument(d, { signatureUrl, logoUrl } = {}) {
         ${d.deposit ? html`<div class="doc-deposit"><span>Due at signing (${d.deposit_percent}% deposit)</span><span>${money(d.deposit)}</span></div>` : ''}
       </div>` : ''}
     ${d.monthly_amount ? html`<div class="doc-monthly"><div><div class="doc-label">Monthly service</div><b>${d.monthly_description || 'Monthly service'}</b>
-        ${d.term_months ? html`<div class="doc-muted">${d.term_months}-month term, then month to month</div>` : ''}</div>
+        ${d.term_months ? html`<div class="doc-muted">${d.term_months}-month term, then month to month</div>` : ''}
+        ${freq ? html`<div class="doc-muted">Billed ${freq.adverb}: ${money(d.monthly_amount * freq.months)} every ${freq.months} months</div>` : ''}</div>
       <div class="doc-monthly-amt">${money(d.monthly_amount)}<span>/month</span></div></div>` : ''}
+    ${d.survey?.length && photoUrl ? html`<section class="doc-survey"><div class="doc-label">Site survey</div><div class="doc-survey-grid">${d.survey.map(p => html`<figure>
+        <img src="${photoUrl('survey', p.id)}" alt="${p.title || 'Site photo'}"><figcaption>${p.title ? html`<b>${p.title}</b>` : ''}${p.note ? html`<div>${p.note}</div>` : ''}</figcaption></figure>`)}</div></section>` : ''}
     <section class="doc-terms"><div class="doc-label">Terms & conditions</div><div class="doc-terms-body">${d.terms}</div></section>
     ${d.signed ? html`<section class="doc-signed">
       <div class="doc-sigline">${signatureUrl ? html`<img src="${signatureUrl}" alt="Signature of ${d.signed.by}">` : ''}</div>

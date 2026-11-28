@@ -51,6 +51,7 @@ export const G = {
   all: ROLES, owner: [], staff: [], customers: [], sales: [], billing: [], manage: [],
   hr: [], people: [], payAdmin: [], records: [],
   salesOrBilling: [], // sales or billing
+  timesheets: [],     // everyone's timesheets (billing or HR)
   settings: [],       // can open Settings (manage, hr or people)
 };
 const ACCESS = {};
@@ -76,6 +77,7 @@ export function applyRoles(custom = []) {
       const p = groupsOf[role] || [];
       if (g === 'salesOrBilling') return p.includes('sales') || p.includes('billing');
       if (g === 'settings') return p.includes('manage') || p.includes('hr') || p.includes('people');
+      if (g === 'timesheets') return p.includes('billing') || p.includes('hr');
       return p.includes(g);
     });
     G[g].splice(0, G[g].length, ...members);
@@ -90,6 +92,14 @@ export const customerAccess = role => ACCESS[role] || 'none';
 export const isFieldRole = role => customerAccess(role) === 'schedule';
 /** True if a user with this role can be given `role2` by someone who only has 'people' rights. */
 export const isPrivilegedRole = role => role === 'owner' || G.manage.includes(role);
+
+// How often a recurring charge is billed. Amounts are always per month; a bill covers `months`.
+export const BILLING_FREQ = {
+  monthly: { months: 1, label: 'Monthly', adverb: 'monthly' },
+  quarterly: { months: 3, label: 'Every 3 months (quarterly)', adverb: 'quarterly' },
+  semiannual: { months: 6, label: 'Every 6 months', adverb: 'every 6 months' },
+  annual: { months: 12, label: 'Yearly (annually)', adverb: 'yearly' },
+};
 
 // Customer lifecycle stages (pipeline), in order.
 export const STAGES = ['lead', 'site survey', 'bid', 'accepted', 'installation', 'active', 'lost'];
@@ -196,7 +206,9 @@ export const RESOURCES = {
     fields: [
       customerRef,
       { name: 'description', label: 'Description', type: 'text', required: true, list: true, help: 'e.g. 24/7 alarm monitoring, Cloud video storage' },
-      { name: 'amount', label: 'Monthly amount', type: 'money', required: true, list: true },
+      { name: 'amount', label: 'Monthly rate', type: 'money', required: true, list: true, help: 'The price per month. Billed every 3 months = 3 × this on each bill.' },
+      { name: 'frequency', label: 'Billed', type: 'select', options: Object.keys(BILLING_FREQ), optionLabels: Object.fromEntries(Object.entries(BILLING_FREQ).map(([k, v]) => [k, v.label])), default: 'monthly', list: true },
+      { name: 'start_month', label: 'First billed in (YYYY-MM)', type: 'text', list: true, help: 'Quarterly, 6-month and yearly charges are billed in this month and every 3 / 6 / 12 months after. Blank = this month.' },
       { name: 'taxable', label: 'Taxable', type: 'checkbox', list: true },
       { name: 'active', label: 'Active', type: 'checkbox', default: 1, list: true },
     ],
@@ -385,6 +397,7 @@ export const RESOURCES = {
       { name: 'warranty_months', label: 'Manufacturer warranty (months)', type: 'number' },
       { name: 'truck_min', label: 'Standard truck stock (per vehicle)', type: 'number', default: 0, help: 'Every truck should carry at least this many. 0 = not standard truck stock.' },
       { name: 'truck_max', label: 'Most to keep on a truck', type: 'number', help: 'Keeps extras low: more than this gets flagged to go back to the warehouse. Blank = standard + 1.' },
+      { name: 'photo_key', label: 'Photo', type: 'text', hidden: true, readonly: true },
       { name: 'vendor_skus', label: 'Distributor part #s', type: 'text', full: true, help: 'Other part numbers this item appears under on supplier invoices, comma-separated. Learned automatically when you match an invoice line.' },
       { name: 'active', label: 'Active', type: 'checkbox', default: 1 },
       { name: 'notes', label: 'Notes', type: 'textarea', full: true },
@@ -564,6 +577,8 @@ export const RESOURCES = {
       { name: 'intro', label: 'Scope of work / summary', type: 'textarea', full: true },
       { name: 'monthly_amount', label: 'Monthly service fee', type: 'money', help: 'Monitoring / cloud / service plan, billed monthly once signed' },
       { name: 'monthly_description', label: 'Monthly fee description', type: 'text', default: '24/7 monitoring service' },
+      { name: 'billing_frequency', label: 'Bill the monthly fee', type: 'select', options: Object.keys(BILLING_FREQ), optionLabels: Object.fromEntries(Object.entries(BILLING_FREQ).map(([k, v]) => [k, v.label])), default: 'monthly' },
+      { name: 'show_item_photos', label: 'Show product photos on the proposal', type: 'checkbox', default: 1 },
       { name: 'term_months', label: 'Agreement term (months)', type: 'number' },
       { name: 'deposit_percent', label: 'Deposit due at signing (%)', type: 'number', help: 'Creates a deposit invoice when signed' },
       { name: 'tax_rate', label: 'Tax rate %', type: 'number', help: 'Blank = company default' },

@@ -92,14 +92,14 @@ for (const [k, [wh, a, b, c]] of Object.entries(stockPlan)) {
 const custs = [];
 const addCust = (data, charges = [], extra = () => {}) => {
   const c = C('customers', { state: 'OH', status: 'active', portal_invite: 0, ...data });
-  charges.forEach(([description, amount, taxable = 0]) => C('recurring_charges', { customer_id: c.id, description, amount, taxable }));
+  charges.forEach(([description, amount, taxable = 0, frequency = 'monthly']) => C('recurring_charges', { customer_id: c.id, description, amount, taxable, frequency }));
   extra(c);
   custs.push(c);
   return c;
 };
 
 const res1 = addCust({ type: 'residential', name: 'Tom & Linda Becker', email: 'becker@example.com', phone: '555-0201', billing_address: '42 Oak Ridge Dr', city: 'Springfield', zip: '45503', account_number: 'MC-10442', gate_code: '#4821', access_notes: 'Dog in backyard. Key under mat for service.' },
-  [['24/7 alarm monitoring', 34.99], ['Cloud video storage (4 cams)', 15]], c => {
+  [['24/7 alarm monitoring', 34.99], ['Cloud video storage (4 cams)', 15, 0, 'quarterly']], c => {
     C('alarm_systems', { customer_id: c.id, location: 'Main house', panel_brand: 'Qolsys', panel_model: 'IQ4', monitoring_center: 'Central Station A', monitoring_account: 'MC-10442', zones: 14, master_code: '1984', installer_code: '1111', install_date: '2022-04-10', last_test: addMonths(today, -11), test_interval_months: 12 });
     C('camera_systems', { customer_id: c.id, location: 'House exterior', recorder_type: 'NVR', brand: 'Hikvision', model: 'DS-7608', camera_count: 4, ip_address: '192.168.1.64', http_port: 80, remote_access: 'Hik-Connect SN: J1234567', app_name: 'Hik-Connect', admin_username: 'admin', admin_password: 'Becker!2022', viewer_username: 'tom', viewer_password: 'Linda42', storage_tb: 4, retention_days: 21, install_date: '2022-04-10', last_service: addMonths(today, -12) });
   });
@@ -108,7 +108,7 @@ const res2 = addCust({ type: 'residential', name: 'Maria Gonzalez', email: 'mgon
     C('alarm_systems', { customer_id: c.id, location: 'Home', panel_brand: 'DSC', panel_model: 'PowerSeries Neo', monitoring_account: 'MC-10587', zones: 8, master_code: '5520', last_test: addMonths(today, -6), install_date: '2019-08-01', battery_replaced: '2023-02-14' });
   });
 const res3 = addCust({ type: 'residential', name: 'Derek Olsen', email: 'derek.olsen@example.com', phone: '555-0203', billing_address: '15 Lakeview Ct', city: 'Urbana', zip: '43078', preferred_payment: 'card' },
-  [['Video monitoring + cloud (8 cams)', 49.99]], c => {
+  [['Video monitoring + cloud (8 cams), paid yearly', 49.99, 0, 'annual']], c => {
     C('camera_systems', { customer_id: c.id, location: 'Home + detached garage', brand: 'Uniview', model: 'NVR302-16', camera_count: 8, ip_address: '10.0.0.20', remote_access: 'EZCloud', app_name: 'EZView', admin_username: 'admin', admin_password: 'Olsen#Cam8', storage_tb: 8, retention_days: 30, install_date: addMonths(today, -2), last_service: addMonths(today, -2), warranty_expires: addMonths(today, 22) });
   });
 const res4 = addCust({ type: 'residential', name: 'Priya Natarajan', email: 'priya.n@example.com', phone: '555-0204', billing_address: '330 Maple Ave', city: 'Springfield', zip: '45505', status: 'prospect', notes: 'Wants quote for 6 cameras + doorbell.' });

@@ -91,9 +91,9 @@ async function billingRun(onDone) {
     const period = $('#period', el).value;
     const p = await POST('/api/invoices/generate-monthly', { period, dry_run: true });
     mount($('[data-preview]', el), p.customers.length ? html`
-      <div class="note" style="margin-bottom:10px">${p.customers.length} invoice(s) for <b>${p.label}</b> totaling <b>${money(p.total)}</b> (before tax)</div>
+      <div class="note" style="margin-bottom:10px">${p.customers.length} invoice(s) for <b>${p.label}</b> totaling <b>${money(p.total)}</b> (before tax). Quarterly, 6-month and yearly charges are included only in the months they're due, for their whole period.</div>
       <div class="table-wrap" style="max-height:320px;overflow-y:auto"><table class="t"><thead><tr><th>Customer</th><th>Type</th><th class="num">Charges</th><th class="num">Amount</th></tr></thead>
-      <tbody>${p.customers.map(c => html`<tr><td>${c.name}</td><td>${typeBadge(c.type)}</td><td class="num">${c.lines}</td><td class="num">${money(c.amount)}</td></tr>`)}</tbody></table></div>`
+      <tbody>${p.customers.map(c => html`<tr><td>${c.name}${c.detail ? html`<div class="small muted">${c.detail}</div>` : ''}</td><td>${typeBadge(c.type)}</td><td class="num">${c.lines}</td><td class="num">${money(c.amount)}</td></tr>`)}</tbody></table></div>`
       : html`<div class="empty">Everyone with recurring charges is already billed for ${p.label}.</div>`);
     $('[data-go]', el).disabled = !p.customers.length;
   };

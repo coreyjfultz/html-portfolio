@@ -835,3 +835,27 @@ table.t tr.click:hover td { background: #f8faff; }
 .org-text { display: flex; flex-direction: column; min-width: 0; flex: 1; overflow-wrap: anywhere; }
 .org-actions { display: flex; gap: 2px; flex: none; }
 @media (max-width: 600px) { .org-list { padding-left: 12px; } .org-list:not(.root) > .org-node::before { left: -12px; width: 9px; } }
+
+/* Site survey photos & markup, product photos */
+.thumb { width: 40px; height: 40px; object-fit: cover; border-radius: 6px; border: 1px solid var(--border); background: var(--surface-2); flex: none; display: inline-block; }
+.item-photo { max-width: 100%; max-height: 260px; border-radius: 8px; border: 1px solid var(--border); display: block; }
+.survey-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 12px; }
+.survey-card { margin: 0; border: 1px solid var(--border); border-radius: 10px; overflow: hidden; background: var(--surface); }
+.survey-card.on { border-color: var(--primary); box-shadow: 0 0 0 1px var(--primary) inset; }
+.survey-img { display: block; width: 100%; padding: 0; border: 0; background: #000; cursor: zoom-in; }
+.survey-img img { display: block; width: 100%; aspect-ratio: 4 / 3; object-fit: cover; }
+.survey-card figcaption { padding: 8px 10px; display: flex; flex-direction: column; gap: 2px; overflow-wrap: anywhere; }
+.survey-note { white-space: pre-wrap; }
+.markup-tools { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-bottom: 8px; }
+.markup-tools .swatch { width: 28px; height: 28px; border-radius: 50%; border: 2px solid var(--border-strong); cursor: pointer; padding: 0; }
+.markup-tools .swatch.on { outline: 3px solid var(--primary); outline-offset: 2px; }
+.markup-stage { background: #111; border-radius: 8px; overflow: hidden; display: grid; place-items: center; }
+.markup-stage canvas { max-width: 100%; max-height: 60vh; touch-action: none; cursor: crosshair; display: block; }
+.doc-item { display: flex; gap: 10px; align-items: center; }
+.doc-item-img { width: 48px; height: 48px; object-fit: contain; border-radius: 4px; flex: none; display: inline-block; }
+img.doc-item-img { border: 1px solid #e5e7eb; background: #fff; }
+.doc-survey { margin-top: 20px; break-inside: avoid; }
+.doc-survey-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 12px; margin-top: 8px; }
+.doc-survey figure { margin: 0; break-inside: avoid; }
+.doc-survey img { width: 100%; border-radius: 6px; border: 1px solid #e5e7eb; display: block; }
+.doc-survey figcaption { font-size: 12px; margin-top: 4px; white-space: pre-wrap; }

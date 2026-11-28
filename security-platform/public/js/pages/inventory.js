@@ -1,5 +1,5 @@
-import { html, mount, $, $$, money, num, dataTable, openForm, promptForm, loading, toast, getLocations, typeBadge } from '../ui.js';
-import { R, GET, POST } from '../api.js';
+import { html, mount, $, $$, money, num, dataTable, openForm, promptForm, loading, toast, getLocations, typeBadge, pickPhotos, resizeImage, confirmDialog } from '../ui.js';
+import { R, GET, POST, api } from '../api.js';
 import { can, refresh, state } from '../app.js';
 import { RESOURCES } from '../schema.js';
 
@@ -36,7 +36,7 @@ export async function list(view, _, query) {
     mount($('[data-table]', view), dataTable({
       rows, href: i => `#/inventory/${i.id}`, empty: 'No items match.',
       columns: [
-        { label: 'Item', render: i => html`<b>${i.name}</b><div class="small muted">${[i.sku, i.category].filter(Boolean).join(' · ')}</div>` },
+        { label: 'Item', render: i => html`<div class="row" style="gap:10px;flex-wrap:nowrap">${i.photo_key ? html`<img class="thumb" src="/api/inventory/${i.id}/photo?v=${i.photo_key}" alt="" loading="lazy">` : html`<span class="thumb empty"></span>`}<div><b>${i.name}</b><div class="small muted">${[i.sku, i.category].filter(Boolean).join(' · ')}</div></div></div>` },
         { label: 'Warehouse', render: i => fmtQty(qty.get(`${i.id}|0`) || 0), cls: 'num' },
         ...vehicles.map(v => ({ label: v.unit_name, render: i => fmtQty(qty.get(`${i.id}|${v.id}`) || 0, true), cls: 'num' })),
         { label: 'Total', render: i => html`<b style="${i.total_qty < i.reorder_level ? 'color:var(--bad)' : ''}">${num(i.total_qty)}</b>${i.total_qty < i.reorder_level ? html`<div class="small" style="color:var(--bad)">reorder (${i.reorder_level})</div>` : ''}`, cls: 'num' },
@@ -122,6 +122,8 @@ export async function detail(view, [id]) {
         ${office ? html`<button class="btn" data-edit>Edit</button><button class="btn" data-count>Physical count</button><button class="btn" data-receive>Receive</button>` : ''}
         <button class="btn primary" data-transfer>Transfer</button></div></div>
     <div class="grid g3">
+      <div class="card"><div class="card-head"><h2>Photo</h2>${office ? html`<div class="row"><button class="btn sm" data-photo>${item.photo_key ? 'Replace' : '📷 Add photo'}</button>${item.photo_key ? html`<button class="btn sm ghost danger" data-nophoto>Remove</button>` : ''}</div>` : ''}</div>
+        <div class="card-body">${item.photo_key ? html`<img class="item-photo" src="/api/inventory/${item.id}/photo?v=${item.photo_key}" alt="${item.name}">` : html`<div class="muted small">No photo yet.${office ? ' Add one: it shows in inventory lists and, if wanted, on proposals.' : ''}</div>`}</div></div>
       <div class="card"><div class="card-head"><h2>Where it is</h2></div><div class="card-body flush">${dataTable({
         rows: here.filter(s => s.qty !== 0), empty: 'None in stock.',
         columns: [{ label: 'Location', render: s => s.location_id ? html`<a href="#/vehicles/${s.location_id}">${s.location_name}</a>` : 'Warehouse' }, { label: 'Qty', render: s => fmtQty(s.qty), cls: 'num' }],
@@ -133,6 +135,12 @@ export async function detail(view, [id]) {
         ${item.notes ? html`<dt>Notes</dt><dd>${item.notes}</dd>` : ''}</dl></div></div>
       <div class="card span2" style="grid-column:1/-1"><div class="card-head"><h2>Movement history</h2></div><div class="card-body flush">${movesTable(moves)}</div></div>
     </div>`);
+  $('[data-photo]', view)?.addEventListener('click', async () => {
+    const [f] = await pickPhotos({ camera: false, multiple: false });
+    if (!f) return;
+    try { await POST(`/api/inventory/${item.id}/photo`, { photo: await resizeImage(f, 1200, 0.85) }); toast('Photo saved'); refresh(); } catch (e) { toast(e.message, 'error'); }
+  });
+  $('[data-nophoto]', view)?.addEventListener('click', async () => { if (await confirmDialog('Remove the photo?', { okLabel: 'Remove', danger: true })) { await api('DELETE', `/api/inventory/${item.id}/photo`); refresh(); } });
   $('[data-edit]', view)?.addEventListener('click', () => openForm('inventory_items', { record: item, onSaved: refresh, onDeleted: () => { location.hash = '#/inventory'; } }));
   $('[data-receive]', view)?.addEventListener('click', () => receiveStock(items, item.id, refresh));
   $('[data-count]', view)?.addEventListener('click', () => countStock(item, refresh));

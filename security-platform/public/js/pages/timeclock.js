@@ -41,7 +41,7 @@ export async function clockWidget(el, { onChange, big = false } = {}) {
 
 export async function render(view, _, query) {
   loading(view);
-  const office = can.billing(), manage = can.manage();
+  const office = can.timesheets(), manage = can.manage();
   const range = { from: query.from || addDays(todayStr(), -13), to: query.to || todayStr() };
   const [me, now, ts, entries, users] = await Promise.all([
     GET('/api/timeclock/me'), manage ? GET('/api/timeclock/now') : [], office ? GET('/api/timeclock/timesheet', range) : null,

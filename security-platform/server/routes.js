@@ -3,7 +3,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
-import { RESOURCES, MAINTENANCE, customerAccess, isFieldRole, isPrivilegedRole } from '../public/js/schema.js';
+import { RESOURCES, MAINTENANCE, customerAccess, isFieldRole, isPrivilegedRole, BILLING_FREQ } from '../public/js/schema.js';
 import { getSettings, DEFAULT_SETTINGS, PRIVATE_SETTINGS, SECRET_SETTINGS, INTERNAL_SETTINGS, tx, DATA_DIR } from './db.js';
 import { markInvoiceDirty, qboConfig, qboConnected, authorizeUrl, handleCallback, disconnect as qboDisconnect, listItems as qboItems, syncAll as qboSync, exportFile } from './quickbooks.js';
 import { queue, notifyOnMyWay, notifyScheduled, sendEmail, sendSms, mailConfig, smsConfig, appUrl } from './notify.js';
@@ -30,6 +30,7 @@ import { registerTaskRoutes, taskFeedEvents } from './tasks.js';
 import { registerCallRoutes } from './calls.js';
 import { registerOrgRoutes, checkSupervisor, supervisorOf } from './org.js';
 import { registerRoleRoutes } from './roles.js';
+import { registerSalesPhotoRoutes, sendProposalItemPhoto, sendProposalSurveyPhoto } from './salesphotos.js';
 import { requestOrigin } from './net.js';
 import { runBackup, listBackups, backupConfig, backupDir, offsiteConfig, uploadOffsite, testOffsite, listOffsite, fetchOffsite, verifyBackup, deletedCustomers, recoverCustomer, DEFAULT_BACKUP_DIR } from './backup.js';
 import { openAlerts, resolveAlert } from './alerts.js';
@@ -466,6 +467,7 @@ export function buildRoutes() {
   registerCallRoutes(r);
   registerOrgRoutes(r);
   registerRoleRoutes(r);
+  registerSalesPhotoRoutes(r);
 
   // ------------------------------------------------------------ alerts for the owner / office
   r('GET', '/api/alerts', G.staff, ({ db, user }) => openAlerts(db, user.role));
@@ -588,6 +590,8 @@ ${s.company_name}` }));
     sign(db, params.token, body, { ip, agent: req.headers['user-agent'] });
     return publicView(db, byToken(db, params.token));
   });
+  r('GET', '/api/public/proposals/:token/item-photo/:itemId', null, ({ db, params, res }) => sendProposalItemPhoto(db, byToken(db, params.token).id, params.itemId, res));
+  r('GET', '/api/public/proposals/:token/survey-photo/:photoId', null, ({ db, params, res }) => sendProposalSurveyPhoto(db, byToken(db, params.token).id, params.photoId, res));
   r('POST', '/api/public/proposals/:token/decline', null, ({ db, params, body }) => decline(db, params.token, body.reason));
   r('GET', '/api/public/proposals/:token/signature', null, ({ db, params, res }) => {
     const p = byToken(db, params.token);
@@ -860,16 +864,32 @@ ${s.company_name}` }));
       AND EXISTS (SELECT 1 FROM recurring_charges rc WHERE rc.customer_id = c.id AND rc.active = 1)
       AND NOT EXISTS (SELECT 1 FROM invoices i WHERE i.customer_id = c.id AND i.kind = 'monthly' AND i.period = ? AND i.status <> 'void')
       ORDER BY c.name`).all(period);
-    const charges = db.prepare('SELECT * FROM recurring_charges WHERE customer_id = ? AND active = 1 ORDER BY id');
+    // Quarterly / 6-month / yearly charges are billed only in their months, for the whole period.
+    const months = ch => BILLING_FREQ[ch.frequency]?.months || 1;
+    const dueIn = (ch, p) => {
+      const start = /^\d{4}-\d{2}$/.test(ch.start_month || '') ? ch.start_month : p;
+      const diff = (Number(p.slice(0, 4)) - Number(start.slice(0, 4))) * 12 + Number(p.slice(5, 7)) - Number(start.slice(5, 7));
+      return diff >= 0 && diff % months(ch) === 0;
+    };
+    const charges = { all: id => db.prepare('SELECT * FROM recurring_charges WHERE customer_id = ? AND active = 1 ORDER BY id').all(id).filter(ch => dueIn(ch, period)) };
+    const lineFor = ch => {
+      const n = months(ch);
+      if (n === 1) return { description: `${ch.description} — ${monthLabel(period)}`, unit_price: ch.amount };
+      const d = new Date(Number(period.slice(0, 4)), Number(period.slice(5, 7)) - 1 + n - 1, 1);
+      const end = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+      return { description: `${ch.description} — ${monthLabel(period)} to ${monthLabel(end)} (${n} months × $${Number(ch.amount).toFixed(2)})`, unit_price: round2(ch.amount * n) };
+    };
     const preview = customers.map(c => {
       const ch = charges.all(c.id);
-      return { customer_id: c.id, name: c.name, type: c.type, amount: round2(ch.reduce((s, x) => s + x.amount, 0)), lines: ch.length };
-    });
+      return { customer_id: c.id, name: c.name, type: c.type, amount: round2(ch.reduce((s, x) => s + lineFor(x).unit_price, 0)), lines: ch.length,
+        detail: ch.map(x => `${x.description}${months(x) > 1 ? ` (${BILLING_FREQ[x.frequency].adverb})` : ''}`).join(', ') };
+    }).filter(c => c.lines > 0);
     if (body.dry_run) return { period, label: monthLabel(period), customers: preview, total: round2(preview.reduce((s, p) => s + p.amount, 0)) };
-    const created = tx(db, () => customers.map(c => {
+    const created = tx(db, () => customers.filter(c => charges.all(c.id).length).map(c => {
       const inv = create(db, 'invoices', { customer_id: c.id, kind: 'monthly', period, issue_date: issue, status: body.as_draft ? 'draft' : 'sent' }, user);
       for (const ch of charges.all(c.id)) {
-        create(db, 'invoice_items', { invoice_id: inv.id, description: `${ch.description} — ${monthLabel(period)}`, qty: 1, unit_price: ch.amount, taxable: ch.taxable }, user);
+        const l = lineFor(ch);
+        create(db, 'invoice_items', { invoice_id: inv.id, description: l.description, qty: 1, unit_price: l.unit_price, taxable: ch.taxable }, user);
       }
       return inv.id;
     }));

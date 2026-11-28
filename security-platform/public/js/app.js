@@ -15,6 +15,7 @@ export const can = {
   owner: () => state.user?.role === 'owner',
   tech: () => isFieldRole(state.user?.role),
   hr: () => G.hr.includes(state.user?.role),
+  timesheets: () => G.timesheets.includes(state.user?.role),
   people: () => G.people.includes(state.user?.role),
   records: () => G.records.includes(state.user?.role),
   customers_any: () => customerAccess(state.user?.role) !== 'none',

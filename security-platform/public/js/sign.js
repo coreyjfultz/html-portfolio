@@ -25,7 +25,7 @@ async function load() {
   mount(root, html`
     ${status}
     <div class="public-actions no-print"><button class="btn" data-print>Print / save PDF</button></div>
-    ${renderDocument(d, { signatureUrl: d.signed ? `/api/public/proposals/${token}/signature` : null, logoUrl: d.company.logo ? '/api/public/logo' : null })}
+    ${renderDocument(d, { signatureUrl: d.signed ? `/api/public/proposals/${token}/signature` : null, logoUrl: d.company.logo ? '/api/public/logo' : null, photoUrl: (kind, id) => `/api/public/proposals/${token}/${kind}-photo/${id}` })}
     ${canSign ? html`<section class="public-card sign-card no-print" id="sign">
       <h2>Accept & sign</h2>
       <div class="err-box hidden" data-err></div>

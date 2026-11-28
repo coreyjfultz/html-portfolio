@@ -9,7 +9,7 @@ import { audit } from './security.js';
 import { raiseAlert } from './alerts.js';
 
 const MANAGE = G.manage;
-const OFFICE = G.billing;
+const OFFICE = G.timesheets; // owners, admins, accounting, HR
 
 /** Great-circle distance in metres. */
 export function distanceM(a, b) {

@@ -1,5 +1,6 @@
 // Proposals & agreements: building them, sending a signing link, electronic
 // signature with an audit trail, and what happens automatically once signed.
+import { proposalSurveyPhotos } from './salesphotos.js';
 import { materialsFromProposal } from './truckstock.js';
 import crypto from 'node:crypto';
 import { getSettings, nextNumber, tx } from './db.js';
@@ -68,7 +69,11 @@ export function documentContent(db, id) {
   const s = getSettings(db);
   const c = db.prepare('SELECT name, contact_name, email, phone, billing_address, city, state, zip FROM customers WHERE id = ?').get(p.customer_id);
   const site = p.site_id ? db.prepare('SELECT name, address, city, state, zip FROM locations WHERE id = ?').get(p.site_id) : null;
-  const items = db.prepare('SELECT description, qty, unit_price, taxable FROM proposal_items WHERE proposal_id = ? ORDER BY sort, id').all(id);
+  const items = db.prepare(`SELECT pi.description, pi.qty, pi.unit_price, pi.taxable, ${p.show_item_photos ? "CASE WHEN i.photo_key IS NOT NULL THEN pi.item_id END" : 'NULL'} AS photo_item
+    FROM proposal_items pi LEFT JOIN inventory_items i ON i.id = pi.item_id WHERE pi.proposal_id = ? ORDER BY pi.sort, pi.id`).all(id)
+    // Lines without a photo stay exactly as before, so earlier signed fingerprints stay reproducible.
+    .map(({ photo_item, ...l }) => (photo_item ? { ...l, photo_item } : l));
+  const survey = proposalSurveyPhotos(db, id);
   return {
     number: p.number, kind: p.kind, title: p.title, intro: p.intro || '', valid_until: p.valid_until,
     company: { name: s.company_name, address: s.company_address, phone: s.company_phone, email: s.company_email, license: s.company_license, logo: !!s.logo_key },
@@ -78,6 +83,8 @@ export function documentContent(db, id) {
     deposit_percent: p.deposit_percent, deposit: p.deposit_percent ? round2((p.total || 0) * p.deposit_percent / 100) : 0,
     terms: p.terms || s.proposal_terms,
     prepared_by: p.sales_user,
+    ...(p.billing_frequency && p.billing_frequency !== 'monthly' ? { billing_frequency: p.billing_frequency } : {}),
+    ...(survey.length ? { survey } : {}),
   };
 }
 export const hashDoc = doc => crypto.createHash('sha256').update(JSON.stringify(doc)).digest('hex');
@@ -179,7 +186,7 @@ function afterSigned(db, id) {
   const out = {};
   setStage(db, p.customer_id, 'accepted', { forwardOnly: true, user: sys, reason: `P-${p.number} signed by ${p.signed_by}` });
   if (p.monthly_amount > 0) {
-    create(db, 'recurring_charges', { customer_id: p.customer_id, description: p.monthly_description || 'Monthly service', amount: p.monthly_amount, taxable: 0, active: 1 }, sys);
+    create(db, 'recurring_charges', { customer_id: p.customer_id, description: p.monthly_description || 'Monthly service', amount: p.monthly_amount, frequency: p.billing_frequency || 'monthly', start_month: todayLocal().slice(0, 7), taxable: 0, active: 1 }, sys);
     db.prepare("UPDATE customers SET status = 'active' WHERE id = ?").run(p.customer_id);
     out.recurring = true;
   }
