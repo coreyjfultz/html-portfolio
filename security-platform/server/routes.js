@@ -31,7 +31,7 @@ import { registerCallRoutes } from './calls.js';
 import { registerOrgRoutes, checkSupervisor, supervisorOf } from './org.js';
 import { registerRoleRoutes } from './roles.js';
 import { requestOrigin } from './net.js';
-import { runBackup, listBackups } from './backup.js';
+import { runBackup, listBackups, backupConfig, backupDir, offsiteConfig, uploadOffsite, testOffsite, listOffsite, fetchOffsite, verifyBackup, deletedCustomers, recoverCustomer, DEFAULT_BACKUP_DIR } from './backup.js';
 import { openAlerts, resolveAlert } from './alerts.js';
 import { putOnTest, clearTest, markConfirmed, logEvent, ingestSignals, stationInfo, CONNECTORS } from './monitoring.js';
 import { stripeConfig, checkoutForInvoice, checkoutForSetup, listMethods, removeMethod, setDefaultMethod, chargeSaved, payLink, handleWebhook } from './payments.js';
@@ -56,7 +56,7 @@ import {
   HttpError, list, get, create, update, adjustStock, techCustomerIds, assertCustomerVisible, grantAccess, recalcInvoice, round2, todayLocal, nowLocal, addMonths, addDays,
 } from './resources.js';
 import {
-  hashPassword, verifyPassword, validatePassword, createSession, destroySession, audit, encrypt,
+  hashPassword, verifyPassword, validatePassword, createSession, destroySession, audit, encrypt, decrypt,
   loginAllowed, recordFailedLogin, clearLogins,
 } from './security.js';
 
@@ -223,6 +223,26 @@ export function buildRoutes() {
     const up = db.prepare('INSERT INTO settings(key, value) VALUES (?,?) ON CONFLICT(key) DO UPDATE SET value = excluded.value');
     const full = G.manage.includes(user.role);
     if (!full && (!G.hr.includes(user.role) || Object.keys(body).some(k => k in DEFAULT_SETTINGS && !HR_SETTINGS.has(k)))) throw new HttpError(403, 'You can change the time-off and holiday settings only');
+    const backupKeys = Object.keys(body).filter(k => k.startsWith('backup_') || k.startsWith('offsite_'));
+    if (backupKeys.length && user.role !== 'owner') throw new HttpError(403, 'Only an owner can change backup settings');
+    if ('backup_passphrase_history' in body) delete body.backup_passphrase_history;
+    if (body.backup_passphrase) {
+      if (String(body.backup_passphrase).length < 12) throw new HttpError(400, 'Use a backup password of at least 12 characters (a few random words works well)');
+      // Keep earlier passwords so older backups can still be opened.
+      const cur = getSettings(db);
+      if (cur.backup_passphrase) {
+        let hist = []; try { hist = JSON.parse(decrypt(cur.backup_passphrase_history || '') || '[]'); } catch { hist = []; }
+        let old = ''; try { old = decrypt(cur.backup_passphrase); } catch { old = ''; }
+        if (old && old !== body.backup_passphrase) hist = [old, ...hist.filter(x => x !== old)].slice(0, 10);
+        db.prepare("INSERT INTO settings(key, value) VALUES ('backup_passphrase_history', ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value").run(encrypt(JSON.stringify(hist)));
+      }
+    }
+    if (body.backup_local_dir) {
+      const dir = String(body.backup_local_dir).trim();
+      if (!path.isAbsolute(dir)) throw new HttpError(400, 'The backup folder must be a full path, like /mnt/backup-disk/secureops');
+      try { fs.mkdirSync(dir, { recursive: true, mode: 0o700 }); fs.accessSync(dir, fs.constants.W_OK); } catch { throw new HttpError(400, `The server can’t write to ${dir}`); }
+    }
+    if (body.offsite_enabled === '1' && !body.backup_passphrase && !getSettings(db).backup_passphrase && !process.env.BACKUP_PASSPHRASE) throw new HttpError(400, 'Set a backup password first: off-site copies are always encrypted');
     for (const k of Object.keys(DEFAULT_SETTINGS)) {
       if (!(k in body) || INTERNAL_SETTINGS.has(k)) continue;
       if (SECRET_SETTINGS.has(k)) { if (body[k]) up.run(k, encrypt(String(body[k]))); continue; } // blank = keep
@@ -1201,11 +1221,68 @@ ${s.company_name}` }));
   // Health check for the host / uptime monitor (no login, reveals nothing).
   r('GET', '/api/health', null, ({ db }) => { db.prepare('SELECT 1').get(); return { ok: true }; });
 
-  r('GET', '/api/admin/backups', G.owner, () => ({ backups: listBackups(), keep: Math.max(1, Number(process.env.BACKUP_KEEP) || 14), hour: Number(process.env.BACKUP_HOUR ?? 2), disabled: process.env.BACKUP_DISABLED === '1' }));
-  r('POST', '/api/admin/backups', G.owner, ({ db, user }) => {
-    const b = runBackup(db, { reason: `manual (${user.name})` });
+  // ---- Backups (owner only): local folder, off-site copies, restore tests, recovering a deleted customer
+  r('GET', '/api/admin/backups', G.owner, ({ db }) => {
+    const cfg = backupConfig(db), off = offsiteConfig(db), s = getSettings(db);
+    const runs = db.prepare('SELECT * FROM backup_runs ORDER BY id DESC LIMIT 40').all();
+    const last = (kind, status = 'ok') => db.prepare('SELECT * FROM backup_runs WHERE kind = ? AND status = ? ORDER BY id DESC LIMIT 1').get(kind, status) || null;
+    let freeBytes = null;
+    try { const st = fs.statfsSync(fs.existsSync(cfg.dir) ? cfg.dir : DATA_DIR); freeBytes = st.bavail * st.bsize; } catch { /* not supported */ }
+    return {
+      backups: listBackups(db), runs, offsite_names: db.prepare("SELECT DISTINCT name FROM backup_runs WHERE kind = 'offsite' AND status = 'ok'").all().map(r => r.name), dir: cfg.dir, dir_from_env: !!process.env.BACKUP_DIR, default_dir: DEFAULT_BACKUP_DIR, free_bytes: freeBytes,
+      hour: cfg.hour, keep: { daily: cfg.daily, weekly: cfg.weekly, monthly: cfg.monthly }, verify_day: cfg.verifyDay, disabled: cfg.disabled,
+      encrypted: !!cfg.passphrase, passphrase_from_env: !!process.env.BACKUP_PASSPHRASE,
+      offsite: { enabled: off.enabled, ready: off.ready, from_env: !!process.env.OFFSITE_ENDPOINT, provider: off.provider, endpoint: off.endpoint, region: off.region, bucket: off.bucket, prefix: off.prefix, key_id: off.accessKeyId, secret_set: !!off.secretAccessKey, lock_days: off.lockDays, lock_mode: off.lockMode },
+      last: { backup: last('backup'), backup_failed: last('backup', 'failed'), offsite: last('offsite'), offsite_failed: last('offsite', 'failed'), verify: last('verify'), verify_failed: last('verify', 'failed') },
+      settings_saved: !!s.backup_hour,
+    };
+  });
+  r('POST', '/api/admin/backups', G.owner, async ({ db, user }) => {
+    const b = await runBackup(db, { reason: `manual (${user.name})` });
     audit(db, user, 'backup to server', null, null, b.name);
-    return b;
+    let offsite = null;
+    if (offsiteConfig(db).enabled) {
+      try { offsite = await uploadOffsite(db, b.name); } catch (e) { offsite = { error: e.message }; }
+    }
+    return { ...b, path: undefined, offsite };
+  });
+  r('POST', '/api/admin/backups/test-offsite', G.owner, async ({ db, user }) => {
+    try { const r2 = await testOffsite(db); audit(db, user, 'test off-site backup storage', null, null, 'ok'); return r2; }
+    catch (e) { throw new HttpError(400, `Couldn’t use the storage: ${e.message}`); }
+  });
+  r('GET', '/api/admin/backups/offsite', G.owner, async ({ db }) => {
+    try { return await listOffsite(db); } catch (e) { throw new HttpError(502, `Couldn’t list off-site backups: ${e.message}`); }
+  });
+  r('POST', '/api/admin/backups/offsite/:name/fetch', G.owner, async ({ db, user, params }) => {
+    const r2 = await fetchOffsite(db, params.name).catch(e => { throw new HttpError(400, e.message); });
+    audit(db, user, 'copy off-site backup to server', null, null, params.name);
+    return { name: r2.name };
+  });
+  r('POST', '/api/admin/backups/:name/upload', G.owner, async ({ db, user, params }) => {
+    const r2 = await uploadOffsite(db, params.name).catch(e => { throw new HttpError(400, e.message); });
+    audit(db, user, 'upload backup off-site', null, null, params.name);
+    return r2;
+  });
+  r('POST', '/api/admin/backups/verify', G.owner, async ({ db, user, body }) => {
+    try { const r2 = await verifyBackup(db, { name: body.name || undefined, offsite: !!body.offsite }); audit(db, user, 'backup restore test', null, null, r2.name); return r2; }
+    catch (e) { throw new HttpError(400, `Restore test failed: ${e.message}`); }
+  });
+  r('GET', '/api/admin/backups/:name/download', G.owner, ({ db, user, params, res }) => {
+    const b = listBackups(db).find(x => x.name === params.name && x.format === 'file');
+    if (!b) throw new HttpError(404, 'Backup not found');
+    audit(db, user, 'download backup', null, null, b.name);
+    res.writeHead(200, { 'Content-Type': 'application/octet-stream', 'Content-Length': b.size, 'Content-Disposition': `attachment; filename="${b.name}"`, 'Cache-Control': 'no-store' });
+    fs.createReadStream(path.join(backupDir(db), b.name)).pipe(res);
+    return undefined;
+  });
+  r('GET', '/api/admin/backups/:name/deleted-customers', G.owner, async ({ db, params }) => {
+    try { return await deletedCustomers(db, params.name); } catch (e) { throw new HttpError(400, e.message); }
+  });
+  r('POST', '/api/admin/backups/:name/recover', G.owner, async ({ db, user, params, body }) => {
+    let r2;
+    try { r2 = await recoverCustomer(db, params.name, body.customer_id); } catch (e) { throw new HttpError(400, e.message); }
+    audit(db, user, 'recover customer from backup', 'customers', Number(body.customer_id), `${r2.name} from ${params.name}: ${Object.entries(r2.restored).map(([t, n]) => `${t} ${n}`).join(', ')}`);
+    return r2;
   });
 
   r('GET', '/api/admin/backup', G.owner, ({ db, res, user }) => {

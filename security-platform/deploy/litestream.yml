@@ -1,0 +1,15 @@
+# Litestream: streams every database change to S3-compatible storage within seconds, so the
+# database can be restored to any moment (e.g. "10:41 this morning, before the mistake").
+# Started by deploy/docker-compose.litestream.yml. Covers the database only; photos and
+# documents are in the nightly backups.
+dbs:
+  - path: /data/secureops.db
+    replicas:
+      - type: s3
+        bucket: ${LITESTREAM_BUCKET}
+        path: secureops-db
+        endpoint: ${LITESTREAM_ENDPOINT}
+        region: ${LITESTREAM_REGION}
+        sync-interval: 10s
+        snapshot-interval: 24h
+        retention: 168h   # keep 7 days of point-in-time history

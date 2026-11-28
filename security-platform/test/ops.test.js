@@ -9,7 +9,7 @@ const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'secureops-ops-'));
 process.env.DATA_DIR = tmp;
 const { openDb } = await import('../server/db.js');
 const { createServer } = await import('../server/server.js');
-const { runBackup, listBackups, restore, BACKUP_DIR } = await import('../server/backup.js');
+const { restore, extractArchive, backupDir } = await import('../server/backup.js');
 
 let server, base, db, cookie = '';
 before(async () => {
@@ -58,33 +58,31 @@ test('forwarded headers are ignored unless TRUST_PROXY=1 (no faking an IP past t
   assert.equal(requestOrigin(fake), 'http://app.example', 'nor change the site address used in emailed links');
 });
 
-test('backups: database + files, kept N days, never the encryption key unless asked; restore keeps the old data aside', async () => {
-  // Some data and an uploaded file
+test('backups: one file with the database + files, no encryption key unless password-protected; restore keeps the old data aside', async () => {
   await call('POST', '/api/r/customers', { name: 'Backup Bakery', type: 'commercial' });
   fs.mkdirSync(path.join(tmp, 'photos'), { recursive: true });
   fs.writeFileSync(path.join(tmp, 'photos', 'p1.jpg'), 'jpeg-bytes');
+  fs.writeFileSync(path.join(tmp, 'secret.key'), 'k'.repeat(32));
 
   const viaApi = await call('POST', '/api/admin/backups');
-  assert.equal(viaApi.status, 200);
-  const dir = path.join(BACKUP_DIR, viaApi.data.name);
-  assert.ok(fs.existsSync(path.join(dir, 'secureops.db')));
-  assert.equal(fs.readFileSync(path.join(dir, 'photos', 'p1.jpg'), 'utf8'), 'jpeg-bytes');
-  assert.equal(fs.existsSync(path.join(dir, 'secret.key')), false, 'the encryption key is kept out of backups by default');
+  assert.equal(viaApi.status, 200, JSON.stringify(viaApi.data));
+  assert.match(viaApi.data.name, /^secureops-.*\.sobak$/);
   const list = (await call('GET', '/api/admin/backups')).data;
   assert.equal(list.backups[0].name, viaApi.data.name);
+  assert.equal(list.backups[0].encrypted, false);
+  assert.equal(list.backups[0].includes_key, false, 'without a backup password the encryption key is left out');
+  assert.equal(list.last.backup.status, 'ok');
 
-  // Retention
-  process.env.BACKUP_KEEP = '2';
-  try {
-    for (let i = 0; i < 3; i++) { await new Promise(r => setTimeout(r, 1100)); runBackup(db); }
-    assert.equal(listBackups().length, 2);
-  } finally { delete process.env.BACKUP_KEEP; }
+  const out = path.join(tmp, 'x-extract');
+  const { manifest } = await extractArchive(path.join(backupDir(db), viaApi.data.name), out);
+  assert.equal(fs.readFileSync(path.join(out, 'photos', 'p1.jpg'), 'utf8'), 'jpeg-bytes');
+  assert.ok(manifest.files.includes('photos/p1.jpg'));
+  assert.equal(fs.existsSync(path.join(out, 'secret.key')), false);
 
-  // Restore (normally with the app stopped): data changes after the backup are rolled back
-  const name = listBackups()[0].name;
+  // Restore (normally with the app stopped): later changes are rolled back, old data kept aside
   db.prepare("UPDATE customers SET name = 'Changed later' WHERE name = 'Backup Bakery'").run();
   db.close();
-  const r = restore(name);
+  const r = await restore(viaApi.data.name);
   assert.ok(fs.existsSync(path.join(r.previous_data, 'secureops.db')), 'the replaced data is kept aside');
   db = openDb(path.join(tmp, 'secureops.db'));
   assert.ok(db.prepare("SELECT 1 FROM customers WHERE name = 'Backup Bakery'").get());

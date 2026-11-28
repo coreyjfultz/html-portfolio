@@ -46,6 +46,8 @@ export const DEFAULT_SETTINGS = {
   vapid_public: '', vapid_private: '',
   addon_pay: '0', payroll_provider: 'quickbooks', payroll_portal_url: '', payroll_label: '', payroll_contact: '', payroll_note: '',
   task_email: '1',
+  backup_hour: '2', backup_local_dir: '', backup_keep_daily: '14', backup_keep_weekly: '8', backup_keep_monthly: '12', backup_verify_day: '1', backup_passphrase: '', backup_passphrase_history: '',
+  offsite_enabled: '0', offsite_provider: 'b2', offsite_endpoint: '', offsite_region: '', offsite_bucket: '', offsite_prefix: 'secureops', offsite_key_id: '', offsite_secret: '', offsite_lock_days: '30', offsite_lock_mode: 'compliance',
   app_calls_enabled: '1', app_call_relay: 'none', app_call_stun: 'stun:stun.l.google.com:19302', turn_urls: '', turn_secret: '',
   assistant_enabled: '0', assistant_daily_limit: '25', assistant_effort: 'medium',
   timeoff_notify_managers: '1', timeoff_managers_decide: '1',
@@ -87,11 +89,11 @@ Object.assign(DEFAULT_TEMPLATES, {
 });
 Object.assign(DEFAULT_SETTINGS, DEFAULT_TEMPLATES);
 // Settings stored encrypted; never sent back to the browser.
-export const SECRET_SETTINGS = new Set(['turn_secret', 'samsara_token', 'tracking_feed_token', 'google_maps_key', 'smtp_pass', 'twilio_token', 'stripe_secret', 'stripe_webhook_secret', 'qbo_client_secret']);
+export const SECRET_SETTINGS = new Set(['backup_passphrase', 'offsite_secret', 'turn_secret', 'samsara_token', 'tracking_feed_token', 'google_maps_key', 'smtp_pass', 'twilio_token', 'stripe_secret', 'stripe_webhook_secret', 'qbo_client_secret']);
 // Managed by the system only: never sent to the browser, never set through the settings form.
-export const INTERNAL_SETTINGS = new Set(['vapid_public', 'vapid_private', 'qbo_access', 'qbo_refresh', 'qbo_access_expires', 'qbo_realm_id', 'qbo_company_name', 'qbo_last_sync', 'invoice_next_number_lock']);
+export const INTERNAL_SETTINGS = new Set(['backup_passphrase_history', 'vapid_public', 'vapid_private', 'qbo_access', 'qbo_refresh', 'qbo_access_expires', 'qbo_realm_id', 'qbo_company_name', 'qbo_last_sync', 'invoice_next_number_lock']);
 // Settings that are never sent to non-admin users or editable through PUT /api/settings.
-export const PRIVATE_SETTINGS = new Set(['turn_secret', 'vapid_private', 'tracking_token', 'samsara_token', 'tracking_feed_token', 'google_maps_key', 'voice_token', 'inbound_token', 'calendar_token', 'smtp_pass', 'twilio_token', 'stripe_secret', 'stripe_webhook_secret']);
+export const PRIVATE_SETTINGS = new Set(['backup_passphrase', 'offsite_secret', 'turn_secret', 'vapid_private', 'tracking_token', 'samsara_token', 'tracking_feed_token', 'google_maps_key', 'voice_token', 'inbound_token', 'calendar_token', 'smtp_pass', 'twilio_token', 'stripe_secret', 'stripe_webhook_secret']);
 
 function columnSql(f) {
   let sql = `"${f.name}" ${SQL_TYPES[f.type] || 'TEXT'}`;
@@ -371,6 +373,11 @@ function migrate(db) {
       created_at TEXT NOT NULL DEFAULT (datetime('now','localtime'))
     );
     CREATE INDEX IF NOT EXISTS idx_employee_docs ON employee_documents(user_id);
+    -- Backup history: local backups, off-site uploads and restore tests.
+    CREATE TABLE IF NOT EXISTS backup_runs (
+      id INTEGER PRIMARY KEY AUTOINCREMENT, kind TEXT NOT NULL, status TEXT NOT NULL, name TEXT, size INTEGER, detail TEXT,
+      started_at TEXT, finished_at TEXT NOT NULL DEFAULT (datetime('now','localtime'))
+    );
     -- Custom roles (Settings → Roles): permission groups + which customers they can see.
     CREATE TABLE IF NOT EXISTS custom_roles (
       key TEXT PRIMARY KEY, name TEXT NOT NULL, description TEXT,

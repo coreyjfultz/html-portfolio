@@ -34,7 +34,7 @@ The first person to open the site creates the **owner** account, so do it immedi
 
 ## 4. Save the encryption key (important)
 
-Camera passwords, alarm codes and saved service passwords are encrypted with a key that is created the first time one is saved. **If the key is lost, those passwords can't be recovered — backups don't contain it.** After entering the first camera password:
+Camera passwords, alarm codes and saved service passwords are encrypted with a key that is created the first time one is saved. **If the key is lost, those passwords can't be recovered.** Once a backup password is set (see Backups below), every backup carries the key, encrypted, so the backup password restores it too. Keep your own copy anyway. After entering the first camera password:
 
 ```bash
 docker compose exec app cat /data/secret.key
@@ -89,17 +89,42 @@ Each person opens the site on their phone and **installs the app** (iPhone: Safa
 
 ## Backups
 
-- **Nightly, automatic:** database + photos, signatures and supplier invoices, at `BACKUP_HOUR` (2 AM) in the data volume; the last `BACKUP_KEEP` (14) are kept. See them under Settings → Backup & data, or make one now with **Back up now** / `docker compose exec app npm run backup`.
-- **Off-site copies:** backups on the same server don't help if the server is lost. Either download one weekly from Settings → Backup & data, or copy them nightly to cloud storage from the server, for example with [rclone](https://rclone.org) (configure once with `rclone config`):
+Set these up **before** real data goes in. Settings → **Backup & data** (owner only) shows a green "Backups look healthy" banner when everything below is working.
 
+1. **Backup password.** Settings → Backup & data → *Backups on this server* → set a backup password (12+ characters; four or five random words is good). Every backup is then encrypted, and carries the app's encryption key, so **this password alone restores everything on a new server.** Save it in the company password manager *and* on paper in a safe. Nobody can recover it.
+2. **Local backups (automatic).** Every night at the chosen hour: the database plus photos, signatures, supplier invoices, HR documents and manuals, as one file. Kept: every backup from the last 14 days, one a week for 8 weeks, one a month for 12 months (adjustable). If the server has a second disk or a network drive, point *Backup folder* at it (with Docker, mount it into the container and set `BACKUP_DIR`).
+3. **Off-site copy (strongly recommended).** Backups on the same server don't help if the server is lost, the hosting account is closed, or someone breaks in. Use storage at a *different company*:
+   - **Backblaze B2** (simple, inexpensive): create a bucket that is **private** with **Object Lock enabled** (only possible when creating it). Add a lifecycle rule to delete old versions after e.g. 400 days. Create an **application key for that bucket only** that can read, list and write but **not delete**.
+   - Amazon S3, Cloudflare R2 and Wasabi work the same way.
+   - In Settings → *Off-site copy*: storage address (the bucket's S3 endpoint), bucket, key ID and key; tick *Upload every backup off-site*; **Save**; **Test connection**.
+   - Each night's backup is uploaded encrypted and locked against deletion for 30 days (Compliance mode): nobody — not an intruder with the server's keys, not you — can delete or change it early. The app never deletes anything off-site; the lifecycle rule ages old copies out.
+   - Save the storage account's login somewhere other than this server, with two-step sign-in on.
+4. **Alerts and checks (automatic).** The owner is alerted if a backup or upload fails, or if there's been no off-site copy for 2 days. On the 1st of each month the newest off-site backup is downloaded, decrypted and checked (database integrity, record counts, files). Results are under *History*. You can run a restore test any time.
+5. **Hosting snapshots.** Also turn on the hosting company's server snapshots/backups if offered (Hostinger VPS has them). They're at the same company, so they don't replace step 3.
+6. **Optional: continuous database backup** with Litestream (restore to a moment, e.g. "10:41 this morning"). See `deploy/docker-compose.litestream.yml`. Use a separate bucket *without* Object Lock.
+
+### Restoring
+
+- **One customer deleted by mistake:** Settings → Backup & data → on a backup from before it happened, **Recover a customer…**. Brings back the customer with its sites, contacts, systems, passwords, jobs, invoices and photos. Nothing else is rolled back.
+- **Everything, on this server** (bad import, damaged data):
   ```bash
-  # crontab -e   (runs at 3:30 AM, after the nightly backup)
-  30 3 * * * rclone sync $(docker volume inspect -f '{{ .Mountpoint }}' security-platform_secureops-data)/backups remote:secureops-backups
+  docker compose stop app
+  docker compose run --rm app npm run restore -- <backup name>     # names are listed in Settings
+  docker compose start app
   ```
-
-- **Restore:** `docker compose stop app`, then
-  `docker compose run --rm app npm run restore -- <backup name>` (the current data is moved aside, not deleted), then `docker compose start app`.
-- **Test a restore** once after going live, on a spare server or your laptop.
+  The data that was there is moved aside (`before-restore-…` in the data volume), not deleted.
+- **On a new server** (this one is gone): install the app as in step 2, add to `.env`:
+  ```
+  BACKUP_PASSPHRASE=<the backup password>
+  OFFSITE_ENDPOINT=https://s3.us-west-004.backblazeb2.com
+  OFFSITE_BUCKET=<bucket>
+  OFFSITE_PREFIX=secureops            # the "Folder in the bucket" setting
+  OFFSITE_KEY_ID=<key id>
+  OFFSITE_SECRET=<key>
+  ```
+  then `docker compose run --rm app npm run restore -- --offsite latest` (or a backup name instead of `latest`), and `docker compose up -d`. Then remove `BACKUP_PASSPHRASE` and the `OFFSITE_*` lines from `.env` again (they're saved in the restored settings), point DNS at the new server, and sign in as usual.
+- **Without the app at all:** a `.sobak` file can be downloaded from the storage company's website and restored with `npm run restore -- /path/to/file.sobak` (with `BACKUP_PASSPHRASE` set).
+- **Practice once** after going live: restore the latest off-site backup onto a spare machine or a laptop.
 
 ## Updating
 
@@ -108,7 +133,7 @@ cd /opt/secureops && git pull
 cd security-platform && docker compose up -d --build
 ```
 
-The database upgrades itself on start. A backup before updating doesn't hurt: `docker compose exec app npm run backup`.
+The database upgrades itself on start. Make a backup first (Settings → Backup & data → **Back up now**, or `docker compose exec app npm run backup`).
 
 ## Keeping an eye on it
 

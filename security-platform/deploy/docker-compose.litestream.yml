@@ -1,0 +1,30 @@
+# Optional: continuous database backup with Litestream (point-in-time restore, seconds behind).
+# Use a SEPARATE bucket WITHOUT Object Lock (Litestream removes its own old files) and a key
+# that can read, write and delete in that bucket only. The nightly encrypted backups (with
+# Object Lock) remain the main protection; this adds "undo to a few minutes ago".
+#
+#   1. In .env set LITESTREAM_BUCKET, LITESTREAM_ENDPOINT (e.g. https://s3.us-west-004.backblazeb2.com),
+#      LITESTREAM_REGION (e.g. us-west-004), LITESTREAM_ACCESS_KEY_ID, LITESTREAM_SECRET_ACCESS_KEY
+#   2. docker compose -f docker-compose.yml -f deploy/docker-compose.litestream.yml up -d
+#
+# Restore to a moment (app stopped):
+#   docker compose -f docker-compose.yml -f deploy/docker-compose.litestream.yml run --rm litestream \
+#     restore -o /data/restored.db -timestamp 2026-03-14T15:41:00Z /data/secureops.db
+#   then move /data/secureops.db aside and rename restored.db to secureops.db (deploy/GO-LIVE.md).
+services:
+  litestream:
+    image: litestream/litestream:0.3.13
+    restart: unless-stopped
+    user: "1000:1000"   # same user as the app, so it can't leave files the app can't open
+    command: replicate
+    volumes:
+      - secureops-data:/data
+      - ./deploy/litestream.yml:/etc/litestream.yml:ro
+    environment:
+      LITESTREAM_BUCKET: ${LITESTREAM_BUCKET:?Set LITESTREAM_BUCKET in .env}
+      LITESTREAM_ENDPOINT: ${LITESTREAM_ENDPOINT:?Set LITESTREAM_ENDPOINT in .env}
+      LITESTREAM_REGION: ${LITESTREAM_REGION:-us-east-1}
+      LITESTREAM_ACCESS_KEY_ID: ${LITESTREAM_ACCESS_KEY_ID:?Set LITESTREAM_ACCESS_KEY_ID in .env}
+      LITESTREAM_SECRET_ACCESS_KEY: ${LITESTREAM_SECRET_ACCESS_KEY:?Set LITESTREAM_SECRET_ACCESS_KEY in .env}
+    depends_on:
+      - app

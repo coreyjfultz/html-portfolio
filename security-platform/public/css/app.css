@@ -285,6 +285,7 @@ input:focus, select:focus, textarea:focus { outline: 2px solid var(--primary); o
 .banner { background: var(--surface); border-radius: 10px; padding: 14px 16px; margin-bottom: 16px; font-weight: 550; box-shadow: var(--shadow); }
 .banner.good { background: var(--good-soft); color: var(--good); }
 .banner.warn { background: var(--warn-soft); color: var(--warn); }
+.banner.bad { background: var(--bad-soft); color: var(--bad); }
 
 /* ---------- customer portal */
 .portal { background: var(--bg); }
