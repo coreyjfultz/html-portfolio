@@ -8,6 +8,7 @@ import { ingest, processInvoice } from './receiving.js';
 import { sendForSignature } from './proposals.js';
 import { submitCount, countSheet } from './truckstock.js';
 import { createReport, completeReport } from './inspections.js';
+import * as chatApi from './chat.js';
 import { allItems } from '../public/js/inspections.js';
 import { VEHICLE_ITEMS } from '../public/js/vehicle-checks.js';
 import { logEvent, putOnTest } from './monitoring.js';
@@ -363,6 +364,32 @@ db.prepare("UPDATE service_calls SET signature_waived = 1, signature_waived_by =
   db.prepare("UPDATE settings SET value = 'https://g.page/r/demo-security/review' WHERE key = 'review_url'").run();
   const bad = db.prepare('SELECT j.id, c.name, sc.number FROM job_surveys j JOIN customers c ON c.id = j.customer_id JOIN service_calls sc ON sc.id = j.service_call_id WHERE j.tech_rating <= 2 LIMIT 1').get();
   if (bad) db.prepare('INSERT INTO alerts (kind, severity, title, body, link) VALUES (?,?,?,?,?)').run('survey_low', 'bad', `★★☆☆☆ from ${bad.name} (SC-${bad.number}, Sam Turner)`, 'Said the technician was NOT on time. “Arrived two hours late and didn’t call.”\nOK to contact them about it.', `#/ratings?survey=${bad.id}`);
+}
+
+// Team chat: a few messages so the screen isn't empty.
+{
+  const { ensureTeamChannel } = chatApi;
+  ensureTeamChannel(db);
+  const U = email => db.prepare('SELECT id, name FROM users WHERE email = ?').get(email);
+  const owner = U('owner@demo.local'), jenU = U('jen@demo.local'), mikeU = U('mike@demo.local'), samU = U('sam@demo.local'), adminU = U('admin@demo.local');
+  const team = db.prepare("SELECT id FROM chat_channels WHERE kind = 'team'").get().id;
+  const msg = db.prepare('INSERT INTO chat_messages (channel_id, user_id, user_name, body, created_at) VALUES (?,?,?,?,?)');
+  const at = (d, t) => `${day(d)} ${t}:00`;
+  msg.run(team, owner.id, owner.name, 'Safety meeting Monday 7:30 at the shop — coffee and donuts on me.', at(-2, '16:05'));
+  msg.run(team, mikeU.id, mikeU.name, '👍', at(-2, '16:12'));
+  msg.run(team, adminU.id, adminU.name, 'Reminder: weekly truck counts are due Friday.', at(-1, '08:02'));
+  const dm = Number(db.prepare("INSERT INTO chat_channels (kind, created_by) VALUES ('direct', ?)").run(jenU.id).lastInsertRowid);
+  for (const u of [jenU, mikeU]) db.prepare('INSERT INTO chat_members (channel_id, user_id) VALUES (?,?)').run(dm, u.id);
+  msg.run(dm, jenU.id, jenU.name, 'Do you have a spare 12V 7Ah battery on Truck 1?', at(0, '09:14'));
+  msg.run(dm, mikeU.id, mikeU.name, 'Yep, 4 of them. Swing by the Dental office around 1.', at(0, '09:20'));
+  const emergency = db.prepare("SELECT id FROM service_calls WHERE priority = 'emergency' LIMIT 1").get();
+  if (emergency) {
+    const jc = Number(db.prepare("INSERT INTO chat_channels (kind, service_call_id, created_by) VALUES ('job', ?, ?)").run(emergency.id, mikeU.id).lastInsertRowid);
+    msg.run(jc, mikeU.id, mikeU.name, 'Operatory 3 detector is a discontinued model — OK to swap in the new System Sensor head? About $40 more.', at(0, '10:41'));
+    msg.run(jc, adminU.id, adminU.name, 'Yes, go ahead. I’ll let Dr. Cho know.', at(0, '10:44'));
+  }
+  for (const [ch, u] of [[team, owner], [team, mikeU], [team, adminU], [dm, mikeU]]) db.prepare('INSERT OR REPLACE INTO chat_members (channel_id, user_id, last_read_id) VALUES (?,?,(SELECT MAX(id) FROM chat_messages WHERE channel_id = ?))').run(ch, u.id, ch);
+  void samU;
 }
 
 // Map points around Springfield, OH for customers/sites, and live truck positions.

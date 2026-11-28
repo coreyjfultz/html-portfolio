@@ -43,6 +43,7 @@ export const DEFAULT_SETTINGS = {
   inspection_next_number: '1001', inspector_license: '',
   vehicle_check_frequency: 'daily', vehicle_check_required: '1', vehicle_check_photos: 'damage',
   require_serials: '1', require_serial_photos: '1',
+  vapid_public: '', vapid_private: '',
   survey_enabled: '1', survey_delay_hours: '2', survey_min_days: '30', survey_skip_types: 'estimate', survey_alert_below: '3', review_url: '',
   truck_count_day: '5', truck_count_reminders: '1', inventory_manager_id: '', readiness_required: '1', readiness_spares: '1',
   alert_email: '1', alert_sms: '0', alert_phone: '',
@@ -82,9 +83,9 @@ Object.assign(DEFAULT_SETTINGS, DEFAULT_TEMPLATES);
 // Settings stored encrypted; never sent back to the browser.
 export const SECRET_SETTINGS = new Set(['samsara_token', 'tracking_feed_token', 'google_maps_key', 'smtp_pass', 'twilio_token', 'stripe_secret', 'stripe_webhook_secret', 'qbo_client_secret']);
 // Managed by the system only: never sent to the browser, never set through the settings form.
-export const INTERNAL_SETTINGS = new Set(['qbo_access', 'qbo_refresh', 'qbo_access_expires', 'qbo_realm_id', 'qbo_company_name', 'qbo_last_sync', 'invoice_next_number_lock']);
+export const INTERNAL_SETTINGS = new Set(['vapid_public', 'vapid_private', 'qbo_access', 'qbo_refresh', 'qbo_access_expires', 'qbo_realm_id', 'qbo_company_name', 'qbo_last_sync', 'invoice_next_number_lock']);
 // Settings that are never sent to non-admin users or editable through PUT /api/settings.
-export const PRIVATE_SETTINGS = new Set(['tracking_token', 'samsara_token', 'tracking_feed_token', 'google_maps_key', 'voice_token', 'inbound_token', 'calendar_token', 'smtp_pass', 'twilio_token', 'stripe_secret', 'stripe_webhook_secret']);
+export const PRIVATE_SETTINGS = new Set(['vapid_private', 'tracking_token', 'samsara_token', 'tracking_feed_token', 'google_maps_key', 'voice_token', 'inbound_token', 'calendar_token', 'smtp_pass', 'twilio_token', 'stripe_secret', 'stripe_webhook_secret']);
 
 function columnSql(f) {
   let sql = `"${f.name}" ${SQL_TYPES[f.type] || 'TEXT'}`;
@@ -320,6 +321,34 @@ function migrate(db) {
       created_at TEXT NOT NULL DEFAULT (datetime('now','localtime'))
     );
     CREATE INDEX IF NOT EXISTS idx_surveys_tech ON job_surveys(technician_id, responded_at);
+    -- Team chat
+    CREATE TABLE IF NOT EXISTS chat_channels (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      kind TEXT NOT NULL CHECK (kind IN ('team','direct','group','job')), name TEXT,
+      service_call_id INTEGER REFERENCES service_calls(id) ON DELETE CASCADE,
+      created_by INTEGER, archived INTEGER NOT NULL DEFAULT 0, last_message_at TEXT,
+      created_at TEXT NOT NULL DEFAULT (datetime('now','localtime'))
+    );
+    CREATE TABLE IF NOT EXISTS chat_members (
+      channel_id INTEGER NOT NULL REFERENCES chat_channels(id) ON DELETE CASCADE,
+      user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      last_read_id INTEGER NOT NULL DEFAULT 0, muted INTEGER NOT NULL DEFAULT 0,
+      PRIMARY KEY (channel_id, user_id)
+    );
+    CREATE TABLE IF NOT EXISTS chat_messages (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      channel_id INTEGER NOT NULL REFERENCES chat_channels(id) ON DELETE CASCADE,
+      user_id INTEGER, user_name TEXT, body TEXT, photo_key TEXT, deleted_at TEXT,
+      created_at TEXT NOT NULL DEFAULT (datetime('now','localtime'))
+    );
+    CREATE INDEX IF NOT EXISTS idx_chat_messages ON chat_messages(channel_id, id);
+    -- Devices that get push notifications
+    CREATE TABLE IF NOT EXISTS push_subscriptions (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      endpoint TEXT NOT NULL UNIQUE, user_agent TEXT,
+      created_at TEXT NOT NULL DEFAULT (datetime('now','localtime'))
+    );
     -- Latest GPS position per vehicle, from the tracking provider.
     CREATE TABLE IF NOT EXISTS vehicle_positions (
       vehicle_id INTEGER PRIMARY KEY REFERENCES vehicles(id) ON DELETE CASCADE,

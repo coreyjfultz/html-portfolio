@@ -20,6 +20,8 @@ import { registerTrackingRoutes } from './tracking.js';
 import { registerInspectionRoutes } from './inspections.js';
 import { registerVehicleCheckRoutes } from './vehiclechecks.js';
 import { registerSurveyRoutes } from './surveys.js';
+import { registerChatRoutes } from './chat.js';
+import { registerPushRoutes } from './push.js';
 import { requestOrigin } from './net.js';
 import { runBackup, listBackups } from './backup.js';
 import { openAlerts, resolveAlert } from './alerts.js';
@@ -404,6 +406,10 @@ export function buildRoutes() {
 
   // ------------------------------------------------------------ customer surveys & technician ratings
   registerSurveyRoutes(r);
+
+  // ------------------------------------------------------------ team chat & push notifications
+  registerChatRoutes(r);
+  registerPushRoutes(r);
 
   // ------------------------------------------------------------ alerts for the owner / office
   r('GET', '/api/alerts', G.staff, ({ db, user }) => openAlerts(db, user.role));

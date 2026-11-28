@@ -2,6 +2,7 @@ import { html, mount, $, $$, toast, initials, esc, installGlobalHandlers, icon, 
 import { api, GET, POST } from './api.js';
 import { G, ROLE_INFO } from './schema.js';
 import { installDialer } from './dial.js';
+import { startChat, stopChat } from './chat-live.js';
 
 export const state = { user: null, settings: {}, company: '' };
 export const can = {
@@ -20,6 +21,7 @@ const NAV = [
   { href: '#/', label: 'Dashboard', ico: 'layout-dashboard' },
   { href: '#/myday', label: 'My Day', ico: 'sun', roles: ['technician'] },
   { href: '#/timeclock', label: 'Time clock', ico: 'clock' },
+  { href: '#/chat', label: 'Team chat', ico: 'message-circle', badge: 'chat' },
   { section: 'Customers' },
   { href: '#/customers', label: 'Customers', ico: 'users' },
   { href: '#/pipeline', label: 'Pipeline', ico: 'kanban', roles: G.staff },
@@ -56,6 +58,8 @@ const ROUTES = [
   [/^$/, 'dashboard'],
   [/^myday$/, 'myday'],
   [/^timeclock$/, 'timeclock'],
+  [/^chat$/, 'chat'],
+  [/^chat\/(\d+)$/, 'chat'],
   [/^customers$/, 'customers', 'list'],
   [/^pipeline$/, 'pipeline'],
   [/^monitoring$/, 'monitoring', 'list'],
@@ -169,7 +173,7 @@ function renderShell() {
     <aside class="sidebar">
       ${brand(state.settings.company_name)}
       <nav class="nav">${nav.map(n => n.section === undefined
-        ? html`<a href="${n.href}" data-nav="${n.href}">${icon(n.ico)}${n.label}</a>`
+        ? html`<a href="${n.href}" data-nav="${n.href}">${icon(n.ico)}${n.label}${n.badge === 'chat' ? html`<span class="nav-badge" data-chat-badge hidden></span>` : ''}</a>`
         : n.section ? html`<div class="section">${n.section}</div>` : '')}</nav>
     </aside>
     <div class="main">
@@ -178,6 +182,7 @@ function renderShell() {
         <div class="search"><span class="ico">${icon('search')}</span><input type="search" placeholder="Search customers, phone, invoice #, call #, parts…" data-search aria-label="Search">
           <div class="search-results hidden" data-results></div></div>
         <div class="user-menu">
+          <a href="#/chat" class="btn ghost chat-btn" aria-label="Team chat" title="Team chat">${icon('message-circle')}<span class="nav-badge" data-chat-badge hidden></span></a>
           <a href="#/account" class="row" style="color:inherit" title="My account">
             <span class="uname small">${state.user.name}<br><span class="muted">${ROLE_INFO[role]?.label || role}</span></span><span class="avatar">${initials(state.user.name)}</span></a>
           <button class="btn ghost sm" data-logout title="Sign out">Sign out</button>
@@ -187,10 +192,11 @@ function renderShell() {
     </div></div>`);
   $('[data-menu]').addEventListener('click', () => $('.app').classList.toggle('nav-open'));
   $('.app').addEventListener('click', e => { if (e.target.classList.contains('app')) $('.app').classList.remove('nav-open'); });
-  $('[data-logout]').addEventListener('click', async () => { await POST('/api/auth/logout'); state.user = null; location.hash = '#/'; boot(); });
+  $('[data-logout]').addEventListener('click', async () => { stopChat(); await POST('/api/auth/logout'); state.user = null; location.hash = '#/'; boot(); });
   setupSearch();
   window.onhashchange = route;
   route();
+  startChat(state.user);
 }
 
 function setupSearch() {

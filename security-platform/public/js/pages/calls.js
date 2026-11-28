@@ -99,6 +99,7 @@ export async function detail(view, [id]) {
         ${can.staff() && c.scheduled_start && !closed ? html`<button class="btn ghost" data-resend title="Email/text the customer their appointment details again">Resend confirmation</button>` : ''}
         ${!closed ? html`<button class="btn primary" data-complete>Complete job</button>` : ''}
         ${c.status === 'completed' && !c.signed_by ? html`<button class="btn" data-sign>Get customer signature</button>` : ''}
+        <button class="btn" data-jobchat title="Message about this job">💬 ${can.tech() ? 'Message the office' : 'Job chat'}</button>
         ${office && c.status === 'completed' && c.billable && !c.invoice_id ? html`<button class="btn primary" data-invoice>Create invoice</button>` : ''}
         ${office && c.invoice_id ? html`<a class="btn" href="#/invoices/${c.invoice_id}">View invoice ${c.invoice_id_label}</a>` : ''}
       </div></div>
@@ -172,6 +173,9 @@ export async function detail(view, [id]) {
   $('[data-start]', view)?.addEventListener('click', async () => {
     try { await R.update('service_calls', id, { status: 'in progress' }); toast('Job started'); reload(); }
     catch (e) { if (e.code === 'readiness_required') readinessBlocked(e); else toast(e.message, 'error'); }
+  });
+  $('[data-jobchat]', view)?.addEventListener('click', async () => {
+    try { const r = await POST(`/api/service_calls/${id}/chat`); location.hash = `#/chat/${r.id}`; } catch (e) { toast(e.message, 'error'); }
   });
   $('[data-sign]', view)?.addEventListener('click', () => completeDialog(c, cust, { signOnly: true, onDone: reload }));
   drawPhotos($('[data-photos-card]', view), c);
