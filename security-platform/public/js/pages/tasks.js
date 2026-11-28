@@ -1,5 +1,5 @@
 // Tasks for people: one-time or repeating to-dos ("pick up panels at ADI", "deposit checks every Friday").
-import { html, mount, $, $$, raw, icon, badge, openModal, loading, toast, confirmDialog, todayStr, addDays } from '../ui.js';
+import { html, mount, $, $$, raw, icon, badge, openModal, loading, toast, confirmDialog, todayStr, addDays, saveWithConflictCheck } from '../ui.js';
 import { GET, POST, PUT, api } from '../api.js';
 import { state, refresh } from '../app.js';
 import { G } from '../schema.js';
@@ -8,6 +8,9 @@ const DAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 const isManager = () => G.manage.includes(state.user.role);
 let people = null;
 const getPeople = async () => (people ||= await GET('/api/tasks/people'));
+
+const fmtT = t => { const [h, m] = t.split(':').map(Number); return `${(h % 12) || 12}${m ? `:${String(m).padStart(2, '0')}` : ''}${h < 12 ? 'am' : 'pm'}`; };
+export const timeText = t => t.start_time ? `${fmtT(t.start_time)}–${fmtT(t.end_time)}` : '';
 
 function dueText(d) {
   if (!d) return '';
@@ -27,7 +30,8 @@ export async function updateTaskBadge() {
 export const taskRow = (t, { showWho = false } = {}) => {
   const late = t.status === 'open' && t.due_date && t.due_date < todayStr();
   const meta = [
-    t.due_date ? html`<span class="${late ? 'late' : ''}">${late ? '⚠️ ' : ''}${dueText(t.due_date)}</span>` : '',
+    t.due_date ? html`<span class="${late ? 'late' : ''}">${late ? '⚠️ ' : ''}${dueText(t.due_date)}${t.start_time ? ` ${timeText(t)}` : ''}</span>` : '',
+    t.block_time ? html`<span class="badge warn" title="No jobs can be booked for them then">⛔ ${t.start_time ? 'time blocked' : 'day blocked'}</span>` : '',
     t.priority === 'high' ? badge('high', 'bad') : '',
     t.repeat ? html`<span title="${t.repeat}">${icon('repeat')} ${t.repeat}</span>` : '',
     t.location ? html`<span>📍 ${t.location}</span>` : '',
@@ -69,6 +73,11 @@ export async function openTask(task, onChange, defaults = {}) {
           <div class="field"><label for="tk_d">Due</label><input id="tk_d" type="date" name="due_date" value="${t.due_date || ''}"></div>
         </div>
         <div class="grid g2" style="gap:10px">
+          <div class="field"><label for="tk_st">From (optional)</label><input id="tk_st" type="time" name="start_time" value="${t.start_time || ''}"></div>
+          <div class="field"><label for="tk_et">To</label><input id="tk_et" type="time" name="end_time" value="${t.end_time || ''}"></div>
+        </div>
+        <label class="check-row"><input type="checkbox" name="block_time" ${t.block_time ? 'checked' : ''}> <span><b>Block this time on the calendar</b><span class="small muted" style="display:block">No jobs can be booked for them then. Leave the times empty to block the whole day. Unchecked, the task still shows on the calendar.</span></span></label>
+        <div class="grid g2" style="gap:10px">
           <div class="field"><label for="tk_p">Priority</label><select id="tk_p" name="priority">${['low', 'normal', 'high'].map(p => html`<option value="${p}" ${p === t.priority ? 'selected' : ''}>${p[0].toUpperCase() + p.slice(1)}</option>`)}</select></div>
           <div class="field"><label for="tk_l">Where (optional)</label><input id="tk_l" type="text" name="location" value="${t.location || ''}" placeholder="ADI Dayton, bank…"></div>
         </div>
@@ -104,16 +113,18 @@ export async function openTask(task, onChange, defaults = {}) {
   f.freq?.addEventListener('change', syncRepeat);
   f.due_date.addEventListener('change', () => { if (f.starts_on && f.due_date.value) f.starts_on.value = f.due_date.value; });
   const save = async () => {
-    const body = { title: f.title.value.trim(), assigned_to: f.assigned_to.value || null, due_date: f.due_date.value || null, priority: f.priority.value, location: f.location.value, notes: f.notes.value };
+    const body = { title: f.title.value.trim(), assigned_to: f.assigned_to.value || null, due_date: f.due_date.value || null, priority: f.priority.value, location: f.location.value, notes: f.notes.value,
+      start_time: f.start_time.value || null, end_time: f.end_time.value || null, block_time: f.block_time.checked };
     if (!body.title) return err('What needs to be done?');
+    if ((body.start_time || body.block_time) && !body.due_date && !f.freq?.value) return err(body.block_time ? 'Pick the date to block' : 'Pick a due date for the time');
     if (f.freq?.value) {
       body.repeat = { freq: f.freq.value, every_n: f.every_n.value, weekdays: $$('[name=wd]:checked', el).map(c => c.value).join(','), month_day: f.month_day.value, starts_on: f.starts_on.value, ends_on: f.ends_on.value };
       body.due_date = null;
     }
     try {
-      if (task) await PUT(`/api/tasks/${task.id}`, body);
+      if (task) await saveWithConflictCheck(d => PUT(`/api/tasks/${task.id}`, d), body);
       else {
-        const r = await POST('/api/tasks', body);
+        const r = await saveWithConflictCheck(d => POST('/api/tasks', d), body);
         if (body.repeat) toast(r.id ? `Repeating task added (${r.repeat})` : `Repeating task set. First one: ${dueText(r.next_date)}`);
         else toast('Task added');
       }
@@ -159,7 +170,7 @@ export async function render(view, _, query) {
     body = series.length ? html`<div class="card"><div class="card-body tight"><div class="task-list">${series.map(s => html`<div class="task-row ${s.active ? '' : 'done'}">
         <span class="task-check static">${icon('repeat')}</span>
         <button class="task-main" data-series="${s.id}"><span class="task-title">${s.title}</span>
-          <span class="task-meta small muted">${s.repeat} · ${s.assigned_name || 'Anyone'}${s.active && s.next_date ? ` · next: ${dueText(s.next_date)}` : s.active ? '' : ' · ended'}</span></button></div>`)}</div></div></div>`
+          <span class="task-meta small muted">${s.repeat}${s.start_time ? ` · ${timeText(s)}` : ''}${s.block_time ? ' · ⛔ blocks time' : ''} · ${s.assigned_name || 'Anyone'}${s.active && s.next_date ? ` · next: ${dueText(s.next_date)}` : s.active ? '' : ' · ended'}</span></button></div>`)}</div></div></div>`
       : html`<div class="card"><div class="empty">No repeating tasks. Add one with “+ New task” and choose how often it repeats.</div></div>`;
     mount(view, html`${head}${body}`);
     $$('[data-series]', view).forEach(b => b.addEventListener('click', () => editSeries(series.find(s => s.id === Number(b.dataset.series)), onChange)));
@@ -198,13 +209,16 @@ async function editSeries(s, onChange) {
       <div class="row day-picks">${DAYS.map((d, i) => html`<label class="day-pick"><input type="checkbox" name="wd" value="${i}" ${wd.includes(String(i)) ? 'checked' : ''} ${canEdit ? '' : 'disabled'}><span>${d}</span></label>`)}</div>
       <div class="row"><label for="ts_md" class="small">Day of month</label><input id="ts_md" type="number" name="month_day" value="${s.month_day || ''}" min="1" max="31" style="width:72px" ${canEdit ? '' : 'disabled'}></div>
       <div class="field"><label for="ts_e">Until (optional)</label><input id="ts_e" type="date" name="ends_on" value="${s.ends_on || ''}" ${canEdit ? '' : 'disabled'}></div>
+      <div class="grid g2" style="gap:10px"><div class="field"><label for="ts_st">From (optional)</label><input id="ts_st" type="time" name="start_time" value="${s.start_time || ''}" ${canEdit ? '' : 'disabled'}></div>
+        <div class="field"><label for="ts_et">To</label><input id="ts_et" type="time" name="end_time" value="${s.end_time || ''}" ${canEdit ? '' : 'disabled'}></div></div>
+      <label class="check-row"><input type="checkbox" name="block_time" ${s.block_time ? 'checked' : ''} ${canEdit ? '' : 'disabled'}> <span>Block this time on the calendar (no jobs booked then)</span></label>
       <div class="small muted">${s.repeat}${s.next_date && s.active ? ` · next: ${dueText(s.next_date)}` : ''} · set up by ${s.created_name || '—'}</div></form>`,
     foot: canEdit ? html`<button class="btn ghost danger" data-stop>Stop repeating</button><button class="btn" data-close>Cancel</button><button class="btn primary" data-save>Save</button>` : html`<button class="btn primary" data-close>Close</button>`,
   });
   const f = $('[data-form]', el);
   $('[data-save]', el)?.addEventListener('click', async () => {
     try {
-      await PUT(`/api/task-series/${s.id}`, { title: f.title.value, assigned_to: f.assigned_to.value || null, repeat: { freq: f.freq.value, every_n: f.every_n.value, weekdays: $$('[name=wd]:checked', el).map(c => c.value).join(','), month_day: f.month_day.value, starts_on: s.starts_on, ends_on: f.ends_on.value } });
+      await PUT(`/api/task-series/${s.id}`, { title: f.title.value, assigned_to: f.assigned_to.value || null, start_time: f.start_time.value || null, end_time: f.end_time.value || null, block_time: f.block_time.checked, repeat: { freq: f.freq.value, every_n: f.every_n.value, weekdays: $$('[name=wd]:checked', el).map(c => c.value).join(','), month_day: f.month_day.value, starts_on: s.starts_on, ends_on: f.ends_on.value } });
       close(); toast('Saved'); onChange();
     } catch (e) { const b = $('[data-err]', el); b.textContent = e.message; b.classList.remove('hidden'); }
   });

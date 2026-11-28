@@ -168,3 +168,67 @@ test('daily reminder goes once per person', () => {
   const note = db.prepare("SELECT * FROM push_notes WHERE user_id = ? AND tag LIKE 'tasks-daily-%'").get(ids['Bo Tech']);
   assert.match(note.body, /overdue/);
 });
+
+test('blocked time: tasks show on the calendar; blocking keeps jobs from being booked', async () => {
+  ids.tech = (await owner.post('/api/r/technicians', { name: 'Tess', phone: '555-201-0001' })).data.id;
+  db.prepare('UPDATE users SET technician_id = ? WHERE id = ?').run(ids.tech, ids['Tess Tech']);
+  ids.cust = (await owner.post('/api/r/customers', { name: 'Acme', type: 'commercial' })).data.id;
+  const d = plus(10);
+  // Plain task with a time: shows on the calendar, blocks nothing
+  const plain = await owner.post('/api/tasks', { title: 'Call the inspector back', assigned_to: ids['Tess Tech'], due_date: d, start_time: '08:00', end_time: '08:30' });
+  assert.equal(plain.status, 200, JSON.stringify(plain.data));
+  let job = await owner.post('/api/r/service_calls', { customer_id: ids.cust, title: 'Morning job', technician_id: ids.tech, scheduled_start: `${d}T08:00`, duration_hours: 1 });
+  assert.equal(job.status, 200, JSON.stringify(job.data));
+  // Blocking a time when there's already a job asks first
+  const warn = await owner.post('/api/tasks', { title: 'Truck to the shop', assigned_to: ids['Tess Tech'], due_date: d, start_time: '08:30', end_time: '10:00', block_time: true });
+  assert.equal(warn.status, 409);
+  assert.equal(warn.data.code, 'conflict');
+  assert.match(warn.data.error, /already has a job/);
+  const blk = await owner.post('/api/tasks', { title: 'Truck to the shop', assigned_to: ids['Tess Tech'], due_date: d, start_time: '08:30', end_time: '10:00', block_time: true, allow_conflict: true });
+  assert.equal(blk.status, 200);
+  // Booking into the blocked window is refused; owner can book anyway; outside it is fine
+  job = await ann.post('/api/r/service_calls', { customer_id: ids.cust, title: 'Inside the block', technician_id: ids.tech, scheduled_start: `${d}T09:00`, duration_hours: 1 });
+  assert.equal(job.status, 409);
+  assert.match(job.data.error, /blocked 8:30am–10am on .*Truck to the shop/);
+  assert.equal(job.data.canOverride, false);
+  assert.equal((await owner.post('/api/r/service_calls', { customer_id: ids.cust, title: 'Inside the block', technician_id: ids.tech, scheduled_start: `${d}T09:00`, duration_hours: 1, allow_conflict: true })).status, 200);
+  assert.equal((await owner.post('/api/r/service_calls', { customer_id: ids.cust, title: 'After', technician_id: ids.tech, scheduled_start: `${d}T10:00`, duration_hours: 1 })).status, 200);
+  // Done → no longer blocks
+  await tess.post(`/api/tasks/${blk.data.id}/done`);
+  const { blockedDuring } = await import('../server/tasks.js');
+  assert.equal(blockedDuring(db, ids.tech, `${d}T09:15`, `${d}T09:45`), null);
+  // Whole-day block
+  const day2 = plus(11);
+  await owner.post('/api/tasks', { title: 'Fire alarm class', assigned_to: ids['Tess Tech'], due_date: day2, block_time: true });
+  assert.equal((await owner.post('/api/r/service_calls', { customer_id: ids.cust, title: 'x', technician_id: ids.tech, scheduled_start: `${day2}T15:00`, duration_hours: 1 })).status, 409);
+  // Bad times
+  assert.equal((await owner.post('/api/tasks', { title: 'x', due_date: d, start_time: '10:00', end_time: '09:00' })).status, 400);
+  assert.equal((await owner.post('/api/tasks', { title: 'x', due_date: d, end_time: '09:00' })).status, 400);
+  const onlyStart = await owner.post('/api/tasks', { title: 'Quick one', due_date: d, start_time: '13:00' });
+  assert.equal(db.prepare('SELECT end_time FROM tasks WHERE id = ?').get(onlyStart.data.id).end_time, '14:00');
+
+  // Repeating block: future dates block before their to-do exists
+  const rep = await owner.post('/api/tasks', { title: 'Weekly safety meeting', assigned_to: ids['Tess Tech'], start_time: '07:00', end_time: '08:00', block_time: true, repeat: { freq: 'weekly', weekdays: '1', starts_on: plus(1) } });
+  assert.equal(rep.status, 200, JSON.stringify(rep.data));
+  const monday3 = (() => { const x = new Date(`${rep.data.next_date}T12:00:00Z`); x.setUTCDate(x.getUTCDate() + 14); return x.toISOString().slice(0, 10); })();
+  job = await ann.post('/api/r/service_calls', { customer_id: ids.cust, title: 'Early', technician_id: ids.tech, scheduled_start: `${monday3}T07:30`, duration_hours: 1 });
+  assert.equal(job.status, 409);
+  assert.match(job.data.error, /Weekly safety meeting/);
+
+  // Calendar: Tess sees her tasks; Bo sees Tess's blocked time only as "Busy"; owner sees all
+  const tCal = (await tess.get(`/api/tasks/calendar?from=${d}&to=${plus(30)}`)).data;
+  assert.ok(tCal.some(x => x.title === 'Call the inspector back' && x.block_time === 0 && x.time === '8am–8:30am'));
+  assert.ok(tCal.some(x => x.title === 'Weekly safety meeting' && x.projected));
+  const bCal = (await bo.get(`/api/tasks/calendar?from=${d}&to=${plus(30)}`)).data;
+  assert.ok(bCal.every(x => x.title === 'Busy' || x.mine || x.assigned_to === ids['Bo Tech']));
+  assert.ok(bCal.some(x => x.title === 'Busy' && x.block_time));
+  assert.ok(!bCal.some(x => x.title === 'Call the inspector back'));
+  assert.ok((await owner.get(`/api/tasks/calendar?from=${d}&to=${plus(30)}`)).data.some(x => x.title === 'Call the inspector back'));
+
+  // Outlook/Google feed for the tech
+  db.prepare("UPDATE technicians SET calendar_token = 'tok_tess_abcdefghijklmnop' WHERE id = ?").run(ids.tech);
+  const ics = await (await fetch(`${base}/api/cal/tech-tok_tess_abcdefghijklmnop.ics`)).text();
+  assert.match(ics, /SUMMARY:To-do: Call the inspector back/);
+  assert.match(ics, /SUMMARY:Fire alarm class[\s\S]*?TRANSP:OPAQUE/);
+  assert.match(ics, /SUMMARY:Weekly safety meeting/);
+});

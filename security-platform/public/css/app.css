@@ -799,3 +799,9 @@ table.t tr.click:hover td { background: #f8faff; }
 .day-pick span { padding: 6px 9px; border: 1px solid var(--border-strong); border-radius: 8px; font-size: 13px; cursor: pointer; user-select: none; }
 .day-pick input:checked + span { background: var(--primary); border-color: var(--primary); color: #fff; }
 .day-pick input:focus-visible + span { outline: 2px solid var(--primary); outline-offset: 2px; }
+
+.cal-task { font-size: 11px; line-height: 1.35; padding: 1px 5px; margin-top: 2px; border-radius: 4px; border: 1px dashed var(--c); color: var(--text-2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.cal-task.block { border-style: solid; background: repeating-linear-gradient(135deg, var(--surface-2) 0 5px, var(--warn-soft) 5px 10px); color: var(--text); font-weight: 600; }
+.cal-task.done { opacity: .55; text-decoration: line-through; }
+.agenda-row.agenda-task { width: 100%; background: none; border: 0; border-bottom: 1px solid var(--border); font: inherit; color: inherit; cursor: pointer; }
+.agenda-row.agenda-task:disabled { cursor: default; }

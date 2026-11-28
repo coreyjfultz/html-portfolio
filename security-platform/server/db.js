@@ -376,6 +376,7 @@ function migrate(db) {
       priority TEXT NOT NULL DEFAULT 'normal', location TEXT, customer_id INTEGER REFERENCES customers(id) ON DELETE SET NULL,
       freq TEXT NOT NULL, every_n INTEGER NOT NULL DEFAULT 1, weekdays TEXT, month_day INTEGER,
       starts_on TEXT NOT NULL, ends_on TEXT, next_date TEXT, active INTEGER NOT NULL DEFAULT 1,
+      start_time TEXT, end_time TEXT, block_time INTEGER NOT NULL DEFAULT 0,
       created_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
       created_at TEXT NOT NULL DEFAULT (datetime('now','localtime'))
     );
@@ -385,6 +386,7 @@ function migrate(db) {
       assigned_to INTEGER REFERENCES users(id) ON DELETE SET NULL,
       created_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
       due_date TEXT, priority TEXT NOT NULL DEFAULT 'normal', location TEXT,
+      start_time TEXT, end_time TEXT, block_time INTEGER NOT NULL DEFAULT 0,
       customer_id INTEGER REFERENCES customers(id) ON DELETE SET NULL,
       series_id INTEGER REFERENCES task_series(id) ON DELETE SET NULL,
       status TEXT NOT NULL DEFAULT 'open', done_at TEXT, done_by INTEGER REFERENCES users(id) ON DELETE SET NULL, done_note TEXT,
@@ -392,6 +394,7 @@ function migrate(db) {
     );
     CREATE INDEX IF NOT EXISTS idx_tasks_assignee ON tasks(assigned_to, status, due_date);
     CREATE INDEX IF NOT EXISTS idx_tasks_creator ON tasks(created_by, status);
+    CREATE INDEX IF NOT EXISTS idx_tasks_due ON tasks(due_date);
     CREATE UNIQUE INDEX IF NOT EXISTS idx_tasks_series_date ON tasks(series_id, due_date) WHERE series_id IS NOT NULL;
     -- What a phone notification should say (the push itself carries no text).
     CREATE TABLE IF NOT EXISTS push_notes (
@@ -489,6 +492,10 @@ function migrate(db) {
   if (!db.prepare('PRAGMA table_info(qbo_map)').all().some(c => c.name === 'dirty')) db.exec('ALTER TABLE qbo_map ADD COLUMN dirty INTEGER NOT NULL DEFAULT 0');
   if (!db.prepare('PRAGMA table_info(users)').all().some(c => c.name === 'phone')) db.exec('ALTER TABLE users ADD COLUMN phone TEXT');
   if (!db.prepare('PRAGMA table_info(time_off)').all().some(c => c.name === 'hours')) db.exec('ALTER TABLE time_off ADD COLUMN hours REAL');
+  for (const t of ['tasks', 'task_series']) {
+    const cols = db.prepare(`PRAGMA table_info(${t})`).all().map(c => c.name);
+    if (!cols.includes('start_time')) db.exec(`ALTER TABLE ${t} ADD COLUMN start_time TEXT; ALTER TABLE ${t} ADD COLUMN end_time TEXT; ALTER TABLE ${t} ADD COLUMN block_time INTEGER NOT NULL DEFAULT 0;`);
+  }
 
   // Customers that existed before stages were added get a stage from their status.
   db.exec(`UPDATE customers SET stage = CASE status WHEN 'prospect' THEN 'lead' WHEN 'inactive' THEN 'lost' ELSE 'active' END WHERE stage IS NULL`);

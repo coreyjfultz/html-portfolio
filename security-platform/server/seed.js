@@ -447,6 +447,12 @@ db.prepare("UPDATE service_calls SET signature_waived = 1, signature_waived_by =
   sr.run('Deposit checks at the bank', 'Fifth Third, Main St branch. Log deposits in Payments.', acct, 'normal', 'Fifth Third Bank', 'weekly', 1, '2,5', null, day(-14), day(-14), own);
   sr.run('Wash and vacuum your truck', null, mk, 'low', null, 'weekly', 1, '5', null, day(-14), day(-14), adm);
   sr.run('Check the shop fire extinguishers', 'Monthly visual check; initial the tags.', sm, 'normal', 'Shop', 'monthly', 1, null, 1, day(-60), day(-60), own);
+  // On the calendar: a timed task, a blocked day, and a repeating blocked meeting.
+  db.prepare("UPDATE tasks SET start_time = '07:30', end_time = '08:15' WHERE title LIKE 'Pick up 6 IQ4%'").run();
+  db.prepare('INSERT INTO tasks (title, notes, assigned_to, created_by, due_date, priority, location, start_time, end_time, block_time) VALUES (?,?,?,?,?,?,?,?,?,1)')
+    .run('NICET fire alarm class', 'All day at the training center. No jobs.', sm, own, day(3), 'normal', 'Columbus training center', null, null);
+  db.prepare("INSERT INTO task_series (title, assigned_to, priority, location, freq, every_n, weekdays, starts_on, next_date, created_by, start_time, end_time, block_time) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,1)")
+    .run('Weekly safety meeting', mk, 'normal', 'Shop', 'weekly', 1, '1', day(1), day(1), own, '07:00', '07:30');
   runRecurring(db);
 }
 

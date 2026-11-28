@@ -1,4 +1,4 @@
-import { html, mount, $, $$, fmtTime, todayStr, addDays, openForm, toast, loading } from '../ui.js';
+import { html, raw, mount, $, $$, fmtTime, todayStr, addDays, openForm, toast, loading } from '../ui.js';
 import { R, GET } from '../api.js';
 import { state, can } from '../app.js';
 
@@ -18,19 +18,24 @@ export async function render(view, _, query) {
         <button class="btn" data-prev aria-label="Previous month">‹</button><button class="btn" data-today>Today</button><button class="btn" data-next aria-label="Next month">›</button>
         <button class="btn" data-sync>Sync to Outlook / Google</button>
         <a class="btn" href="#/schedule">Dispatch board</a>
+        <button class="btn" data-newtask>+ Task</button>
         <button class="btn primary" data-new>+ Service call</button></div></div>
     <div class="filters" data-chips></div>
     <div class="cal-wrap"><div class="cal" data-cal></div></div>
-    <div class="card" style="margin-top:16px"><div class="card-head"><h2 data-day-title></h2></div><div class="card-body flush" data-day></div></div>`);
+    <div class="card" style="margin-top:16px"><div class="card-head"><h2 data-day-title></h2></div><div class="card-body flush" data-agenda></div></div>`);
 
   const chips = () => mount($('[data-chips]', view), html`
     <button class="chip ${selected.size === techs.length ? 'on' : ''}" data-all>Everyone</button>
     ${techs.map(t => html`<button class="chip ${selected.has(t.id) ? 'on' : ''}" data-tech="${t.id}"><span class="dot" style="background:${t.color}"></span> ${t.name}${t.id === mine ? ' (me)' : ''}</button>`)}
     <button class="chip ${includeUnassigned ? 'on' : ''}" data-unassigned><span class="dot" style="background:#94a3b8"></span> Unassigned</button>`);
 
-  let calls = [], hols = [], offs = [];
+  let calls = [], hols = [], offs = [], tasks = [];
   let focusDay = today.slice(0, 7) === month ? today : `${month}-01`;
   const visible = () => calls.filter(c => c.technician_id ? selected.has(c.technician_id) : includeUnassigned);
+  // Tasks for a technician follow the tech chips; your own and office tasks always show.
+  const visTasks = d => tasks.filter(t => t.date === d && (t.mine || !t.technician_id || selected.has(t.technician_id)));
+  const techColor = id => techs.find(t => t.id === id)?.color || '#94a3b8';
+  const taskLine = t => html`<div class="cal-task ${t.block_time ? 'block' : ''} ${t.status === 'done' ? 'done' : ''}" style="--c:${techColor(t.technician_id)}" title="${t.assigned_name || ''}: ${t.title} (${t.time}${t.block_time ? ', blocked' : ''})">${t.block_time ? '⛔' : t.status === 'done' ? '☑' : '☐'} ${t.start_time ? `${t.time.split('–')[0]} ` : ''}${t.title}</div>`;
 
   const showDay = day => {
     focusDay = day;
@@ -39,7 +44,13 @@ export async function render(view, _, query) {
     const hol = hols.find(h => h.date === day);
     const off = offs.filter(o => o.starts_at.slice(0, 10) <= day && o.ends_at.slice(0, 10) >= day).map(o => o.user_name);
     $('[data-day-title]', view).textContent = new Date(day + 'T12:00:00').toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' }) + (hol ? ` — ${hol.name} (office closed)` : '') + (off.length ? ` · Off: ${off.join(', ')}` : '');
-    mount($('[data-day]', view), jobs.length ? html`${jobs.map(c => html`<a class="agenda-row" href="#/calls/${c.id}">
+    const dayTasks = visTasks(day);
+    const taskRows = dayTasks.map(t => html`<button class="agenda-row agenda-task" ${t.id ? raw(`data-task="${t.id}"`) : t.series_id && t.title !== 'Busy' ? raw(`data-series-task="${t.series_id}"`) : raw('disabled')}>
+        <span class="agenda-time">${t.start_time ? t.time.split('–')[0] : 'All day'}${t.start_time ? html`<div class="small muted">to ${t.time.split('–')[1]}</div>` : ''}</span>
+        <span class="dot" style="background:${techColor(t.technician_id)};margin-top:6px"></span>
+        <span style="flex:1;text-align:left"><b>${t.status === 'done' ? '☑ ' : ''}${t.title}</b><div class="small muted">${t.assigned_name || 'Unassigned'} · ${t.block_time ? 'Time blocked, no jobs' : 'Task'}${t.projected ? ' · repeating' : ''}</div></span>
+        <span class="badge ${t.block_time ? 'warn' : ''}">${t.block_time ? 'blocked' : 'task'}</span></button>`);
+    mount($('[data-agenda]', view), jobs.length || dayTasks.length ? html`${taskRows}${jobs.map(c => html`<a class="agenda-row" href="#/calls/${c.id}">
         <span class="agenda-time">${fmtTime(c.scheduled_start)}<div class="small muted">${c.duration_hours || 1} h</div></span>
         <span class="dot" style="background:${c.technician_color || '#94a3b8'};margin-top:6px"></span>
         <span style="flex:1"><b>${c.customer_id_label}</b> — ${c.title}<div class="small muted">${c.technician_id_label || 'Unassigned'} · ${c.customer_address?.replace(/^, |, $/g, '') || ''}</div></span>
@@ -61,6 +72,7 @@ export async function render(view, _, query) {
           <div class="cal-num">${Number(d.slice(8))}</div>
           ${hols.filter(h => h.date === d).map(h => html`<div class="cal-hol">🎉 ${h.name}</div>`)}
           ${offs.filter(o => o.starts_at.slice(0, 10) <= d && o.ends_at.slice(0, 10) >= d).map(o => html`<div class="cal-off">🌴 ${o.user_name.split(' ')[0]} off</div>`)}
+          ${visTasks(d).slice(0, 2).map(taskLine)}${visTasks(d).length > 2 ? html`<div class="cal-more">+${visTasks(d).length - 2} tasks</div>` : ''}
           ${jobs.slice(0, 3).map(c => html`<div class="cal-ev ${c.status === 'completed' ? 'done' : ''}" style="--c:${c.technician_color || '#94a3b8'}">${fmtTime(c.scheduled_start).replace(':00', '').replace(' ', '').toLowerCase()} ${c.customer_id_label}</div>`)}
           ${jobs.length > 3 ? html`<div class="cal-more">+${jobs.length - 3} more</div>` : ''}</div>`;
       })}`);
@@ -75,9 +87,10 @@ export async function render(view, _, query) {
     loading($('[data-cal]', view));
     const first = new Date(month + '-01T12:00:00');
     const from = addDays(ymd(first), -7), to = addDays(ymd(new Date(first.getFullYear(), first.getMonth() + 1, 0, 12)), 14);
-    [calls, hols, offs] = await Promise.all([
+    [calls, hols, offs, tasks] = await Promise.all([
       R.list('service_calls', { from, to, status__not: 'cancelled', limit: 3000 }).then(r => r.filter(c => c.scheduled_start)),
       GET('/api/holidays', { from, to }).catch(() => []), GET('/api/time-off/out', { from, to }).catch(() => []),
+      GET('/api/tasks/calendar', { from, to }).catch(() => []),
     ]);
     chips();
     draw();
@@ -95,6 +108,14 @@ export async function render(view, _, query) {
   $('[data-next]', view).addEventListener('click', () => shift(1));
   $('[data-today]', view).addEventListener('click', () => { month = today.slice(0, 7); focusDay = today; load(); });
   $('[data-new]', view).addEventListener('click', () => openForm('service_calls', { defaults: { scheduled_start: `${focusDay}T08:00` }, onSaved: load }));
+  $('[data-newtask]', view).addEventListener('click', async () => (await import('./tasks.js')).openTask(null, load, { due_date: focusDay }));
+  $('[data-agenda]', view).addEventListener('click', async e => {
+    const b = e.target.closest('[data-task],[data-series-task]');
+    if (!b) return;
+    const m = await import('./tasks.js');
+    if (b.dataset.task) m.openTask(await GET(`/api/tasks/${b.dataset.task}`), load);
+    else location.hash = '#/tasks?view=repeating';
+  });
   $('[data-sync]', view).addEventListener('click', () => syncDialog());
   await load();
 }
