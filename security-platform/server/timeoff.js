@@ -7,6 +7,7 @@ import { audit } from './security.js';
 import { raiseAlert } from './alerts.js';
 import { queue, sendEmail, sendSms, mailConfig } from './notify.js';
 import { zonedToUtc } from './calendar.js';
+import { requestHours, balances, PTO_KINDS } from './hr.js';
 
 const MANAGE = G.manage;
 export const KINDS = ['vacation', 'sick', 'personal', 'training', 'other'];
@@ -67,6 +68,15 @@ async function tell(db, r, text) {
   if (r.user_email && mailConfig(db).ok) await sendEmail(db, { to: r.user_email, subject: text.split('.')[0], text: `${text}\n\n${s.company_name}`, related });
 }
 
+/** Company holidays as all-day calendar events. */
+export function holidayEvents(db) {
+  const stamp = d => d.toISOString().replace(/[-:]/g, '').replace(/\.\d{3}/, '');
+  return db.prepare('SELECT * FROM company_holidays WHERE date >= ?').all(addDays(todayLocal(), -30)).map(h => [
+    'BEGIN:VEVENT', `UID:holiday-${h.id}@secureops`, `DTSTAMP:${stamp(new Date())}`,
+    `DTSTART;VALUE=DATE:${h.date.replace(/-/g, '')}`, `DTEND;VALUE=DATE:${addDays(h.date, 1).replace(/-/g, '')}`,
+    `SUMMARY:${String(h.name).replace(/[,;]/g, ' ')} — office closed`, 'TRANSP:TRANSPARENT', 'CATEGORIES:Holiday', 'END:VEVENT']);
+}
+
 /** Calendar events for approved time off (tech feed: their own; central: everyone). */
 export function timeOffEvents(db, techId = null) {
   const s = getSettings(db);
@@ -116,8 +126,13 @@ export function registerTimeOffRoutes(r) {
     const overlap = db.prepare("SELECT id FROM time_off WHERE user_id = ? AND status IN ('pending','approved') AND starts_at < ? AND ends_at > ?").get(forUser.id, end, start);
     if (overlap) throw new HttpError(409, 'You already have time off requested for part of that period');
     const byManager = MANAGE.includes(user.role) && body.approve;
-    const id = Number(db.prepare(`INSERT INTO time_off (user_id, technician_id, kind, starts_at, ends_at, all_day, note, status, decided_by, decided_at) VALUES (?,?,?,?,?,?,?,?,?,?)`)
-      .run(forUser.id, forUser.technician_id || null, kind, start, end, allDay ? 1 : 0, String(body.note || '').slice(0, 500) || null,
+    const hours = requestHours(db, { starts_at: start, ends_at: end, all_day: allDay });
+    if (PTO_KINDS.includes(kind) && getSettings(db).pto_allow_negative !== '1' && !byManager) {
+      const b = balances(db, forUser.id, Number(start.slice(0, 4)))[kind];
+      if (hours > b.available) throw new HttpError(400, `That’s ${hours} hours of ${kind} time, and ${b.available} hours are left${b.pending ? ' (counting other pending requests)' : ''}. Talk to the office if you need more.`);
+    }
+    const id = Number(db.prepare(`INSERT INTO time_off (user_id, technician_id, kind, starts_at, ends_at, all_day, hours, note, status, decided_by, decided_at) VALUES (?,?,?,?,?,?,?,?,?,?,?)`)
+      .run(forUser.id, forUser.technician_id || null, kind, start, end, allDay ? 1 : 0, hours, String(body.note || '').slice(0, 500) || null,
         byManager ? 'approved' : 'pending', byManager ? user.name : null, byManager ? nowLocal() : null).lastInsertRowid);
     const x = row(db, id);
     audit(db, user, byManager ? 'add time off' : 'request time off', 'users', forUser.id, `${kind} ${fmt(start, end, allDay)}`);

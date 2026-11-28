@@ -28,7 +28,7 @@ export async function render(view, _, query) {
     ${techs.map(t => html`<button class="chip ${selected.has(t.id) ? 'on' : ''}" data-tech="${t.id}"><span class="dot" style="background:${t.color}"></span> ${t.name}${t.id === mine ? ' (me)' : ''}</button>`)}
     <button class="chip ${includeUnassigned ? 'on' : ''}" data-unassigned><span class="dot" style="background:#94a3b8"></span> Unassigned</button>`);
 
-  let calls = [];
+  let calls = [], hols = [], offs = [];
   let focusDay = today.slice(0, 7) === month ? today : `${month}-01`;
   const visible = () => calls.filter(c => c.technician_id ? selected.has(c.technician_id) : includeUnassigned);
 
@@ -36,7 +36,9 @@ export async function render(view, _, query) {
     focusDay = day;
     $$('.cal-day', view).forEach(d => d.classList.toggle('sel', d.dataset.day === day));
     const jobs = visible().filter(c => c.scheduled_start.slice(0, 10) === day).sort((a, b) => a.scheduled_start.localeCompare(b.scheduled_start));
-    $('[data-day-title]', view).textContent = new Date(day + 'T12:00:00').toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' });
+    const hol = hols.find(h => h.date === day);
+    const off = offs.filter(o => o.starts_at.slice(0, 10) <= day && o.ends_at.slice(0, 10) >= day).map(o => o.user_name);
+    $('[data-day-title]', view).textContent = new Date(day + 'T12:00:00').toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' }) + (hol ? ` — ${hol.name} (office closed)` : '') + (off.length ? ` · Off: ${off.join(', ')}` : '');
     mount($('[data-day]', view), jobs.length ? html`${jobs.map(c => html`<a class="agenda-row" href="#/calls/${c.id}">
         <span class="agenda-time">${fmtTime(c.scheduled_start)}<div class="small muted">${c.duration_hours || 1} h</div></span>
         <span class="dot" style="background:${c.technician_color || '#94a3b8'};margin-top:6px"></span>
@@ -57,6 +59,8 @@ export async function render(view, _, query) {
         const jobs = v.filter(c => c.scheduled_start.slice(0, 10) === d).sort((a, b) => a.scheduled_start.localeCompare(b.scheduled_start));
         return html`<div class="cal-day ${d.slice(0, 7) !== month ? 'out' : ''} ${d === today ? 'today' : ''}" data-day="${d}" tabindex="0">
           <div class="cal-num">${Number(d.slice(8))}</div>
+          ${hols.filter(h => h.date === d).map(h => html`<div class="cal-hol">🎉 ${h.name}</div>`)}
+          ${offs.filter(o => o.starts_at.slice(0, 10) <= d && o.ends_at.slice(0, 10) >= d).map(o => html`<div class="cal-off">🌴 ${o.user_name.split(' ')[0]} off</div>`)}
           ${jobs.slice(0, 3).map(c => html`<div class="cal-ev ${c.status === 'completed' ? 'done' : ''}" style="--c:${c.technician_color || '#94a3b8'}">${fmtTime(c.scheduled_start).replace(':00', '').replace(' ', '').toLowerCase()} ${c.customer_id_label}</div>`)}
           ${jobs.length > 3 ? html`<div class="cal-more">+${jobs.length - 3} more</div>` : ''}</div>`;
       })}`);
@@ -71,7 +75,10 @@ export async function render(view, _, query) {
     loading($('[data-cal]', view));
     const first = new Date(month + '-01T12:00:00');
     const from = addDays(ymd(first), -7), to = addDays(ymd(new Date(first.getFullYear(), first.getMonth() + 1, 0, 12)), 14);
-    calls = (await R.list('service_calls', { from, to, status__not: 'cancelled', limit: 3000 })).filter(c => c.scheduled_start);
+    [calls, hols, offs] = await Promise.all([
+      R.list('service_calls', { from, to, status__not: 'cancelled', limit: 3000 }).then(r => r.filter(c => c.scheduled_start)),
+      GET('/api/holidays', { from, to }).catch(() => []), GET('/api/time-off/out', { from, to }).catch(() => []),
+    ]);
     chips();
     draw();
   };

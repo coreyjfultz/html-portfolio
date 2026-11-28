@@ -22,7 +22,8 @@ import { registerVehicleCheckRoutes } from './vehiclechecks.js';
 import { registerSurveyRoutes } from './surveys.js';
 import { registerChatRoutes } from './chat.js';
 import { registerPushRoutes } from './push.js';
-import { registerTimeOffRoutes, timeOffEvents } from './timeoff.js';
+import { registerTimeOffRoutes, timeOffEvents, holidayEvents } from './timeoff.js';
+import { registerHrRoutes } from './hr.js';
 import { requestOrigin } from './net.js';
 import { runBackup, listBackups } from './backup.js';
 import { openAlerts, resolveAlert } from './alerts.js';
@@ -414,6 +415,7 @@ export function buildRoutes() {
 
   // ------------------------------------------------------------ time off
   registerTimeOffRoutes(r);
+  registerHrRoutes(r);
 
   // ------------------------------------------------------------ alerts for the owner / office
   r('GET', '/api/alerts', G.staff, ({ db, user }) => openAlerts(db, user.role));
@@ -711,7 +713,7 @@ ${s.company_name}` }));
     const from = addDays(todayLocal(), -60), to = addDays(todayLocal(), 365);
     const calls = list(db, 'service_calls', { from, to, scheduled_start__null: '0', ...(tech ? { technician_id: tech.id } : {}), limit: 5000 }, null)
       .filter(c => c.scheduled_start && c.status !== 'cancelled');
-    const ics = buildCalendar([...calls.map(c => callToEvent(c, { tz: s.timezone, baseUrl: baseUrl(db, req), withTech: !tech })), ...onCallFeedEvents(db, tech?.id || null), ...timeOffEvents(db, tech?.id || null)],
+    const ics = buildCalendar([...calls.map(c => callToEvent(c, { tz: s.timezone, baseUrl: baseUrl(db, req), withTech: !tech })), ...onCallFeedEvents(db, tech?.id || null), ...timeOffEvents(db, tech?.id || null), ...holidayEvents(db)],
       { name: tech ? `${s.company_name} — ${tech.name}` : `${s.company_name} — all technicians` });
     res.writeHead(200, { 'Content-Type': 'text/calendar; charset=utf-8', 'Cache-Control': 'no-cache', 'Content-Disposition': `inline; filename="${m[1]}.ics"` });
     res.end(ics);

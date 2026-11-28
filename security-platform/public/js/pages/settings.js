@@ -16,7 +16,7 @@ const SETTINGS = [
 export async function render(view, _, query) {
   const tab = query.tab || 'company';
   mount(view, html`<div class="page-head"><div><h1>Settings</h1><div class="sub">Company, users and data</div></div></div>
-    <div class="tabs">${[['company', 'Company & billing'], ['payments', 'Payments'], ['notifications', 'Texts & email'], ['calendars', 'Calendars'], ['receiving', 'Receiving'], ['field', 'Field rules'], ['phone', 'Phone & on-call'], ['tracking', 'Tracking & maps'], ['users', 'Users & logins'], ['audit', 'Activity log'], ['data', 'Backup & data']].map(([k, l]) => html`<button class="${k === tab ? 'on' : ''}" data-tab="${k}">${l}</button>`)}</div>
+    <div class="tabs">${[['company', 'Company & billing'], ['payments', 'Payments'], ['notifications', 'Texts & email'], ['calendars', 'Calendars'], ['receiving', 'Receiving'], ['field', 'Field rules'], ['phone', 'Phone & on-call'], ['tracking', 'Tracking & maps'], ['hr', 'HR & time off'], ['users', 'Users & logins'], ['audit', 'Activity log'], ['data', 'Backup & data']].map(([k, l]) => html`<button class="${k === tab ? 'on' : ''}" data-tab="${k}">${l}</button>`)}</div>
     <div data-pane></div>`);
   $$('[data-tab]', view).forEach(b => b.addEventListener('click', () => { location.hash = `#/settings?tab=${b.dataset.tab}`; }));
   const pane = $('[data-pane]', view);
@@ -182,6 +182,7 @@ export async function render(view, _, query) {
     });
   }
 
+  if (tab === 'hr') await hrPane(pane);
   if (tab === 'tracking') await (await import('./map.js')).settingsPane(pane, { settingsCards, wireSettingsCards });
   if (tab === 'phone') await (await import('./phone.js')).settingsPane(pane, { settingsCards, wireSettingsCards });
 
@@ -382,5 +383,41 @@ export function wireSettingsCards(pane, onSaved) {
       else body[el.name] = el.value;
     }
     try { state.settings = await PUT('/api/settings', body); toast('Saved'); onSaved?.(); } catch (err) { toast(err.message, 'error'); }
+  }));
+}
+
+async function hrPane(pane) {
+  const [s, hols] = await Promise.all([GET('/api/settings'), GET('/api/holidays', { from: `${new Date().getFullYear()}-01-01`, to: `${new Date().getFullYear() + 1}-12-31` })]);
+  mount(pane, html`${settingsCards(s, [
+    { title: 'Time off', fields: [
+      ['workday_hours', 'Hours in a workday', 'number'],
+      ['pto_default_vacation', 'Vacation hours per year (default for everyone)', 'number'],
+      ['pto_default_sick', 'Sick hours per year (default)', 'number'],
+      ['pto_default_personal', 'Personal hours per year (default)', 'number'],
+      ['pto_allow_negative', 'Let people request more than they have left', 'check'],
+    ], note: 'Set different amounts or carryover for a person on the Time off page (Balances → Set).' },
+    { title: 'Holidays', fields: [['holiday_blocks', 'Ask before booking a job on a company holiday (emergencies excepted)', 'check']],
+      extra: html`<div class="stack" style="gap:6px;margin-top:12px">${hols.length ? hols.map(h => html`<div class="row" style="justify-content:space-between"><span><b>${h.name}</b> <span class="muted">${new Date(h.date + 'T12:00').toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric', year: 'numeric' })}</span></span><button class="btn sm ghost danger" data-delhol="${h.id}">Remove</button></div>`) : html`<div class="muted">No holidays yet.</div>`}</div>
+        <div class="row" style="margin-top:12px"><button class="btn sm" data-preset="${new Date().getFullYear()}">Add US holidays for ${new Date().getFullYear()}…</button><button class="btn sm" data-preset="${new Date().getFullYear() + 1}">…for ${new Date().getFullYear() + 1}</button><button class="btn sm ghost" data-addhol>+ Other holiday</button></div>` },
+  ])}`);
+  wireSettingsCards(pane);
+  $$('[data-delhol]', pane).forEach(b => b.addEventListener('click', async () => { await api('DELETE', `/api/holidays/${b.dataset.delhol}`); hrPane(pane); }));
+  $('[data-addhol]', pane).addEventListener('click', () => promptForm({
+    title: 'Add a holiday', fields: [{ name: 'name', label: 'Name', type: 'text', required: true }, { name: 'date', label: 'Date', type: 'date', required: true }],
+    onSubmit: async d => { await POST('/api/holidays', d); hrPane(pane); },
+  }));
+  $$('[data-preset]', pane).forEach(b => b.addEventListener('click', async () => {
+    const list = await GET('/api/holidays/presets', { year: b.dataset.preset });
+    const common = new Set(['new_year', 'memorial', 'independence', 'labor', 'thanksgiving', 'christmas']);
+    const { el, close } = (await import('../ui.js')).openModal({
+      title: `US holidays ${b.dataset.preset}`, size: 'sm',
+      body: html`<p class="muted" style="margin-top:0">Weekend holidays use the observed Friday or Monday.</p><div class="stack" style="gap:4px">${list.map(h => html`<label class="check-row"><input type="checkbox" value="${h.key}" ${h.added ? 'checked disabled' : common.has(h.key) ? 'checked' : ''}> <span>${h.name} <span class="muted small">${new Date(h.date + 'T12:00').toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' })}${h.added ? ' · added' : ''}</span></span></label>`)}</div>`,
+      foot: html`<button class="btn" data-close>Cancel</button><button class="btn primary" data-go>Add selected</button>`,
+    });
+    $('[data-go]', el).addEventListener('click', async () => {
+      const keys = new Set($$('input:checked:not(:disabled)', el).map(i => i.value));
+      const r = await POST('/api/holidays', { holidays: list.filter(h => keys.has(h.key)).map(h => ({ date: h.date, name: h.name })) });
+      toast(`${r.added} holidays added`); close(); hrPane(pane);
+    });
   }));
 }

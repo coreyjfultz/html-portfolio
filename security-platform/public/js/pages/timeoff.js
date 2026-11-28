@@ -1,6 +1,6 @@
 // Time off: request, approve / deny, who's out.
-import { html, raw, mount, $, $$, fmtDateTime, badge, dataTable, openModal, promptForm, loading, toast, todayStr, addDays } from '../ui.js';
-import { GET, POST } from '../api.js';
+import { html, raw, mount, $, $$, fmtDate, fmtDateTime, badge, dataTable, openModal, promptForm, loading, toast, todayStr, addDays } from '../ui.js';
+import { GET, POST, api } from '../api.js';
 import { can, refresh } from '../app.js';
 
 const KINDS = { vacation: '🏖️ Vacation', sick: '🤒 Sick', personal: 'Personal', training: '🎓 Training', other: 'Other' };
@@ -9,13 +9,20 @@ const STATUS = { pending: 'warn', approved: 'good', denied: 'bad', cancelled: ''
 export async function render(view, _, query) {
   loading(view);
   const manage = can.manage();
-  const [mine, all, out, users] = await Promise.all([
+  const [mine, all, out, users, bal, hols, team] = await Promise.all([
     GET('/api/time-off', { mine: '1' }), manage ? GET('/api/time-off') : [], GET('/api/time-off/out', { from: todayStr(), to: addDays(todayStr(), 27) }),
-    manage ? GET('/api/users') : [],
+    manage ? GET('/api/users') : [], GET('/api/pto/balances'), GET('/api/holidays', { from: todayStr(), to: addDays(todayStr(), 366) }),
+    manage ? GET('/api/pto/balances', { all: '1' }) : [],
   ]);
+  const per = bal.workday_hours || 8;
+  const hd = h => `${Math.round(h * 10) / 10} h${h ? ` (${Math.round(h / per * 10) / 10} day${h / per === 1 ? '' : 's'})` : ''}`;
   const pending = all.filter(x => x.status === 'pending');
   mount(view, html`<div class="page-head"><div><h1>Time off</h1><div class="sub">Request days off; approved time off blocks scheduling and shows on calendars</div></div>
       <div class="actions"><button class="btn primary" data-req>Request time off</button>${manage ? html`<button class="btn" data-add>+ Add for someone</button>` : ''}</div></div>
+    <div class="kpis">${['vacation', 'sick', 'personal'].map(k => { const b = bal.balances[k]; return html`<div class="kpi ${b.remaining < 0 ? 'alert' : ''}"><div class="label">${KINDS[k]} left (${bal.year})</div>
+        <div class="value">${Math.round(b.remaining / per * 10) / 10} <span style="font-size:15px;font-weight:500">days</span></div>
+        <div class="hint">${b.remaining} h of ${b.total} h${b.carryover ? ` (incl. ${b.carryover} carried over)` : ''}${b.pending ? ` · ${b.pending} h pending` : ''}</div></div>`; })}
+      <div class="kpi"><div class="label">Next holiday</div><div class="value" style="font-size:18px">${hols[0] ? hols[0].name : '—'}</div><div class="hint">${hols[0] ? fmtDate(hols[0].date) : ''}</div></div></div>
     ${manage ? html`<div class="card" style="margin-bottom:16px"><div class="card-head"><h2>Waiting for approval (${pending.length})</h2></div><div class="card-body stack" style="gap:8px">
       ${pending.length ? pending.map(x => html`<div class="alert-row warn ${Number(query.req) === x.id ? 'hl-row' : ''}">
         <div><b>${x.user_name}</b> · ${KINDS[x.kind] || x.kind} · <b>${x.when}</b>${x.note ? html`<div class="small">“${x.note}”</div>` : ''}
@@ -36,6 +43,17 @@ export async function render(view, _, query) {
           { label: 'Status', render: x => html`${badge(x.status, STATUS[x.status])}${x.decision_note ? html`<div class="small muted">${x.decided_by}: ${x.decision_note}</div>` : ''}` },
           { label: '', cls: 'actions-cell', render: x => ['pending', 'approved'].includes(x.status) && x.ends_at >= todayStr() ? html`<button class="btn sm ghost" data-cancel="${x.id}">Cancel</button>` : '' },
         ] })}</div></div>
+      <div class="card"><div class="card-head"><h2>Company holidays</h2>${manage ? html`<a class="small" href="#/settings?tab=hr">Manage</a>` : ''}</div><div class="card-body flush">${dataTable({
+        rows: hols.slice(0, 12), empty: 'No holidays set yet.',
+        columns: [{ label: 'Date', render: h => fmtDate(h.date) }, { label: 'Holiday', render: h => html`<b>${h.name}</b>` }, { label: '', render: h => h.paid ? badge('paid', 'good') : '' }],
+      })}</div></div>
+      ${manage ? html`<div class="card"><div class="card-head"><h2>Balances (${bal.year})</h2></div><div class="card-body flush">${dataTable({
+        rows: team,
+        columns: [
+          { label: 'Person', render: u => html`<b>${u.name}</b><div class="small muted">${u.role}</div>` },
+          ...['vacation', 'sick', 'personal'].map(k => ({ label: k[0].toUpperCase() + k.slice(1), cls: 'num', render: u => html`<span style="${u.balances[k].remaining < 0 ? 'color:var(--bad);font-weight:600' : ''}">${u.balances[k].remaining}</span><span class="small muted"> / ${u.balances[k].total} h</span>` })),
+          { label: '', cls: 'actions-cell', render: u => html`<button class="btn sm ghost" data-allow="${u.id}">Set</button>` },
+        ] })}</div></div>` : ''}
       ${manage ? html`<div class="card" style="grid-column:1/-1"><div class="card-head"><h2>Everyone’s upcoming & recent</h2></div><div class="card-body flush">${dataTable({
         rows: all.filter(x => x.status !== 'pending'), empty: 'Nothing yet.',
         columns: [
@@ -45,7 +63,17 @@ export async function render(view, _, query) {
           { label: '', cls: 'actions-cell', render: x => x.status === 'approved' && x.ends_at >= todayStr() ? html`<button class="btn sm ghost" data-cancel="${x.id}">Cancel</button>` : '' },
         ] })}</div></div>` : ''}
     </div>`);
-  $('[data-req]', view).addEventListener('click', () => requestDialog());
+  $('[data-req]', view).addEventListener('click', () => requestDialog({ bal, per }));
+  $$('[data-allow]', view).forEach(b => b.addEventListener('click', () => {
+    const u = team.find(x => x.id === Number(b.dataset.allow));
+    const f = (k, l) => ({ name: k, label: l, type: 'number', value: k.startsWith('carry_') ? u.balances[k.slice(6)].carryover : u.balances[k].allowance });
+    promptForm({
+      title: `${u.name} — ${bal.year} time off (hours)`,
+      fields: [f('vacation', 'Vacation hours / year'), f('sick', 'Sick hours / year'), f('personal', 'Personal hours / year'), f('carry_vacation', 'Vacation carried over'), f('carry_sick', 'Sick carried over'), f('carry_personal', 'Personal carried over')],
+      submitLabel: 'Save',
+      onSubmit: async x => { await api('PUT', `/api/pto/allowances/${u.id}`, { ...x, year: bal.year }); toast('Saved'); refresh(); },
+    });
+  }));
   $('[data-add]', view)?.addEventListener('click', () => requestDialog({ users: users.filter(u => u.active) }));
   $$('[data-approve]', view).forEach(b => b.addEventListener('click', async () => {
     const r = await POST(`/api/time-off/${b.dataset.approve}/decide`, { decision: 'approve' });
@@ -60,12 +88,12 @@ export async function render(view, _, query) {
   if (query.req) document.querySelector('.hl-row')?.scrollIntoView({ block: 'center' });
 }
 
-function requestDialog({ users } = {}) {
+function requestDialog({ users, bal, per = 8 } = {}) {
   const { el, close } = openModal({
     title: users ? 'Add time off for someone' : 'Request time off', size: 'sm',
     body: html`<div class="err-box hidden" data-err></div>
       ${users ? html`<div class="field"><label for="to_u">Person</label><select id="to_u">${users.map(u => html`<option value="${u.id}">${u.name}</option>`)}</select></div>` : ''}
-      <div class="field" style="margin-top:10px"><label for="to_k">Type</label><select id="to_k">${Object.entries(KINDS).map(([k, l]) => html`<option value="${k}">${l}</option>`)}</select></div>
+      <div class="field" style="margin-top:10px"><label for="to_k">Type</label><select id="to_k">${Object.entries(KINDS).map(([k, l]) => html`<option value="${k}">${l}${bal?.balances[k] ? ` — ${bal.balances[k].available} h available` : ''}</option>`)}</select></div>
       <label class="check-row" style="margin-top:10px"><input type="checkbox" id="to_all" checked> <span>Whole days</span></label>
       <div class="form-grid" data-days style="margin-top:8px"><div class="field"><label for="to_s">First day</label><input id="to_s" type="date" value="${todayStr()}"></div>
         <div class="field"><label for="to_e">Last day</label><input id="to_e" type="date" value="${todayStr()}"></div></div>

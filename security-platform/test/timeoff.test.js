@@ -100,3 +100,55 @@ test('part-day requests, denial, cancelling, and the office adding time off dire
   assert.equal(sick.status, 'approved');
   assert.equal(sick.decided_by, 'Olivia Owner');
 });
+
+test('balances: yearly allowance + carryover − approved time off; requests over the balance are refused', async () => {
+  const yr = Number(day(40).slice(0, 4));
+  let b = (await tess.get(`/api/pto/balances?year=${yr}`)).data.balances;
+  assert.equal(b.vacation.allowance, 80, 'company default');
+  await owner.put(`/api/pto/allowances/${ids.user}`, { year: yr, vacation: 40, sick: 24, personal: 8, carry_vacation: 8, carry_sick: 0, carry_personal: 0 });
+  b = (await tess.get(`/api/pto/balances?year=${yr}`)).data.balances;
+  assert.deepEqual([b.vacation.total, b.sick.total], [48, 24]);
+  // Find a Monday ~6 weeks out so the week is 5 workdays
+  let mon = day(42); while (new Date(mon + 'T12:00:00').getDay() !== 1) mon = new Date(new Date(mon + 'T12:00:00').getTime() + 864e5).toISOString().slice(0, 10);
+  const fri = new Date(new Date(mon + 'T12:00:00').getTime() + 4 * 864e5).toISOString().slice(0, 10);
+  const sun = new Date(new Date(mon + 'T12:00:00').getTime() + 6 * 864e5).toISOString().slice(0, 10);
+  const r = (await tess.post('/api/time-off', { kind: 'vacation', start_date: mon, end_date: sun })).data;
+  assert.equal(r.hours, 40, 'weekends don’t count');
+  b = (await tess.get(`/api/pto/balances?year=${yr}`)).data.balances;
+  assert.deepEqual([b.vacation.pending, b.vacation.remaining, b.vacation.available], [40, 48, 8]);
+  const nextMon = new Date(new Date(mon + 'T12:00:00').getTime() + 7 * 864e5).toISOString().slice(0, 10);
+  const nextWed = new Date(new Date(mon + 'T12:00:00').getTime() + 9 * 864e5).toISOString().slice(0, 10);
+  const over = await tess.post('/api/time-off', { kind: 'vacation', start_date: nextMon, end_date: nextWed });
+  assert.equal(over.status, 400);
+  assert.match(over.data.error, /24 hours of vacation time, and 8 hours are left/);
+  await owner.post(`/api/time-off/${r.id}/decide`, { decision: 'approve' });
+  b = (await tess.get(`/api/pto/balances?year=${yr}`)).data.balances;
+  assert.deepEqual([b.vacation.used, b.vacation.remaining], [40, 8]);
+  assert.equal((await tess.get('/api/pto/balances?all=1')).status, 403);
+  assert.ok((await owner.get(`/api/pto/balances?all=1&year=${yr}`)).data.some(u => u.name === 'Tess Tech' && u.balances.vacation.used === 40));
+  ids.fri = fri;
+});
+
+test('company holidays: US preset with observed dates, not counted as time off, on calendars, booking asks first', async () => {
+  const pre = (await owner.get('/api/holidays/presets?year=2027')).data;
+  assert.equal(pre.find(h => h.key === 'independence').date, '2027-07-05', 'July 4 2027 is a Sunday → observed Monday');
+  assert.equal(pre.find(h => h.key === 'thanksgiving').date, '2027-11-25');
+  assert.equal(pre.find(h => h.key === 'memorial').date, '2027-05-31');
+  const h = day(50);
+  await owner.post('/api/holidays', { holidays: [{ date: h, name: 'Company picnic' }] });
+  assert.equal((await tess.post('/api/holidays', { date: h, name: 'x' })).status, 403);
+  assert.equal((await tess.get(`/api/holidays?from=${day(0)}&to=${day(60)}`)).data[0].name, 'Company picnic');
+  const r = await owner.post('/api/r/service_calls', { customer_id: ids.cust, title: 'Holiday job', technician_id: ids.tech, scheduled_start: `${h}T10:00` });
+  assert.equal(r.status, 409);
+  assert.match(r.data.error, /company holiday \(Company picnic\)/);
+  assert.equal((await owner.post('/api/r/service_calls', { customer_id: ids.cust, title: 'Emergency', priority: 'emergency', technician_id: ids.tech, scheduled_start: `${h}T11:00`, allow_conflict: true })).status, 200);
+  const token = db.prepare('SELECT calendar_token FROM technicians WHERE id = ?').get(ids.tech).calendar_token;
+  assert.match(await (await fetch(`${base}/api/cal/tech-${token}.ics`)).text(), /SUMMARY:Company picnic — office closed/);
+  // A holiday inside a vacation isn't charged
+  const wd = new Date(h + 'T12:00:00').getDay();
+  if (wd >= 1 && wd <= 5) {
+    await owner.put(`/api/pto/allowances/${ids.user}`, { year: Number(h.slice(0, 4)), vacation: 200, sick: 0, personal: 0, carry_vacation: 0, carry_sick: 0, carry_personal: 0 });
+    const v = (await tess.post('/api/time-off', { kind: 'vacation', start_date: h, end_date: h })).data;
+    assert.equal(v.hours, 0);
+  }
+});

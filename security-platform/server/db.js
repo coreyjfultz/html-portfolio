@@ -44,6 +44,7 @@ export const DEFAULT_SETTINGS = {
   vehicle_check_frequency: 'daily', vehicle_check_required: '1', vehicle_check_photos: 'damage',
   require_serials: '1', require_serial_photos: '1',
   vapid_public: '', vapid_private: '',
+  workday_hours: '8', pto_default_vacation: '80', pto_default_sick: '40', pto_default_personal: '16', pto_allow_negative: '0', holiday_blocks: '1',
   survey_enabled: '1', survey_delay_hours: '2', survey_min_days: '30', survey_skip_types: 'estimate', survey_alert_below: '3', review_url: '',
   truck_count_day: '5', truck_count_reminders: '1', inventory_manager_id: '', readiness_required: '1', readiness_spares: '1',
   alert_email: '1', alert_sms: '0', alert_phone: '',
@@ -353,6 +354,15 @@ function migrate(db) {
       created_at TEXT NOT NULL DEFAULT (datetime('now','localtime'))
     );
     CREATE INDEX IF NOT EXISTS idx_time_off_tech ON time_off(technician_id, status, starts_at);
+    CREATE TABLE IF NOT EXISTS company_holidays (
+      id INTEGER PRIMARY KEY AUTOINCREMENT, date TEXT NOT NULL UNIQUE, name TEXT NOT NULL, paid INTEGER NOT NULL DEFAULT 1
+    );
+    -- Yearly time-off allowances per person (hours); blank = company defaults.
+    CREATE TABLE IF NOT EXISTS pto_allowances (
+      user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE, year INTEGER NOT NULL,
+      vacation REAL, sick REAL, personal REAL, carry_vacation REAL DEFAULT 0, carry_sick REAL DEFAULT 0, carry_personal REAL DEFAULT 0,
+      PRIMARY KEY (user_id, year)
+    );
     -- Devices that get push notifications
     CREATE TABLE IF NOT EXISTS push_subscriptions (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -425,6 +435,7 @@ function migrate(db) {
 
   if (!db.prepare('PRAGMA table_info(qbo_map)').all().some(c => c.name === 'dirty')) db.exec('ALTER TABLE qbo_map ADD COLUMN dirty INTEGER NOT NULL DEFAULT 0');
   if (!db.prepare('PRAGMA table_info(users)').all().some(c => c.name === 'phone')) db.exec('ALTER TABLE users ADD COLUMN phone TEXT');
+  if (!db.prepare('PRAGMA table_info(time_off)').all().some(c => c.name === 'hours')) db.exec('ALTER TABLE time_off ADD COLUMN hours REAL');
 
   // Customers that existed before stages were added get a stage from their status.
   db.exec(`UPDATE customers SET stage = CASE status WHEN 'prospect' THEN 'lead' WHEN 'inactive' THEN 'lost' ELSE 'active' END WHERE stage IS NULL`);

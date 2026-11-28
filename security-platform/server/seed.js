@@ -9,6 +9,7 @@ import { sendForSignature } from './proposals.js';
 import { submitCount, countSheet } from './truckstock.js';
 import { createReport, completeReport } from './inspections.js';
 import * as chatApi from './chat.js';
+import * as hrApi from './hr.js';
 import { allItems } from '../public/js/inspections.js';
 import { VEHICLE_ITEMS } from '../public/js/vehicle-checks.js';
 import { logEvent, putOnTest } from './monitoring.js';
@@ -398,6 +399,13 @@ db.prepare("UPDATE service_calls SET signature_waived = 1, signature_waived_by =
   const ins = db.prepare('INSERT INTO time_off (user_id, technician_id, kind, starts_at, ends_at, all_day, note, status, decided_by, decided_at) VALUES (?,?,?,?,?,?,?,?,?,?)');
   ins.run(U('sam@demo.local'), sam.id, 'vacation', `${day(9)}T00:00`, `${day(13)}T23:59`, 1, 'Family trip', 'approved', 'Demo Owner', `${day(-6)}T10:00`);
   const req = Number(ins.run(U('mike@demo.local'), mike.id, 'personal', `${day(4)}T12:00`, `${day(4)}T17:00`, 0, 'Kid’s school play', 'pending', null, null).lastInsertRowid);
+  // Company holidays (the usual six) for this year and next, and hours on the requests above.
+  const { usHolidays, requestHours } = hrApi;
+  const yr = Number(today.slice(0, 4));
+  const common = new Set(['new_year', 'memorial', 'independence', 'labor', 'thanksgiving', 'day_after_thanksgiving', 'christmas_eve', 'christmas']);
+  for (const y of [yr, yr + 1]) for (const h of usHolidays(y)) if (common.has(h.key)) db.prepare('INSERT OR IGNORE INTO company_holidays (date, name) VALUES (?,?)').run(h.date, h.name);
+  for (const t of db.prepare('SELECT * FROM time_off').all()) db.prepare('UPDATE time_off SET hours = ? WHERE id = ?').run(requestHours(db, t), t.id);
+  db.prepare('INSERT INTO pto_allowances (user_id, year, vacation, sick, personal, carry_vacation, carry_sick, carry_personal) VALUES (?,?,?,?,?,?,?,?)').run(U('mike@demo.local'), yr, 120, 40, 16, 16, 8, 0);
   db.prepare('INSERT INTO alerts (kind, severity, title, body, link) VALUES (?,?,?,?,?)').run('time_off', 'info', `Mike Alvarez requested time off (personal)`, '“Kid’s school play”', `#/time-off?req=${req}`);
 }
 

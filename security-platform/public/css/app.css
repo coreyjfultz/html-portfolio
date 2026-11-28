@@ -747,3 +747,6 @@ table.t tr.click:hover td { background: #f8faff; }
 .record-msg.deleted { border-color: var(--warn); background: var(--warn-soft); }
 .record-msg.match { box-shadow: 0 0 0 2px var(--primary); }
 .hl-row { box-shadow: 0 0 0 2px var(--primary); }
+
+.cal-hol { font-size: 11px; font-weight: 600; color: #7c3aed; background: #f3e8ff; border-radius: 4px; padding: 1px 4px; margin-bottom: 2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.cal-off { font-size: 11px; color: var(--good); background: var(--good-soft); border-radius: 4px; padding: 1px 4px; margin-bottom: 2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
