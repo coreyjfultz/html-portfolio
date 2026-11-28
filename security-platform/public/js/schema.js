@@ -570,6 +570,42 @@ export const RESOURCES = {
     ],
   },
 
+  // Training library: videos, manuals (PDF), how-to articles and links for the team.
+  training_resources: {
+    label: 'Training library', singular: 'Training item', labelExpr: 'title',
+    read: ALL, write: G.manage, order: 'category, title', search: ['title', 'category', 'manufacturer', 'model', 'tags', 'body'],
+    fields: [
+      { name: 'title', label: 'Title', type: 'text', required: true, list: true, full: true },
+      { name: 'kind', label: 'Type', type: 'select', options: ['video', 'manual', 'article', 'link'], optionLabels: { video: 'Video', manual: 'Manual (PDF)', article: 'How-to article', link: 'Web link' }, default: 'video', list: true },
+      { name: 'category', label: 'Category', type: 'select', options: ['alarm panels', 'cameras & NVRs', 'fire alarm', 'sprinkler & suppression', 'extinguishers', 'access control', 'networking', 'wiring & tools', 'safety', 'company policies', 'using SecureOps', 'other'], default: 'other', list: true },
+      { name: 'manufacturer', label: 'Manufacturer', type: 'text', list: true },
+      { name: 'model', label: 'Model(s)', type: 'text' },
+      { name: 'url', label: 'Video or web link', type: 'text', full: true, help: 'YouTube and Vimeo videos play right in the app. For a manual, upload the PDF after saving.' },
+      { name: 'body', label: 'Article / notes', type: 'textarea', full: true, help: 'Step-by-step instructions, tips, part numbers…' },
+      { name: 'tags', label: 'Search words', type: 'text', full: true, help: 'e.g. zone programming, default code, reset' },
+      { name: 'file_key', label: 'File', type: 'text', hidden: true, readonly: true },
+      { name: 'file_name', label: 'File name', type: 'text', readonly: true },
+    ],
+  },
+
+  // Who to call for help: manufacturer tech support, distributor reps, RMA desks, software helpdesks.
+  vendor_contacts: {
+    label: 'Support contacts', singular: 'Support contact', labelExpr: "company || COALESCE(' — ' || NULLIF(department,''), '')",
+    read: ALL, write: G.staff, order: 'company, department', search: ['company', 'department', 'contact_name', 'phone', 'email', 'notes', 'products'],
+    fields: [
+      { name: 'company', label: 'Company', type: 'text', required: true, list: true },
+      { name: 'department', label: 'Department', type: 'select', options: ['tech support', 'warranty / RMA', 'sales rep', 'customer service', 'billing', 'central station', 'software / IT helpdesk', 'other'], default: 'tech support', list: true },
+      { name: 'products', label: 'For (products / systems)', type: 'text', list: true, help: 'e.g. Qolsys panels, Hikvision cameras' },
+      { name: 'contact_name', label: 'Contact name', type: 'text' },
+      { name: 'phone', label: 'Phone', type: 'tel', list: true },
+      { name: 'email', label: 'Email', type: 'email' },
+      { name: 'website', label: 'Website / portal', type: 'text' },
+      { name: 'account_number', label: 'Our account / dealer #', type: 'text' },
+      { name: 'hours', label: 'Hours', type: 'text', help: 'e.g. M–F 8–8 ET, 24/7' },
+      { name: 'notes', label: 'Notes', type: 'textarea', full: true, help: 'Phone tree shortcuts, what to have ready…' },
+    ],
+  },
+
   // Pay & benefits add-on: the company's benefit plans (everyone can read; owner/accounting edit).
   benefit_plans: {
     label: 'Benefit plans', singular: 'Benefit plan', labelExpr: 'name',

@@ -432,6 +432,40 @@ db.prepare("UPDATE service_calls SET signature_waived = 1, signature_waived_by =
   }
 }
 
+// Training library and support contacts.
+{
+  const lib = [
+    ['Qolsys IQ4 — installer & dealer codes', 'manual', 'alarm panels', 'Qolsys', 'IQ4 NS, IQ4 Hub', '', 'installer code, dealer code, default, programming', 'Installer menu: Settings > Advanced Settings > enter installer code.\nCompany standard: change the installer code at install and record it in the customer’s alarm account notes (never on paper left at the site).\nFor a panel locked out by another dealer, call Qolsys tech support with the panel’s IMEI.'],
+    ['Adding a wireless zone (Qolsys IQ4)', 'article', 'alarm panels', 'Qolsys', 'IQ4', '', 'zone programming, learn sensor, wireless', '1. Settings > Advanced > Installation > Devices > Security Sensors > Auto Learn Sensor.\n2. Trip the sensor (pull the tab or tamper it).\n3. Pick the sensor type, group and name, then Add New.\n4. Walk test from the panel, then send a test signal to the central station.\n5. Update the zone list on the customer’s monitoring account in SecureOps.'],
+    ['Terminating Cat6 (T568B)', 'article', 'networking', '', '', '', 'crimp, rj45, t568b, ethernet', 'Order: white-orange, orange, white-green, blue, white-blue, green, white-brown, brown.'],
+    ['Hikvision NVR — first setup and adding cameras', 'video', 'cameras & NVRs', 'Hikvision', 'DS-7600 series', '', 'nvr, activate, add camera, poe', 'Activate with a strong password, set time zone and NTP first, then add PoE cameras (they show up automatically on the NVR’s own ports).'],
+    ['Fire alarm — before you test', 'article', 'fire alarm', '', '', '', 'testing, central station, place on test, ahj', '1. Tell the customer’s on-site contact.\n2. Put the account on test with the central station (Monitoring tab → Put on test) and note the reference number.\n3. Tell the fire department if the AHJ requires it.\n4. When finished: restore every device, clear the panel, take the account off test and confirm signals are received.'],
+    ['Kitchen hood suppression — semi-annual inspection checklist', 'article', 'sprinkler & suppression', 'Ansul', 'R-102', '', 'kitchen hood, r-102, fusible links, nfpa 17a, nfpa 96', 'Replace fusible links per manufacturer (at least yearly). Check nozzles and caps, cylinder pressure/weight, manual pull station, gas shut-off and electric shut-off. Tag the system and fill out the Kitchen suppression inspection report in SecureOps.'],
+    ['Extinguisher 6-year maintenance and hydro dates', 'article', 'extinguishers', '', '', '', '6 year, hydrostatic, stored pressure, nfpa 10', 'Stored-pressure dry chemical: 6-year internal maintenance and 12-year hydro. Disposable units: replace at 12 years from the date of manufacture. SecureOps shows the due dates on each extinguisher.'],
+    ['Ladder safety', 'article', 'safety', '', '', '', 'ladder, fall protection', 'Three points of contact. Never stand on the top two steps of a step ladder. Extension ladders: 1 foot out for every 4 feet up, and 3 feet above the landing.'],
+    ['Company vehicle policy', 'manual', 'company policies', '', '', '', 'vehicle, phone use, accident', 'Hands-free only while driving. Do the vehicle check in SecureOps each morning. In an accident: make sure everyone is safe, call 911 if needed, take photos, then call the office.'],
+    ['Using SecureOps on your phone', 'article', 'using SecureOps', '', '', '', 'app, install, my day, photos', 'Install it: open the site in Safari (iPhone) or Chrome (Android) and Add to Home Screen. Start each morning on My Day: vehicle check, materials, then your first job.'],
+  ];
+  const ids = lib.map(([title, kind, category, manufacturer, model, url, tags, body]) => C('training_resources', { title, kind, category, manufacturer, model, url, tags, body }).id);
+  // A small demo PDF on the vehicle policy and the IQ4 codes items.
+  const dir = path.join(DATA_DIR, 'library');
+  fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
+  const pdf = t => Buffer.from(`%PDF-1.4\n1 0 obj<</Type/Catalog/Pages 2 0 R>>endobj 2 0 obj<</Type/Pages/Kids[3 0 R]/Count 1>>endobj 3 0 obj<</Type/Page/Parent 2 0 R/MediaBox[0 0 612 300]/Contents 4 0 R/Resources<</Font<</F1 5 0 R>>>>>>endobj 4 0 obj<</Length ${44 + t.length}>>stream\nBT /F1 18 Tf 40 240 Td (DEMO - ${t}) Tj ET\nendstream endobj 5 0 obj<</Type/Font/Subtype/Type1/BaseFont/Helvetica>>endobj\ntrailer<</Root 1 0 R>>\n%%EOF\n`);
+  for (const [i, name, text] of [[0, 'IQ4-installer-guide.pdf', 'Qolsys IQ4 installer guide'], [8, 'Vehicle-policy.pdf', 'Company vehicle policy']]) {
+    const key = crypto.randomBytes(16).toString('hex') + '.pdf';
+    fs.writeFileSync(path.join(dir, key), pdf(text), { mode: 0o600 });
+    db.prepare('UPDATE training_resources SET file_key = ?, file_name = ? WHERE id = ?').run(key, name, ids[i]);
+  }
+  for (const [company, department, products, phone, email, website, hours, account_number, notes] of [
+    ['Qolsys', 'tech support', 'IQ panels, sensors', '855-555-0141', 'techsupport@example.com', 'https://qolsys.com', 'M–F 8am–8pm ET', 'Dealer D-4471', 'Have the panel IMEI and software version ready.'],
+    ['Alarm.com', 'tech support', 'Alarm.com accounts & modules', '866-555-0142', '', 'https://alarm.com/dealer', '24/7', 'Dealer 31877', 'Press 2 for dealer support, then 1 for technical.'],
+    ['Hikvision', 'warranty / RMA', 'Cameras & NVRs', '909-555-0143', 'rma@example.com', 'https://us.hikvision.com', 'M–F 9–5 PT', '', 'Need serial number and proof of purchase (warranty photo in SecureOps).'],
+    ['ADI Global', 'sales rep', 'Most parts', '800-555-0144', 'orders@example.com', 'https://adiglobaldistribution.us', 'M–F 7–6', 'ADI 0049213', 'Rep: Dana. Will-call at the Dayton branch.'],
+    ['Rapid Response Monitoring', 'central station', 'Monitoring', '800-555-0145', '', '', '24/7', 'Dealer RR-118', 'Have the account number and passcode ready.'],
+    ['Ansul / Johnson Controls', 'tech support', 'R-102 kitchen systems', '800-555-0146', '', '', 'M–F 8–5 CT', '', ''],
+  ]) C('vendor_contacts', { company, department, products, phone, email, website, hours, account_number, notes });
+}
+
 // Map points around Springfield, OH for customers/sites, and live truck positions.
 {
   let i = 0;

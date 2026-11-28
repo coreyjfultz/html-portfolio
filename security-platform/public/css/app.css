@@ -751,3 +751,28 @@ table.t tr.click:hover td { background: #f8faff; }
 .cal-hol { font-size: 11px; font-weight: 600; color: #7c3aed; background: #f3e8ff; border-radius: 4px; padding: 1px 4px; margin-bottom: 2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .cal-off { font-size: 11px; color: var(--good); background: var(--good-soft); border-radius: 4px; padding: 1px 4px; margin-bottom: 2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .benefit { padding: 12px 14px; border: 1px solid var(--border); border-radius: 10px; }
+
+/* Training library & support contacts */
+.modal.lg { max-width: 880px; }
+.lib-group { margin: 18px 0 8px; font-size: 13px; text-transform: uppercase; letter-spacing: .04em; color: var(--text-3); }
+.lib-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 12px; }
+.lib-card { display: flex; gap: 12px; align-items: flex-start; text-align: left; padding: 12px 14px; border: 1px solid var(--border); border-radius: 12px; background: var(--surface); color: inherit; font: inherit; cursor: pointer; min-width: 0; }
+.lib-card:hover { border-color: var(--primary); }
+.lib-text { display: flex; flex-direction: column; gap: 2px; min-width: 0; overflow-wrap: anywhere; }
+.lib-ico { flex: none; width: 38px; height: 38px; border-radius: 10px; display: grid; place-items: center; background: var(--info-soft); color: var(--info); }
+.lib-ico.kind-video { background: var(--bad-soft); color: var(--bad); }
+.lib-ico.kind-manual { background: var(--warn-soft); color: var(--warn); }
+.lib-ico.kind-article { background: var(--good-soft); color: var(--good); }
+.video-frame { position: relative; aspect-ratio: 16 / 9; border-radius: 10px; overflow: hidden; background: #000; margin-bottom: 12px; }
+.video-frame iframe { position: absolute; inset: 0; width: 100%; height: 100%; border: 0; }
+.article-body { white-space: pre-wrap; line-height: 1.55; }
+.contact-card .btn.primary { align-self: flex-start; }
+.assistant-log { display: flex; flex-direction: column; gap: 8px; margin-bottom: 10px; }
+.assistant-log:empty { display: none; }
+.assistant-q { align-self: flex-end; max-width: 85%; background: var(--primary); color: #fff; padding: 8px 12px; border-radius: 14px 14px 4px 14px; white-space: pre-wrap; overflow-wrap: anywhere; }
+.assistant-a { align-self: flex-start; max-width: 95%; background: var(--bg); border: 1px solid var(--border); padding: 10px 12px; border-radius: 14px 14px 14px 4px; line-height: 1.5; overflow-wrap: anywhere; }
+.assistant-text { white-space: pre-wrap; }
+.assistant-src { margin-top: 8px; }
+.assistant-fb { margin-top: 6px; gap: 4px; }
+.assistant-ask { flex-wrap: nowrap; }
+.assistant-ask input { flex: 1; min-width: 0; }

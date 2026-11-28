@@ -45,7 +45,7 @@ export const DEFAULT_SETTINGS = {
   require_serials: '1', require_serial_photos: '1',
   vapid_public: '', vapid_private: '',
   addon_pay: '0', payroll_provider: 'quickbooks', payroll_portal_url: '', payroll_label: '', payroll_contact: '', payroll_note: '',
-  addon_pay: '0', payroll_provider: 'quickbooks', payroll_portal_url: '', payroll_label: '', payroll_contact: '', payroll_note: '',
+  assistant_enabled: '0', assistant_daily_limit: '25', assistant_effort: 'medium',
   workday_hours: '8', pto_default_vacation: '80', pto_default_sick: '40', pto_default_personal: '16', pto_allow_negative: '0', holiday_blocks: '1',
   survey_enabled: '1', survey_delay_hours: '2', survey_min_days: '30', survey_skip_types: 'estimate', survey_alert_below: '3', review_url: '',
   truck_count_day: '5', truck_count_reminders: '1', inventory_manager_id: '', readiness_required: '1', readiness_spares: '1',
@@ -368,15 +368,15 @@ function migrate(db) {
       created_at TEXT NOT NULL DEFAULT (datetime('now','localtime'))
     );
     CREATE INDEX IF NOT EXISTS idx_employee_docs ON employee_documents(user_id);
-    -- Pay & benefits add-on: private documents posted for one employee (pay stubs, W-2s…).
-    CREATE TABLE IF NOT EXISTS employee_documents (
+    -- Questions asked of the help assistant (owners can review what it was asked and said).
+    CREATE TABLE IF NOT EXISTS assistant_log (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
-      user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-      kind TEXT NOT NULL, title TEXT NOT NULL, period TEXT, file_key TEXT NOT NULL, file_name TEXT, content_type TEXT, size INTEGER,
-      uploaded_by TEXT, viewed_at TEXT,
+      user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+      question TEXT NOT NULL, answer TEXT, sources TEXT, status TEXT NOT NULL DEFAULT 'ok',
+      input_tokens INTEGER, output_tokens INTEGER, helpful INTEGER,
       created_at TEXT NOT NULL DEFAULT (datetime('now','localtime'))
     );
-    CREATE INDEX IF NOT EXISTS idx_employee_docs ON employee_documents(user_id);
+    CREATE INDEX IF NOT EXISTS idx_assistant_log_user ON assistant_log(user_id, created_at);
     -- Yearly time-off allowances per person (hours); blank = company defaults.
     CREATE TABLE IF NOT EXISTS pto_allowances (
       user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE, year INTEGER NOT NULL,

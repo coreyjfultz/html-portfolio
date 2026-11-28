@@ -28,7 +28,7 @@ function csp(db) {
   if (cspCache.tiles !== tiles) {
     let host = '';
     try { const u = new URL(tiles.replace(/\{[a-z]\}/g, 'a')); host = `${u.protocol}//${u.host.replace(/^a\./, '*.')}`; } catch { /* no map tiles */ }
-    cspCache = { tiles, value: `default-src 'self'; img-src 'self' data: blob: ${host} https://*.tile.openstreetmap.org https://api.twilio.com; media-src 'self' https://api.twilio.com https://*.twilio.com; style-src 'self' 'unsafe-inline'; script-src 'self'; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'` };
+    cspCache = { tiles, value: `default-src 'self'; img-src 'self' data: blob: ${host} https://*.tile.openstreetmap.org https://api.twilio.com; media-src 'self' https://api.twilio.com https://*.twilio.com; frame-src https://www.youtube-nocookie.com https://player.vimeo.com; style-src 'self' 'unsafe-inline'; script-src 'self'; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'` };
   }
   return cspCache.value;
 }
@@ -105,7 +105,7 @@ export function createServer(db) {
       const token = cookies.sid;
       const user = sessionUser(db, token);
       const query = Object.fromEntries(url.searchParams);
-      const big = inbound || pathname === '/api/receiving/upload' || /\/(photos|signature|sign|logo)$/.test(pathname);
+      const big = inbound || pathname === '/api/receiving/upload' || pathname === '/api/pay/documents' || /\/(photos|signature|sign|logo|file)$/.test(pathname);
       const body = ['POST', 'PUT', 'PATCH'].includes(req.method) ? await readBody(req, big ? 40_000_000 : 1_000_000) : {};
       const https = secureCookies || isHttps(req);
       const setCookie = t => res.setHeader('Set-Cookie', t
