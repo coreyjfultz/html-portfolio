@@ -746,3 +746,4 @@ table.t tr.click:hover td { background: #f8faff; }
 .record-msg { padding: 8px 10px; border: 1px solid var(--border); border-radius: 10px; }
 .record-msg.deleted { border-color: var(--warn); background: var(--warn-soft); }
 .record-msg.match { box-shadow: 0 0 0 2px var(--primary); }
+.hl-row { box-shadow: 0 0 0 2px var(--primary); }

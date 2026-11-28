@@ -22,6 +22,7 @@ export async function render(view) {
   ]);
   const truck = vehicles[0];
   const oncall = await GET('/api/oncall/now').catch(() => ({}));
+  const myOff = (await GET('/api/time-off', { mine: '1' }).catch(() => [])).filter(x => x.status === 'approved' && x.ends_at >= today).slice(0, 2);
   const myShift = [oncall.current, oncall.next].find(s => s && (s.technician_id === techId || s.backup_technician_id === techId));
   const [stock, lastCount] = truck ? await Promise.all([GET('/api/stock', { location_id: truck.id }), GET(`/api/vehicles/${truck.id}/truck-stock`).then(d => d.counts[0])]) : [[], null];
   const countDue = truck && (!lastCount || (Date.now() - new Date(lastCount.created_at.replace(' ', 'T'))) / 86400e3 >= 7);
@@ -33,6 +34,7 @@ export async function render(view) {
       <div class="actions"><button class="btn" data-sync>Add to my phone calendar</button><a class="btn" href="#/calendar">My calendar</a><a class="btn" href="#/calls?new=1">+ Service call</a></div></div>
     <div class="stack">
       <div class="card"><div class="card-body" data-clock></div></div>
+      ${myOff.map(x => html`<div class="banner good">🌴 Time off approved: ${x.when} <a href="#/time-off">Details</a></div>`)}
       ${myShift ? html`<div class="banner ${myShift === oncall.current ? 'warn' : ''}">📟 ${myShift === oncall.current ? 'You’re' : 'Next up: you’re'} ${myShift.technician_id === techId ? 'on call' : 'the on-call backup'} ${myShift === oncall.current ? `until ${fmtDateTime(myShift.ends_at)}` : `from ${fmtDateTime(myShift.starts_at)}`}. <a href="#/phone">Schedule</a></div>` : ''}
       ${truck ? html`<div class="card" data-vcheck></div>` : ''}
       <div class="card hidden" data-ready></div>

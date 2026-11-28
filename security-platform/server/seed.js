@@ -392,6 +392,15 @@ db.prepare("UPDATE service_calls SET signature_waived = 1, signature_waived_by =
   void samU;
 }
 
+// Time off: Sam's approved vacation, and a pending request from Mike.
+{
+  const U = email => db.prepare('SELECT id FROM users WHERE email = ?').get(email).id;
+  const ins = db.prepare('INSERT INTO time_off (user_id, technician_id, kind, starts_at, ends_at, all_day, note, status, decided_by, decided_at) VALUES (?,?,?,?,?,?,?,?,?,?)');
+  ins.run(U('sam@demo.local'), sam.id, 'vacation', `${day(9)}T00:00`, `${day(13)}T23:59`, 1, 'Family trip', 'approved', 'Demo Owner', `${day(-6)}T10:00`);
+  const req = Number(ins.run(U('mike@demo.local'), mike.id, 'personal', `${day(4)}T12:00`, `${day(4)}T17:00`, 0, 'Kid’s school play', 'pending', null, null).lastInsertRowid);
+  db.prepare('INSERT INTO alerts (kind, severity, title, body, link) VALUES (?,?,?,?,?)').run('time_off', 'info', `Mike Alvarez requested time off (personal)`, '“Kid’s school play”', `#/time-off?req=${req}`);
+}
+
 // Map points around Springfield, OH for customers/sites, and live truck positions.
 {
   let i = 0;

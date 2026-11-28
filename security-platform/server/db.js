@@ -342,6 +342,17 @@ function migrate(db) {
       created_at TEXT NOT NULL DEFAULT (datetime('now','localtime'))
     );
     CREATE INDEX IF NOT EXISTS idx_chat_messages ON chat_messages(channel_id, id);
+    -- Time-off requests
+    CREATE TABLE IF NOT EXISTS time_off (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      technician_id INTEGER REFERENCES technicians(id) ON DELETE SET NULL,
+      kind TEXT NOT NULL, starts_at TEXT NOT NULL, ends_at TEXT NOT NULL, all_day INTEGER NOT NULL DEFAULT 1,
+      note TEXT, status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending','approved','denied','cancelled')),
+      decided_by TEXT, decided_at TEXT, decision_note TEXT,
+      created_at TEXT NOT NULL DEFAULT (datetime('now','localtime'))
+    );
+    CREATE INDEX IF NOT EXISTS idx_time_off_tech ON time_off(technician_id, status, starts_at);
     -- Devices that get push notifications
     CREATE TABLE IF NOT EXISTS push_subscriptions (
       id INTEGER PRIMARY KEY AUTOINCREMENT,

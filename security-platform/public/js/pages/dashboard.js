@@ -6,6 +6,7 @@ export async function render(view) {
   loading(view);
   const [d, onTest, alerts] = await Promise.all([GET('/api/dashboard'), GET('/api/monitoring-on-test').catch(() => []), can.staff() ? GET('/api/alerts').catch(() => []) : Promise.resolve([])]);
   const { alertRow, wireAlerts } = alerts.length ? await import('./truckstock.js') : {};
+  const outToday = can.staff() ? await GET('/api/time-off/out', { from: new Date().toISOString().slice(0, 10), to: new Date().toISOString().slice(0, 10) }).catch(() => []) : [];
   const res = d.customers.find(c => c.type === 'residential')?.n || 0;
   const com = d.customers.find(c => c.type === 'commercial')?.n || 0;
   const overdueMaint = d.maintenance.filter(m => m.overdue);
@@ -26,6 +27,7 @@ export async function render(view) {
     ${d.emergencies ? html`<div class="err-box">🚨 ${d.emergencies} open emergency call${d.emergencies > 1 ? 's' : ''}. <a href="#/calls?priority=emergency">View</a></div>` : ''}
 
     <div class="card" style="margin-bottom:16px"><div class="card-body" data-clock></div></div>
+    ${outToday.length ? html`<div class="banner" style="margin-bottom:16px">🌴 Out today: ${outToday.map((x, i) => html`${i ? ', ' : ''}<b>${x.user_name}</b>${x.all_day ? '' : ` (${x.when.split(' ').slice(-1)[0]})`}`)} · <a href="#/time-off">Time off</a></div>` : ''}
     ${alerts.length ? html`<div class="card" style="margin-bottom:16px"><div class="card-head"><h2>Alerts (${alerts.length})</h2></div><div class="card-body stack" style="gap:8px">${alerts.slice(0, 6).map(a => alertRow(a))}${alerts.length > 6 ? html`<div class="small muted">…and ${alerts.length - 6} more</div>` : ''}</div></div>` : ''}
 
     <div class="kpis">
