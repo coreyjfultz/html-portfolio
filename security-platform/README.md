@@ -2,6 +2,8 @@
 
 One system for the office and the field. It runs as a **website** and installs on phones, tablets and computers as an **app** (a Progressive Web App), so it's one codebase with no app-store fees.
 
+📘 **Documentation:** installation (server, iPhone, Android, Windows/Mac), first-time setup, a user guide for every area, roles, Twilio, backups and security, integrations, a settings reference and troubleshooting are in [`docs/`](docs/README.md).
+
 ## What it does
 
 | Area | Features |
@@ -208,4 +210,4 @@ Everything needed is in this folder. To pick it up:
 5. **Dash-cam video in the app**: today vehicles link to the provider's live view; Samsara's media API could show recent clips right on the vehicle page.
 6. **Automatic dispatch suggestions**: use live truck positions and drive times to suggest the closest available tech for an emergency call.
 7. **Group calls / video** (in-app calls are one-to-one voice today).
-8. **Native app store listing** (the installable web app already covers phones; a store listing adds push notifications on iPhone).
+8. **Native app store listing** if a customer's IT requires it (the installable web app already covers phones and computers, including notifications on iPhone 16.4+; a native iOS app would let in-app calls ring like phone calls).

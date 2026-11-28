@@ -1,5 +1,7 @@
 # Going live — checklist
 
+> Detailed step-by-step versions are in [`docs/`](../docs/README.md): [installing the server](../docs/01-install-server.md), [first-time setup](../docs/03-first-time-setup.md), [Twilio](../docs/18-phone-texting-and-twilio.md), [backups](../docs/19-backups-and-security.md).
+
 About an hour of work for someone comfortable with a terminal, plus a few days of waiting on Twilio text registration (step 7). Use accounts **owned by the company** (not a personal email) for everything below.
 
 ## 1. Get a server and a web address

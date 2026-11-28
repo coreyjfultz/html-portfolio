@@ -793,8 +793,8 @@ ${s.company_name}` }));
   r('GET', '/api/customers/:id/access', MANAGE, ({ db, params }) => db.prepare(`SELECT g.*, u.name AS user_name FROM tech_access_grants g JOIN users u ON u.id = g.user_id
     WHERE g.customer_id = ? AND g.expires_at > ? ORDER BY g.expires_at DESC`).all(Number(params.id), nowLocal()));
   r('POST', '/api/customers/:id/access', MANAGE, ({ db, params, body, user }) => {
-    const tech = db.prepare("SELECT id, name FROM users WHERE id = ? AND role = 'technician' AND active = 1").get(Number(body.user_id));
-    if (!tech) throw new HttpError(400, 'Choose a technician');
+    const tech = db.prepare('SELECT id, name, role FROM users WHERE id = ? AND active = 1').get(Number(body.user_id));
+    if (!tech || !isFieldRole(tech.role)) throw new HttpError(400, 'Choose a technician');
     const until = grantAccess(db, { userId: tech.id, customerId: Number(params.id), hours: body.hours, reason: String(body.reason || '').slice(0, 200) || 'Granted by office', by: user.name });
     audit(db, user, 'grant customer access', 'customers', Number(params.id), `${tech.name} until ${until}`);
     return { ok: true, until };
