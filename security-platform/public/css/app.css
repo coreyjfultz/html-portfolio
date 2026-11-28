@@ -823,3 +823,14 @@ table.t tr.click:hover td { background: #f8faff; }
 .call-btn.decline { background: #dc2626; }
 .call-btn.mute.on { background: #f8fafc; color: #0f1727; }
 .call-btn:focus-visible { outline: 3px solid #93c5fd; outline-offset: 3px; }
+
+/* Org chart */
+.org-list { list-style: none; margin: 0; padding: 0 0 0 22px; border-left: 2px solid var(--border); }
+.org-list.root { padding-left: 0; border-left: 0; }
+.org-node { margin: 8px 0; position: relative; }
+.org-list:not(.root) > .org-node::before { content: ''; position: absolute; left: -22px; top: 28px; width: 18px; border-top: 2px solid var(--border); }
+.org-card { display: flex; align-items: center; gap: 12px; padding: 10px 12px; border: 1px solid var(--border); border-radius: 12px; background: var(--surface); max-width: 520px; }
+.org-card.me { border-color: var(--primary); box-shadow: 0 0 0 1px var(--primary) inset; }
+.org-text { display: flex; flex-direction: column; min-width: 0; flex: 1; overflow-wrap: anywhere; }
+.org-actions { display: flex; gap: 2px; flex: none; }
+@media (max-width: 600px) { .org-list { padding-left: 12px; } .org-list:not(.root) > .org-node::before { left: -12px; width: 9px; } }

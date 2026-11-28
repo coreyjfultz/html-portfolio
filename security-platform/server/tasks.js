@@ -8,6 +8,7 @@ import { G } from '../public/js/schema.js';
 import { getSettings } from './db.js';
 import { HttpError, todayLocal, registerHooks } from './resources.js';
 import { zonedToUtc } from './calendar.js';
+import { reportIds, isAbove } from './org.js';
 import { notifyPush } from './push.js';
 import { queue, sendEmail } from './notify.js';
 
@@ -249,8 +250,8 @@ function getTask(db, id) {
   if (!t) throw new HttpError(404, 'Task not found');
   return t;
 }
-const canSee = (t, u) => isManager(u) || t.assigned_to === u.id || t.created_by === u.id;
-const canEdit = (t, u) => isManager(u) || t.created_by === u.id || t.assigned_to === u.id;
+const canSee = (t, u, db) => isManager(u) || t.assigned_to === u.id || t.created_by === u.id || isAbove(db, u.id, t.assigned_to);
+const canEdit = (t, u, db) => isManager(u) || t.created_by === u.id || t.assigned_to === u.id || isAbove(db, u.id, t.assigned_to);
 const canDelete = (t, u) => isManager(u) || t.created_by === u.id;
 
 function clean(db, body, partial = false) {
@@ -308,6 +309,11 @@ export function listTasks(db, user, view = 'mine') {
   let where, args = [];
   if (view === 'assigned') { where = "t.created_by = ? AND (t.assigned_to IS NULL OR t.assigned_to <> ?) AND (t.status = 'open' OR t.done_at >= date(?, '-14 days'))"; args = [user.id, user.id, today]; }
   else if (view === 'all' && isManager(user)) { where = "t.status = 'open'"; }
+  else if (view === 'team') {
+    const team = reportIds(db, user.id);
+    where = team.length ? `t.status = 'open' AND t.assigned_to IN (${team.map(() => '?').join(',')})` : '0';
+    args = team;
+  }
   else if (view === 'done') { where = `t.status = 'done' AND t.done_at >= date(?, '-60 days')${isManager(user) ? '' : ' AND (t.assigned_to = ? OR t.created_by = ?)'}`; args = isManager(user) ? [today] : [today, user.id, user.id]; }
   else { where = "t.assigned_to = ? AND (t.status = 'open' OR t.done_at >= date(?, 'start of day'))"; args = [user.id, today]; }
   return db.prepare(`${SELECT} WHERE ${where} ORDER BY t.status = 'done', t.due_date IS NULL, t.due_date, t.priority = 'high' DESC, t.id LIMIT 500`).all(...args).map(withRepeat);
@@ -331,7 +337,7 @@ export function registerTaskRoutes(r) {
   r('GET', '/api/tasks/people', G.all, ({ db }) => db.prepare('SELECT id, name, role FROM users WHERE active = 1 ORDER BY name').all());
   r('GET', '/api/tasks/:id', G.all, ({ db, user, params }) => {
     const t = db.prepare(`${SELECT} WHERE t.id = ?`).get(Number(params.id));
-    if (!t || !canSee(t, user)) throw new HttpError(404, 'Task not found');
+    if (!t || !canSee(t, user, db)) throw new HttpError(404, 'Task not found');
     return withRepeat(t);
   });
   r('POST', '/api/tasks', G.all, ({ db, user, body }) => {
@@ -355,7 +361,7 @@ export function registerTaskRoutes(r) {
   });
   r('PUT', '/api/tasks/:id', G.all, ({ db, user, params, body }) => {
     const t = getTask(db, params.id);
-    if (!canEdit(t, user)) throw new HttpError(403, 'Only the person who made this task, the person doing it, or a manager can change it');
+    if (!canEdit(t, user, db)) throw new HttpError(403, 'Only the person who made this task, the person doing it, or a manager can change it');
     const data = clean(db, body, true);
     const merged = checkTimes({ ...t, ...data });
     for (const k of ['start_time', 'end_time']) if (k in data || merged[k] !== t[k]) data[k] = merged[k];
@@ -368,7 +374,7 @@ export function registerTaskRoutes(r) {
   });
   r('POST', '/api/tasks/:id/done', G.all, ({ db, user, params, body }) => {
     const t = getTask(db, params.id);
-    if (!canEdit(t, user)) throw new HttpError(403, 'Not your task');
+    if (!canEdit(t, user, db)) throw new HttpError(403, 'Not your task');
     if (t.status === 'done') return { ok: true };
     db.prepare("UPDATE tasks SET status = 'done', done_at = datetime('now','localtime'), done_by = ?, done_note = ? WHERE id = ?").run(user.id, String(body.note || '').slice(0, 1000) || null, t.id);
     if (t.created_by && t.created_by !== user.id) {
@@ -378,7 +384,7 @@ export function registerTaskRoutes(r) {
   });
   r('POST', '/api/tasks/:id/reopen', G.all, ({ db, user, params }) => {
     const t = getTask(db, params.id);
-    if (!canEdit(t, user)) throw new HttpError(403, 'Not your task');
+    if (!canEdit(t, user, db)) throw new HttpError(403, 'Not your task');
     db.prepare("UPDATE tasks SET status = 'open', done_at = NULL, done_by = NULL, done_note = NULL WHERE id = ?").run(t.id);
     return { ok: true };
   });

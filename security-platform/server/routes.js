@@ -28,6 +28,7 @@ import { registerPayRoutes } from './pay.js';
 import { registerLibraryRoutes } from './library.js';
 import { registerTaskRoutes, taskFeedEvents } from './tasks.js';
 import { registerCallRoutes } from './calls.js';
+import { registerOrgRoutes, checkSupervisor, supervisorOf } from './org.js';
 import { requestOrigin } from './net.js';
 import { runBackup, listBackups } from './backup.js';
 import { openAlerts, resolveAlert } from './alerts.js';
@@ -147,8 +148,9 @@ export function buildRoutes() {
   });
 
   // ------------------------------------------------------------ users
-  r('GET', '/api/users', MANAGE, ({ db }) => db.prepare(`SELECT u.id, u.name, u.email, u.role, u.technician_id, u.active, u.last_login,
-      t.name AS technician_name FROM users u LEFT JOIN technicians t ON t.id = u.technician_id ORDER BY u.active DESC, u.name`).all());
+  r('GET', '/api/users', MANAGE, ({ db }) => db.prepare(`SELECT u.id, u.name, u.email, u.role, u.technician_id, u.active, u.last_login, u.job_title, u.supervisor_id,
+      t.name AS technician_name, s.name AS supervisor_name FROM users u LEFT JOIN technicians t ON t.id = u.technician_id LEFT JOIN users s ON s.id = u.supervisor_id
+      ORDER BY u.active DESC, u.name`).all());
 
   r('POST', '/api/users', MANAGE, ({ db, body, user }) => {
     const name = requireStr(body.name, 'Name');
@@ -158,8 +160,9 @@ export function buildRoutes() {
     const err = validatePassword(body.password);
     if (err) throw new HttpError(400, err);
     try {
-      const info = db.prepare('INSERT INTO users(name, email, password_hash, role, technician_id) VALUES (?,?,?,?,?)')
-        .run(name, email, hashPassword(body.password), body.role, body.technician_id ? Number(body.technician_id) : null);
+      const sup = checkSupervisor(db, null, body.supervisor_id);
+      const info = db.prepare('INSERT INTO users(name, email, password_hash, role, technician_id, supervisor_id, job_title) VALUES (?,?,?,?,?,?,?)')
+        .run(name, email, hashPassword(body.password), body.role, body.technician_id ? Number(body.technician_id) : null, sup, String(body.job_title || '').trim().slice(0, 60) || null);
       audit(db, user, 'create', 'users', Number(info.lastInsertRowid), body.role);
       return { id: Number(info.lastInsertRowid) };
     } catch (e) {
@@ -182,6 +185,14 @@ export function buildRoutes() {
     db.prepare('UPDATE users SET name = ?, email = ?, role = ?, active = ?, technician_id = ? WHERE id = ?').run(
       body.name?.trim() || target.name, body.email?.trim().toLowerCase() || target.email, role, active,
       body.technician_id === undefined ? target.technician_id : (body.technician_id ? Number(body.technician_id) : null), target.id);
+    if ('supervisor_id' in body) {
+      const sup = checkSupervisor(db, target.id, body.supervisor_id);
+      if (sup !== target.supervisor_id) audit(db, user, 'change supervisor', 'users', target.id, sup ? db.prepare('SELECT name FROM users WHERE id = ?').get(sup).name : 'none');
+      db.prepare('UPDATE users SET supervisor_id = ? WHERE id = ?').run(sup, target.id);
+    }
+    if ('job_title' in body) db.prepare('UPDATE users SET job_title = ? WHERE id = ?').run(String(body.job_title || '').trim().slice(0, 60) || null, target.id);
+    // People who leave: their reports move up to the leaver's own supervisor.
+    if (!active && target.active) db.prepare('UPDATE users SET supervisor_id = ? WHERE supervisor_id = ?').run(target.supervisor_id, target.id);
     if (body.password) {
       const err = validatePassword(body.password);
       if (err) throw new HttpError(400, err);
@@ -424,6 +435,7 @@ export function buildRoutes() {
   registerLibraryRoutes(r);
   registerTaskRoutes(r);
   registerCallRoutes(r);
+  registerOrgRoutes(r);
 
   // ------------------------------------------------------------ alerts for the owner / office
   r('GET', '/api/alerts', G.staff, ({ db, user }) => openAlerts(db, user.role));

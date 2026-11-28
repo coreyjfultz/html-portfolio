@@ -8,6 +8,8 @@ import { raiseAlert } from './alerts.js';
 import { queue, sendEmail, sendSms, mailConfig } from './notify.js';
 import { zonedToUtc } from './calendar.js';
 import { requestHours, balances, PTO_KINDS } from './hr.js';
+import { canApprove, reportIds, supervisorOf } from './org.js';
+import { notifyPush } from './push.js';
 
 const MANAGE = G.manage;
 export const KINDS = ['vacation', 'sick', 'personal', 'training', 'other'];
@@ -94,11 +96,17 @@ export function timeOffEvents(db, techId = null) {
 }
 
 export function registerTimeOffRoutes(r) {
+  // mine=1: my own. Otherwise owners/admins see everyone's; supervisors see their team's.
   r('GET', '/api/time-off', G.all, ({ db, user, query }) => {
-    const mine = !MANAGE.includes(user.role) || query.mine === '1';
-    const rows = db.prepare(`SELECT o.*, u.name AS user_name FROM time_off o JOIN users u ON u.id = o.user_id
-      WHERE ${mine ? 'o.user_id = ?' : '1'} AND (o.ends_at >= ? OR o.status = 'pending') ORDER BY o.starts_at LIMIT 500`).all(...(mine ? [user.id] : []), addDays(todayLocal(), -Number(query.days_back || 60)));
-    return rows.map(x => ({ ...x, when: fmt(x.starts_at, x.ends_at, x.all_day), ...(MANAGE.includes(user.role) && x.status === 'pending' ? { clashes: clashes(db, x) } : {}) }));
+    const team = query.mine === '1' ? [] : MANAGE.includes(user.role) ? null : reportIds(db, user.id);
+    const who = query.mine === '1' || (team && !team.length) ? 'o.user_id = ?' : team ? `o.user_id IN (${team.map(() => '?').join(',')})` : '1';
+    const args = query.mine === '1' || (team && !team.length) ? [user.id] : team || [];
+    const rows = db.prepare(`SELECT o.*, u.name AS user_name, s.name AS supervisor_name FROM time_off o JOIN users u ON u.id = o.user_id LEFT JOIN users s ON s.id = u.supervisor_id
+      WHERE ${who} AND (o.ends_at >= ? OR o.status = 'pending') ORDER BY o.starts_at LIMIT 500`).all(...args, addDays(todayLocal(), -Number(query.days_back || 60)));
+    return rows.map(x => {
+      const can = x.status === 'pending' && canApprove(db, user, x.user_id);
+      return { ...x, when: fmt(x.starts_at, x.ends_at, x.all_day), can_decide: can, ...(can ? { clashes: clashes(db, x) } : {}) };
+    });
   });
   // Who's out (everyone can see who is off, not why)
   r('GET', '/api/time-off/out', G.all, ({ db, query }) => {
@@ -109,7 +117,9 @@ export function registerTimeOffRoutes(r) {
       .map(x => ({ ...x, when: fmt(x.starts_at, x.ends_at, x.all_day) }));
   });
   r('POST', '/api/time-off', G.all, ({ db, user, body }) => {
-    const forUser = body.user_id && MANAGE.includes(user.role) ? db.prepare('SELECT id, name, technician_id FROM users WHERE id = ? AND active = 1').get(Number(body.user_id)) : db.prepare('SELECT id, name, technician_id FROM users WHERE id = ?').get(user.id);
+    const forOther = body.user_id && Number(body.user_id) !== user.id;
+    if (forOther && !MANAGE.includes(user.role) && !reportIds(db, user.id).includes(Number(body.user_id))) throw new HttpError(403, 'You can add time off only for people on your team');
+    const forUser = forOther ? db.prepare('SELECT id, name, technician_id FROM users WHERE id = ? AND active = 1').get(Number(body.user_id)) : db.prepare('SELECT id, name, technician_id FROM users WHERE id = ?').get(user.id);
     if (!forUser) throw new HttpError(400, 'Choose a person');
     const kind = KINDS.includes(body.kind) ? body.kind : 'vacation';
     const allDay = body.all_day !== false && body.all_day !== '0';
@@ -125,7 +135,7 @@ export function registerTimeOffRoutes(r) {
     if (end < `${todayLocal()}T00:00` && !MANAGE.includes(user.role)) throw new HttpError(400, 'That’s in the past');
     const overlap = db.prepare("SELECT id FROM time_off WHERE user_id = ? AND status IN ('pending','approved') AND starts_at < ? AND ends_at > ?").get(forUser.id, end, start);
     if (overlap) throw new HttpError(409, 'You already have time off requested for part of that period');
-    const byManager = MANAGE.includes(user.role) && body.approve;
+    const byManager = !!body.approve && canApprove(db, user, forUser.id);
     const hours = requestHours(db, { starts_at: start, ends_at: end, all_day: allDay });
     if (PTO_KINDS.includes(kind) && getSettings(db).pto_allow_negative !== '1' && !byManager) {
       const b = balances(db, forUser.id, Number(start.slice(0, 4)))[kind];
@@ -138,17 +148,24 @@ export function registerTimeOffRoutes(r) {
     audit(db, user, byManager ? 'add time off' : 'request time off', 'users', forUser.id, `${kind} ${fmt(start, end, allDay)}`);
     if (!byManager) {
       const c = clashes(db, x);
+      // The person's supervisor decides (owners/admins can too and see every request).
+      const sup = supervisorOf(db, forUser.id);
+      if (sup) {
+        notifyPush(db, [sup.id], { title: `${forUser.name} asked for time off`, body: `${fmt(start, end, allDay)} (${kind})`, url: `/#/time-off?req=${id}`, tag: `timeoff-${id}` });
+        if (sup.email && mailConfig(db).ok) queue(() => sendEmail(db, { to: sup.email, subject: `Time off request: ${forUser.name}, ${fmt(start, end, allDay)}`, text: `${forUser.name} asked for time off (${kind}): ${fmt(start, end, allDay)}.${x.note ? `\n\n“${x.note}”` : ''}\n\nApprove or deny it in SecureOps → Time off.\n\n${getSettings(db).company_name}`, related: { type: 'time_off', id } }));
+      }
       raiseAlert(db, {
-        kind: 'time_off', severity: 'info', title: `${forUser.name} requested time off: ${fmt(start, end, allDay)} (${kind})`,
+        kind: 'time_off', severity: 'info', title: `${forUser.name} requested time off: ${fmt(start, end, allDay)} (${kind})${sup ? ` · for ${sup.name.split(' ')[0]} to approve` : ''}`,
         body: `${x.note ? `“${x.note}”\n` : ''}${c.jobs.length ? `${c.jobs.length} job(s) already booked then.` : 'No jobs booked then.'}${c.oncall.length ? ` On call during part of it.` : ''}`,
         link: `#/time-off?req=${id}`, roles: 'owner,admin',
       });
     }
     return { ...x, when: fmt(start, end, allDay), clashes: clashes(db, x) };
   });
-  r('POST', '/api/time-off/:id/decide', MANAGE, ({ db, user, params, body }) => {
+  r('POST', '/api/time-off/:id/decide', G.all, ({ db, user, params, body }) => {
     const x = row(db, params.id);
     if (!x) throw new HttpError(404, 'Request not found');
+    if (!canApprove(db, user, x.user_id)) throw new HttpError(403, x.user_id === user.id ? 'Your own requests go to your supervisor' : 'Only their supervisor, an owner or an admin can decide this');
     if (x.status !== 'pending') throw new HttpError(409, `Already ${x.status}`);
     const approve = body.decision === 'approve';
     if (!approve && body.decision !== 'deny') throw new HttpError(400, 'Approve or deny');
@@ -161,7 +178,7 @@ export function registerTimeOffRoutes(r) {
   r('POST', '/api/time-off/:id/cancel', G.all, ({ db, user, params }) => {
     const x = row(db, params.id);
     if (!x) throw new HttpError(404, 'Request not found');
-    if (x.user_id !== user.id && !MANAGE.includes(user.role)) throw new HttpError(403, 'Not your request');
+    if (x.user_id !== user.id && !MANAGE.includes(user.role) && !reportIds(db, user.id).includes(x.user_id)) throw new HttpError(403, 'Not your request');
     if (!['pending', 'approved'].includes(x.status)) throw new HttpError(409, `Already ${x.status}`);
     db.prepare("UPDATE time_off SET status = 'cancelled', decided_by = COALESCE(decided_by, ?), decided_at = ? WHERE id = ?").run(user.name, nowLocal(), x.id);
     db.prepare("UPDATE alerts SET resolved_at = datetime('now','localtime'), resolved_by = ? WHERE kind = 'time_off' AND link = ? AND resolved_at IS NULL").run(user.name, `#/time-off?req=${x.id}`);

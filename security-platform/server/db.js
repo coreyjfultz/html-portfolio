@@ -502,6 +502,7 @@ function migrate(db) {
 
   if (!db.prepare('PRAGMA table_info(qbo_map)').all().some(c => c.name === 'dirty')) db.exec('ALTER TABLE qbo_map ADD COLUMN dirty INTEGER NOT NULL DEFAULT 0');
   if (!db.prepare('PRAGMA table_info(users)').all().some(c => c.name === 'phone')) db.exec('ALTER TABLE users ADD COLUMN phone TEXT');
+  if (!db.prepare('PRAGMA table_info(users)').all().some(c => c.name === 'supervisor_id')) db.exec('ALTER TABLE users ADD COLUMN supervisor_id INTEGER REFERENCES users(id) ON DELETE SET NULL; ALTER TABLE users ADD COLUMN job_title TEXT;');
   if (!db.prepare('PRAGMA table_info(time_off)').all().some(c => c.name === 'hours')) db.exec('ALTER TABLE time_off ADD COLUMN hours REAL');
   for (const t of ['tasks', 'task_series']) {
     const cols = db.prepare(`PRAGMA table_info(${t})`).all().map(c => c.name);

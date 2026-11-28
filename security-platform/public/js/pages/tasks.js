@@ -159,7 +159,8 @@ export async function myTasksCard(box) {
 export async function render(view, _, query) {
   loading(view);
   const tab = query.view || 'mine';
-  const tabs = [['mine', 'My tasks'], ['assigned', 'Assigned by me'], ...(isManager() ? [['all', 'Everyone']] : []), ['repeating', 'Repeating'], ['done', 'Done']];
+  const org = await GET('/api/org/me').catch(() => ({}));
+  const tabs = [['mine', 'My tasks'], ['assigned', 'Assigned by me'], ...(org.is_supervisor ? [['team', 'My team']] : []), ...(isManager() ? [['all', 'Everyone']] : []), ['repeating', 'Repeating'], ['done', 'Done']];
   const head = html`<div class="page-head"><div><h1>Tasks</h1><div class="sub">To-dos for yourself or anyone on the team, one-time or repeating</div></div>
       <div class="actions"><button class="btn primary" data-new>+ New task</button></div></div>
     <div class="tabs">${tabs.map(([k, l]) => html`<button class="${k === tab ? 'on' : ''}" data-tab="${k}">${l}</button>`)}</div>`;

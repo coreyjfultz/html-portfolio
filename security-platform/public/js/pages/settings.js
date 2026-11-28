@@ -252,13 +252,15 @@ export async function render(view, _, query) {
     const [users, techs] = await Promise.all([GET('/api/users'), R.list('technicians')]);
     const techOpts = [{ value: '', label: '— not a technician —' }, ...techs.map(t => ({ value: t.id, label: t.name }))];
     const roleOpts = ROLES.filter(r => r !== 'owner' || state.user.role === 'owner').map(r => ({ value: r, label: `${ROLE_INFO[r].label} — ${ROLE_INFO[r].desc}` }));
-    mount(pane, html`<div class="card"><div class="card-head"><div><h2>Users</h2><div class="small muted">Everyone who can sign in. Link technicians to their technician profile so "My Day" shows their jobs.</div></div>
+    const supOpts = except => [{ value: '', label: '— nobody (top of the chart) —' }, ...users.filter(u => u.active && u.id !== except).map(u => ({ value: u.id, label: `${u.name}${u.job_title ? ` — ${u.job_title}` : ''}` }))];
+    mount(pane, html`<div class="card"><div class="card-head"><div><h2>Users</h2><div class="small muted">Everyone who can sign in. Link technicians to their technician profile so "My Day" shows their jobs. “Reports to” sets who approves their time off (see <a href="#/team">Our team</a>).</div></div>
         <button class="btn primary sm" data-new>+ Add user</button></div>
       <div class="card-body flush">${dataTable({
         rows: users,
         columns: [
-          { label: 'Name', render: u => html`<b>${u.name}</b><div class="small muted">${u.email}</div>` },
+          { label: 'Name', render: u => html`<b>${u.name}</b><div class="small muted">${u.job_title ? `${u.job_title} · ` : ''}${u.email}</div>` },
           { label: 'Role', render: u => badge(ROLE_INFO[u.role]?.label || u.role, u.role === 'owner' ? 'primary' : u.role === 'admin' ? 'info' : '') },
+          { label: 'Reports to', render: u => u.supervisor_name || html`<span class="muted">—</span>` },
           { label: 'Technician profile', render: u => u.technician_name || '—' },
           { label: 'Last sign-in', render: u => u.last_login || 'never' },
           { label: 'Status', render: u => u.active ? badge('active') : badge('inactive') },
@@ -270,6 +272,8 @@ export async function render(view, _, query) {
         { name: 'name', label: 'Name', required: true }, { name: 'email', label: 'Email (used to sign in)', type: 'email' },
         { name: 'password', label: 'Temporary password (8+ characters)', type: 'password', autocomplete: 'new-password' },
         { name: 'role', label: 'Role', type: 'select', options: roleOpts, value: 'technician' },
+        { name: 'job_title', label: 'Job title (optional)', placeholder: 'e.g. Lead Technician' },
+        { name: 'supervisor_id', label: 'Reports to (approves their time off)', type: 'select', options: supOpts(null), value: '' },
         { name: 'technician_id', label: 'Technician profile', type: 'select', options: techOpts, value: '' },
       ],
       submitLabel: 'Create user',
@@ -282,6 +286,8 @@ export async function render(view, _, query) {
         fields: [
           { name: 'name', label: 'Name', value: u.name }, { name: 'email', label: 'Email', type: 'email', value: u.email },
           { name: 'role', label: 'Role', type: 'select', options: roleOpts, value: u.role },
+          { name: 'job_title', label: 'Job title', value: u.job_title || '' },
+          { name: 'supervisor_id', label: 'Reports to (approves their time off)', type: 'select', options: supOpts(u.id), value: u.supervisor_id ?? '' },
           { name: 'technician_id', label: 'Technician profile', type: 'select', options: techOpts, value: u.technician_id ?? '' },
           { name: 'password', label: 'Reset password (leave blank to keep)', type: 'password', autocomplete: 'new-password' },
           { name: 'active', label: 'Active (uncheck to block sign-in)', type: 'checkbox', value: !!u.active },
@@ -341,7 +347,9 @@ export async function render(view, _, query) {
 }
 
 export async function account(view) {
-  mount(view, html`<div class="page-head"><div><h1>My account</h1><div class="sub">${state.user.name} · ${state.user.email} · ${state.user.role}</div></div></div>
+  const org = await GET('/api/org/me').catch(() => ({}));
+  mount(view, html`<div class="page-head"><div><h1>My account</h1><div class="sub">${state.user.name} · ${state.user.email} · ${state.user.role}</div>
+      <div class="small" style="margin-top:4px">Reports to: <b>${org.supervisor ? `${org.supervisor.name}${org.supervisor.job_title ? ` (${org.supervisor.job_title})` : ''}` : '—'}</b>${org.direct_reports?.length ? html` · Your team: ${org.direct_reports.map(p => p.name).join(', ')}` : ''} · <a href="#/team">Our team</a></div></div></div>
     <div class="grid g2"><div class="card"><div class="card-head"><h2>Change password</h2></div><div class="card-body">
       <form class="stack" data-pw style="gap:12px">
         <div class="field"><label for="cur">Current password</label><input id="cur" type="password" name="current" autocomplete="current-password"></div>

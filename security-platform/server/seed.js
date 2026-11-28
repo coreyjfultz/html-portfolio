@@ -433,6 +433,24 @@ db.prepare("UPDATE service_calls SET signature_waived = 1, signature_waived_by =
   }
 }
 
+// Who reports to whom: Office Admin and Mike (lead tech) report to the owner; Sam Turner and Jen
+// report to Mike, so Mike approves their time off. Office staff report to the admin.
+{
+  const id = e => db.prepare('SELECT id FROM users WHERE email = ?').get(e).id;
+  const set = (e, sup, title) => db.prepare('UPDATE users SET supervisor_id = ?, job_title = ? WHERE email = ?').run(sup ? id(sup) : null, title, e);
+  set('owner@demo.local', null, 'Owner');
+  set('admin@demo.local', 'owner@demo.local', 'Office Manager');
+  set('sales@demo.local', 'admin@demo.local', 'Sales');
+  set('accounting@demo.local', 'admin@demo.local', 'Bookkeeper');
+  set('mike@demo.local', 'owner@demo.local', 'Lead Technician');
+  set('sam@demo.local', 'mike@demo.local', 'Installer');
+  set('jen@demo.local', 'mike@demo.local', 'Service Technician');
+  const sam = db.prepare("SELECT id, technician_id FROM users WHERE email = 'sam@demo.local'").get();
+  const req = Number(db.prepare("INSERT INTO time_off (user_id, technician_id, kind, starts_at, ends_at, all_day, hours, note, status) VALUES (?,?,?,?,?,1,8,?,'pending')")
+    .run(sam.id, sam.technician_id, 'vacation', `${day(16)}T00:00`, `${day(16)}T23:59`, 'Brother’s wedding').lastInsertRowid);
+  db.prepare('INSERT INTO alerts (kind, severity, title, body, link) VALUES (?,?,?,?,?)').run('time_off', 'info', 'Sam Turner requested time off (vacation) · for Mike to approve', '“Brother’s wedding”', `#/time-off?req=${req}`);
+}
+
 // Tasks for people (one-time and repeating).
 {
   const U2 = e => db.prepare('SELECT id FROM users WHERE email = ?').get(e).id;
